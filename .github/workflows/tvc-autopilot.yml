@@ -12,6 +12,9 @@ concurrency:
   group: tvc-fusion
   cancel-in-progress: false   # nigdy nie odpalaj dwóch cykli naraz (chroni SQLite przed race condition)
 
+permissions:
+  contents: write   # pozwala workflow'owi commitować i pushować z powrotem do repo
+
 jobs:
   run:
     runs-on: ubuntu-latest
