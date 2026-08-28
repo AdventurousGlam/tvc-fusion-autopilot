@@ -1,0 +1,52 @@
+name: TVC Fusion Auto-Pilot
+
+# Odpala auto_fusion.py + paper_bot.py refresh co 15 minut, w chmurze GitHub —
+# nie wymaga włączonego komputera. Zero kredytów Claude (czysty Python).
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}   # pozwala odpalić ręcznie z zakładki Actions na GitHubie
+
+concurrency:
+  group: tvc-fusion
+  cancel-in-progress: false   # nigdy nie odpalaj dwóch cykli naraz (chroni SQLite przed race condition)
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      HOME: /home/runner/home-clone
+      GITHUB_TOKEN: ${{ secrets.GIST_PAT }}
+      TVC_GIST_ID: ${{ secrets.TVC_GIST_ID }}
+    steps:
+      - name: Checkout repo do $HOME/Claude/TVCFusion
+        uses: actions/checkout@v4
+        with:
+          path: home-clone/Claude/TVCFusion
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install optional deps
+        run: pip install certifi
+
+      - name: Run auto_fusion (fresh algorithmic signals)
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
+        run: python3 auto_fusion.py
+
+      - name: Refresh paper positions + upload do Gist
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
+        run: python3 paper_bot.py refresh
+
+      - name: Commit zaktualizowany stan z powrotem do repo
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
+        run: |
+          git config user.name "tvc-autopilot"
+          git config user.email "autopilot@tvcfusion.local"
+          git add fusion_*.json paper_trades.db
+          git diff --cached --quiet || git commit -m "auto-update $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push

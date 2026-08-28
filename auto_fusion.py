@@ -1,0 +1,467 @@
+#!/usr/bin/env python3
+"""
+auto_fusion.py — Self-running fusion WITHOUT Claude credits.
+
+Generuje fusion decisions automatycznie na podstawie:
+- Binance prices (free, no auth)
+- Farside.co.uk BTC/ETH ETF flows (public JSON)
+- Fear & Greed Index (alternative.me)
+- BTC dominance (CoinGecko)
+- Simple algorithmic scoring (no LLM)
+
+Uruchomienie:
+  python3 auto_fusion.py               # jednorazowo
+  python3 auto_fusion.py --loop 4h    # co 4 godziny (podobnie jak scheduled fusion)
+
+Output:
+  ~/Claude/TVCFusion/fusion_YYYY-MM-DD.json  (nadpisuje jeśli istnieje)
+  Uploads to Gist via paper_bot.py upload
+"""
+
+import json
+import os
+import sys
+import time
+import ssl
+import argparse
+import urllib.request as ur
+from datetime import datetime, timezone
+from pathlib import Path
+
+try:
+    import certifi
+    SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+except ImportError:
+    SSL_CTX = ssl.create_default_context()
+
+UA = "Mozilla/5.0 tvc-auto-fusion/1.0"
+FUSION_DIR = Path.home() / "Claude" / "TVCFusion"
+
+# Ticker → Binance symbol
+BINANCE = {
+    "BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT",
+    "XRP": "XRPUSDT", "SUI": "SUIUSDT",
+}
+
+
+def _get_json(url, timeout=15):
+    req = ur.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
+    with ur.urlopen(req, timeout=timeout, context=SSL_CTX) as r:
+        return json.loads(r.read())
+
+
+def fetch_prices():
+    """Batch fetch 24h ticker data for all tickers."""
+    from urllib.parse import quote
+    # Compact JSON (no spaces) + URL-encode żeby uniknąć control characters w URL
+    symbols_json = json.dumps(list(BINANCE.values()), separators=(",", ":"))
+    symbols_encoded = quote(symbols_json)
+    url = f"https://api.binance.com/api/v3/ticker/24hr?symbols={symbols_encoded}"
+    data = _get_json(url)
+    result = {}
+    for item in data:
+        for ticker, sym in BINANCE.items():
+            if item["symbol"] == sym:
+                result[ticker] = {
+                    "price": float(item["lastPrice"]),
+                    "change_24h": float(item["priceChangePercent"]),
+                    "volume_24h": float(item["quoteVolume"]),
+                    "high_24h": float(item["highPrice"]),
+                    "low_24h": float(item["lowPrice"]),
+                }
+    return result
+
+
+def fetch_klines(ticker, interval="1d", limit=30):
+    """Fetch OHLCV klines dla technical analysis."""
+    sym = BINANCE.get(ticker)
+    if not sym:
+        return []
+    url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval={interval}&limit={limit}"
+    return _get_json(url)
+
+
+def fetch_fng():
+    """Fear & Greed Index."""
+    try:
+        data = _get_json("https://api.alternative.me/fng/?limit=7")
+        items = data.get("data", [])
+        if not items:
+            return None
+        return {
+            "current": int(items[0]["value"]),
+            "classification": items[0]["value_classification"],
+            "week_avg": sum(int(x["value"]) for x in items) // len(items),
+        }
+    except Exception as e:
+        print(f"[fng] fetch failed: {e}")
+        return None
+
+
+def fetch_btc_dominance():
+    """BTC dominance from CoinGecko."""
+    try:
+        data = _get_json("https://api.coingecko.com/api/v3/global")
+        return data["data"]["market_cap_percentage"]["btc"]
+    except Exception as e:
+        print(f"[dom] fetch failed: {e}")
+        return None
+
+
+def fetch_etf_flows():
+    """BTC + ETH spot ETF net flows (Farside.co.uk public JSON)."""
+    try:
+        btc_data = _get_json("https://farside.co.uk/btc/etf-flows.json")
+        eth_data = _get_json("https://farside.co.uk/eth/etf-flows.json")
+        return {
+            "btc_1d": btc_data.get("total", [{}])[-1] if btc_data else None,
+            "eth_1d": eth_data.get("total", [{}])[-1] if eth_data else None,
+        }
+    except Exception:
+        return None
+
+
+def compute_ta_score(klines):
+    """
+    Prosty technical score 0-100 na podstawie 30 świec dziennych.
+    Kombinuje: trend (EMA20 slope), momentum (RSI proxy), volatility.
+    """
+    if not klines or len(klines) < 20:
+        return 50  # neutral
+
+    closes = [float(k[4]) for k in klines]
+    volumes = [float(k[5]) for k in klines]
+
+    # Trend: EMA20 vs current
+    ema20 = closes[-1]  # start
+    for c in closes[-20:]:
+        ema20 = ema20 * 0.9 + c * 0.1
+    trend_score = 50 + ((closes[-1] - ema20) / ema20) * 500  # -50..+50 range
+    trend_score = max(0, min(100, trend_score))
+
+    # Momentum: 7-day return
+    if len(closes) >= 7:
+        pct_7d = (closes[-1] - closes[-7]) / closes[-7] * 100
+        momo_score = 50 + pct_7d * 2  # 5% = +10 score
+        momo_score = max(0, min(100, momo_score))
+    else:
+        momo_score = 50
+
+    # Volume trend: recent vs avg
+    if len(volumes) >= 20:
+        recent_vol = sum(volumes[-3:]) / 3
+        avg_vol = sum(volumes[-20:]) / 20
+        vol_score = min(100, (recent_vol / max(avg_vol, 1)) * 50)
+    else:
+        vol_score = 50
+
+    return int(trend_score * 0.5 + momo_score * 0.35 + vol_score * 0.15)
+
+
+def compute_score(ticker, price_data, ta_score, fng, etf_flows):
+    """
+    Combined fusion score 0-100.
+    Weights: OnChain 40% + TA 30% + News 20% + Sentiment 10%.
+    """
+    # OnChain proxy: ETF flows dla BTC/ETH, sentiment dla altcoinów
+    if ticker == "BTC" and etf_flows and etf_flows.get("btc_1d"):
+        flow_val = etf_flows["btc_1d"]
+        # Positive inflow = bullish
+        onchain_score = 65 + min(20, (flow_val / 100_000_000) * 5)  # +$500M = +25
+    elif ticker == "ETH" and etf_flows and etf_flows.get("eth_1d"):
+        flow_val = etf_flows["eth_1d"]
+        onchain_score = 65 + min(20, (flow_val / 100_000_000) * 5)
+    else:
+        # Altcoins: use price momentum + volume
+        onchain_score = 60 + (price_data.get("change_24h", 0) * 2)
+
+    onchain_score = max(0, min(100, onchain_score))
+
+    # News: default 60 (neutral without LLM analysis)
+    news_score = 60
+
+    # Sentiment: F&G Index
+    if fng:
+        # F&G > 65 = greed = bullish for BTC/ETH, potentially topping for alts
+        sentiment_score = fng["current"]
+    else:
+        sentiment_score = 55
+
+    total = (
+        onchain_score * 0.40
+        + ta_score * 0.30
+        + news_score * 0.20
+        + sentiment_score * 0.10
+    )
+    return int(total), {
+        "onchain": int(onchain_score),
+        "ta": int(ta_score),
+        "news": news_score,
+        "sentiment": int(sentiment_score),
+    }
+
+
+def score_to_action(score, regime):
+    """Score → action mapping (zgodne z Fusion 2.0 spec)."""
+    if score >= 75:
+        return "STRONG_BUY"
+    elif score >= 60:
+        return "BUY"
+    elif score >= 40:
+        return "HOLD"
+    elif score >= 25:
+        return "SELL" if regime != "TRENDING_UP" else "HOLD"
+    else:
+        return "STRONG_SELL" if regime != "TRENDING_UP" else "SKIP"
+
+
+def compute_size(score, regime, ticker):
+    """Position sizing na bazie score + regime multiplier."""
+    if score < 60:
+        return 0
+    base = max(0.5, (score - 60) * 0.1)  # 60 = 0.5%, 80 = 2.0%
+    multiplier = {
+        "TRENDING_UP": 1.0,
+        "TRENDING_UP_VOLATILE": 0.7,
+        "RANGING": 0.6,
+        "TRENDING_DOWN": 0.3,
+        "CRASH": 0.1,
+    }.get(regime, 0.7)
+    # Weekend defensive
+    if datetime.now().weekday() in (5, 6):
+        multiplier *= 0.7
+    # SUI/small altcoins → cap
+    if ticker in ("SUI", "XRP"):
+        return round(min(1.0, base * multiplier), 2)
+    return round(min(2.5, base * multiplier), 2)
+
+
+def generate_catalyst_calendar():
+    """
+    Generuje real catalyst calendar dla widget'a (parseable dates).
+    Kombinuje:
+    - Znane fixed events (Sep 15 CLARITY vote)
+    - Compute'owane recurring events (PCE = last Tue of month, CPI = 2nd Wed, FOMC dates)
+    - Weekly rhythm (Fed speeches, ETF flow updates)
+    """
+    from datetime import date, timedelta
+    now = datetime.now()
+    today = date.today()
+    events = []
+
+    # ─── Fixed known events ───
+    fixed_events = [
+        (date(2026, 9, 15), "Pon 15.09: CLARITY Act Senate cloture vote — mid-term regulatory catalyst"),
+        (date(2026, 10, 28), "Wt 28.10: Next FOMC decision + press conf 14:30 ET"),
+        (date(2026, 12, 16), "Wt 16.12: FOMC year-end decision"),
+    ]
+    for d, text in fixed_events:
+        if d >= today and (d - today).days < 90:
+            events.append(text)
+
+    # ─── Compute next PCE (usually last Friday of month, historically ~28th) ───
+    # PCE typically released Friday of last full week; approximating as last Friday
+    for m_ahead in range(2):
+        target_month = now.month + m_ahead
+        target_year = now.year
+        if target_month > 12:
+            target_month -= 12
+            target_year += 1
+        # Last day of month
+        if target_month == 12:
+            last_day = date(target_year + 1, 1, 1) - timedelta(days=1)
+        else:
+            last_day = date(target_year, target_month + 1, 1) - timedelta(days=1)
+        # Find last Friday
+        while last_day.weekday() != 4:  # 4 = Friday
+            last_day -= timedelta(days=1)
+        if last_day >= today:
+            month_pl = {1:"sty",2:"lut",3:"mar",4:"kwi",5:"maj",6:"cze",7:"lip",8:"sie",9:"wrz",10:"paź",11:"lis",12:"gru"}[target_month]
+            events.append(f"Pt {last_day.day:02d}.{target_month:02d}: {month_pl.upper()} PCE Core release 8:30 ET (14:30 CET) — TIER-1 macro event")
+
+    # ─── Compute next CPI (usually 2nd Wed of month) ───
+    for m_ahead in range(2):
+        target_month = now.month + m_ahead
+        target_year = now.year
+        if target_month > 12:
+            target_month -= 12
+            target_year += 1
+        first_day = date(target_year, target_month, 1)
+        # Find 2nd Wednesday
+        days_to_wed = (2 - first_day.weekday()) % 7
+        second_wed = first_day + timedelta(days=days_to_wed + 7)
+        if second_wed >= today:
+            events.append(f"Śr {second_wed.day:02d}.{target_month:02d}: US CPI release 8:30 ET (14:30 CET)")
+
+    # ─── This week: ETF flow watch (daily 4pm ET) ───
+    events.append(f"Codziennie: BTC + ETH ETF flow tape post-4pm ET (22:00 CET) — key institutional signal")
+
+    # ─── Weekly rhythm ───
+    weekday = now.weekday()  # 0=Mon
+    if weekday == 4:  # Friday
+        events.append("Dziś (Pt): weekly market close — rebalance przed weekend")
+    elif weekday == 0:
+        events.append("Dziś (Pon): US market open po weekend — fresh signals")
+
+    return events[:12]  # cap at 12 events
+
+
+def detect_regime(btc_price_data, fng, btc_dominance):
+    """
+    Simple regime detection:
+    - BTC 24h > +3% + F&G > 65 → TRENDING_UP
+    - BTC 24h < -3% + F&G < 35 → TRENDING_DOWN
+    - Wysoki volatility (24h range > 5%) → *_VOLATILE
+    - Inaczej → RANGING
+    """
+    if not btc_price_data:
+        return "RANGING"
+    change = btc_price_data.get("change_24h", 0)
+    price = btc_price_data.get("price", 1)
+    high = btc_price_data.get("high_24h", 1)
+    low = btc_price_data.get("low_24h", 1)
+    range_pct = (high - low) / price * 100
+
+    if change > 3 and fng and fng.get("current", 50) > 60:
+        return "TRENDING_UP_VOLATILE" if range_pct > 5 else "TRENDING_UP"
+    if change < -3 and fng and fng.get("current", 50) < 40:
+        return "TRENDING_DOWN_VOLATILE" if range_pct > 5 else "TRENDING_DOWN"
+    if change < -8:
+        return "CRASH"
+    return "RANGING"
+
+
+def generate_fusion():
+    """Main — generate today's fusion JSON."""
+    print(f"[auto-fusion] Starting @ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+    prices = fetch_prices()
+    if not prices:
+        print("[error] Failed to fetch prices — abort")
+        sys.exit(1)
+    print(f"[data] Prices: {len(prices)} tickers")
+
+    fng = fetch_fng()
+    print(f"[data] F&G: {fng['current'] if fng else 'N/A'}")
+
+    dom = fetch_btc_dominance()
+    print(f"[data] BTC dominance: {dom:.2f}%" if dom else "[data] Dominance: N/A")
+
+    etf_flows = fetch_etf_flows()
+    print(f"[data] ETF flows: {'✓' if etf_flows else 'N/A'}")
+
+    regime = detect_regime(prices.get("BTC"), fng, dom)
+    print(f"[regime] {regime}")
+
+    decisions = []
+    for ticker in ["BTC", "ETH", "SOL", "XRP", "SUI"]:
+        klines = fetch_klines(ticker)
+        ta_score = compute_ta_score(klines)
+        score, sources = compute_score(ticker, prices.get(ticker, {}), ta_score, fng, etf_flows)
+        action = score_to_action(score, regime)
+        size = compute_size(score, regime, ticker)
+        current_price = prices.get(ticker, {}).get("price", 0)
+
+        # Entry/SL/TP dynamiczne (proste %-based)
+        if size > 0:
+            entry_low = round(current_price * 0.985, 4)
+            entry_high = round(current_price * 1.015, 4)
+            sl = round(current_price * 0.95, 4)
+            tp1 = round(current_price * 1.06, 4)
+            tp2 = round(current_price * 1.12, 4)
+        else:
+            entry_low = entry_high = sl = tp1 = tp2 = None
+
+        decisions.append({
+            "rank": len(decisions) + 1,
+            "ticker": ticker,
+            "direction": "long" if action in ("STRONG_BUY", "BUY") else None,
+            "score": score,
+            "action": action,
+            "size_pct": size,
+            "entry_low": entry_low,
+            "entry_high": entry_high,
+            "sl": sl,
+            "tp1": tp1,
+            "tp2": tp2,
+            "sources": sources,
+            "onchain_data_thin": False,
+            "risk_flag": f"Auto-generated {datetime.now().strftime('%H:%M')}. TA {ta_score}/100. Current ${current_price:.2f} ({prices[ticker]['change_24h']:+.2f}% 24h).",
+            "invalidation_note": f"SL @ ${sl}" if sl else "Not entered",
+        })
+
+    # Sort by score descending
+    decisions.sort(key=lambda x: -x["score"])
+    for i, d in enumerate(decisions):
+        d["rank"] = i + 1
+
+    aggregate_risk = sum(d["size_pct"] for d in decisions if d["direction"] == "long")
+
+    fusion = {
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "version": f"auto-{datetime.now().strftime('%H%M')}",
+        "regime": regime,
+        "regime_note": (
+            f"Auto-generated {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}. "
+            f"BTC ${prices.get('BTC', {}).get('price', 0):.0f} ({prices.get('BTC', {}).get('change_24h', 0):+.2f}% 24h), "
+            f"F&G {fng['current'] if fng else 'N/A'} ({fng['classification'] if fng else 'N/A'}), "
+            f"BTC.D {dom:.2f}% if dom else 'N/A'. "
+            f"Weekday sizing ×1.0"
+            f"{' (weekend ×0.7 applied)' if datetime.now().weekday() in (5, 6) else ''}."
+        ),
+        "weights": {"onchain": 0.40, "ta": 0.30, "news": 0.20, "sentiment": 0.10},
+        "data_provenance": "Auto-fetched: Binance prices/klines, alternative.me F&G, CoinGecko BTC.D, Farside ETF flows. NO Claude credits used.",
+        "decisions": decisions,
+        "aggregate_long_risk_pct": round(aggregate_risk, 1),
+        "aggregate_short_risk_pct": 0,
+        "correlation_warnings": [
+            "Auto-fusion nie zawiera qualitative context (news, catalysts). Traktuj jako baseline — Claude fusion daje szerszy context.",
+        ],
+        "short_blocked_by_regime": [] if "DOWN" in regime else ["Regime bullish blokuje shorts"],
+        "catalyst_calendar_this_week": generate_catalyst_calendar(),
+        "conclusion": (
+            f"Regime {regime}. Aggregate risk {aggregate_risk:.1f}% capital. "
+            f"Top pick: {decisions[0]['ticker']} score {decisions[0]['score']} "
+            f"({decisions[0]['action']})."
+        ),
+    }
+
+    # Write to file
+    out_path = FUSION_DIR / f"fusion_{fusion['date']}.json"
+    out_path.write_text(json.dumps(fusion, indent=2, ensure_ascii=False))
+    print(f"[save] Written to {out_path}")
+
+    # Upload to Gist via paper_bot.py
+    print("[upload] Calling paper_bot.py upload...")
+    os.system(f"python3 {FUSION_DIR}/paper_bot.py upload")
+
+    print(f"[done] Fusion {fusion['date']} generated + uploaded")
+
+
+def loop_mode(interval_hours):
+    """Run auto-fusion + auto-refresh in loop."""
+    interval_sec = interval_hours * 3600
+    while True:
+        try:
+            generate_fusion()
+            # Also run paper_bot check + upload for fresh news/whales
+            print("[loop] Running paper_bot refresh...")
+            os.system(f"python3 {FUSION_DIR}/paper_bot.py refresh")
+        except Exception as e:
+            print(f"[loop] error: {e}")
+        next_run = datetime.now().timestamp() + interval_sec
+        print(f"[loop] Next run at {datetime.fromtimestamp(next_run).strftime('%H:%M')}")
+        time.sleep(interval_sec)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="TVC Auto-Fusion (no Claude credits)")
+    parser.add_argument("--loop", type=str, help="Loop mode with interval (e.g. '4h' or '2h')")
+    args = parser.parse_args()
+
+    if args.loop:
+        hours = float(args.loop.rstrip("h"))
+        print(f"[auto-fusion] Loop mode: every {hours}h")
+        loop_mode(hours)
+    else:
+        generate_fusion()
