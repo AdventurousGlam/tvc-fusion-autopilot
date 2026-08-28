@@ -825,15 +825,15 @@ def _fetch_live_whales():
 
     # ─── Fetch prices upfront (Binance) for BTC + ETH → USD conversion ───
     try:
-        btc_usd = float(_get_json("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT").get("price", 0))
+        btc_usd = float(_get_json("https://data-api.binance.vision/api/v3/ticker/price?symbol=BTCUSDT").get("price", 0))
     except Exception:
         btc_usd = 0
     try:
-        eth_usd = float(_get_json("https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT").get("price", 0))
+        eth_usd = float(_get_json("https://data-api.binance.vision/api/v3/ticker/price?symbol=ETHUSDT").get("price", 0))
     except Exception:
         eth_usd = 0
     try:
-        xrp_usd = float(_get_json("https://api.binance.com/api/v3/ticker/price?symbol=XRPUSDT").get("price", 0))
+        xrp_usd = float(_get_json("https://data-api.binance.vision/api/v3/ticker/price?symbol=XRPUSDT").get("price", 0))
     except Exception:
         xrp_usd = 0
 
@@ -1382,7 +1382,7 @@ def _fetch_current_price(ticker):
     sym = sym_map.get(ticker.upper())
     if not sym:
         raise ValueError(f"Unknown ticker {ticker}")
-    url = f"https://api.binance.com/api/v3/ticker/price?symbol={sym}"
+    url = f"https://data-api.binance.vision/api/v3/ticker/price?symbol={sym}"
     req = ur.Request(url, headers={"User-Agent": "Mozilla/5.0 tvc-fusion-bot/0.2"})
     with ur.urlopen(req, timeout=10, context=ssl_ctx) as resp:
         return float(json.loads(resp.read()).get('price', 0))

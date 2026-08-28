@@ -56,7 +56,7 @@ def fetch_prices():
     # Compact JSON (no spaces) + URL-encode żeby uniknąć control characters w URL
     symbols_json = json.dumps(list(BINANCE.values()), separators=(",", ":"))
     symbols_encoded = quote(symbols_json)
-    url = f"https://api.binance.com/api/v3/ticker/24hr?symbols={symbols_encoded}"
+    url = f"https://data-api.binance.vision/api/v3/ticker/24hr?symbols={symbols_encoded}"
     data = _get_json(url)
     result = {}
     for item in data:
@@ -77,7 +77,7 @@ def fetch_klines(ticker, interval="1d", limit=30):
     sym = BINANCE.get(ticker)
     if not sym:
         return []
-    url = f"https://api.binance.com/api/v3/klines?symbol={sym}&interval={interval}&limit={limit}"
+    url = f"https://data-api.binance.vision/api/v3/klines?symbol={sym}&interval={interval}&limit={limit}"
     return _get_json(url)
 
 
