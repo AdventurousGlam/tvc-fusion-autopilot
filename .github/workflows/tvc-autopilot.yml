@@ -20,11 +20,15 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GIST_PAT }}
       TVC_GIST_ID: ${{ secrets.TVC_GIST_ID }}
     steps:
-      - name: Checkout repo do $HOME/Claude/TVCFusion
+      - name: Checkout repo (standard path)
         uses: actions/checkout@v4
         with:
-          path: home-clone/Claude/TVCFusion
           fetch-depth: 0
+
+      - name: Link checkout do $HOME/Claude/TVCFusion (skrypty używają Path.home())
+        run: |
+          mkdir -p /home/runner/home-clone/Claude
+          ln -s "$GITHUB_WORKSPACE" /home/runner/home-clone/Claude/TVCFusion
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -34,7 +38,7 @@ jobs:
       - name: Install optional deps
         run: pip install certifi
 
-      - name: Run auto_fusion (fresh algorithmic signals)
+      - name: Run auto_fusion (fresh algorytmiczne sygnały)
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 auto_fusion.py
 
