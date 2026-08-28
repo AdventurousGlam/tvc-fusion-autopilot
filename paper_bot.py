@@ -58,7 +58,7 @@ EXCHANGE_ID = os.environ.get("TVC_EXCHANGE", "bybit")
 LONG_SIZE_CAP_PCT = 3.0     # max % capital per LONG trade
 SHORT_SIZE_CAP_PCT = 0.5    # max % capital per SHORT trade (unlimited upside risk)
 # v0.2 — SHORT regime constraint: only allow SHORTs in these regimes
-SHORT_ALLOWED_REGIMES = {"TRENDING_DOWN", "CRASH"}
+SHORT_ALLOWED_REGIMES = {"TRENDING_DOWN", "TRENDING_DOWN_VOLATILE", "CRASH"}
 
 # --- ccxt lazy import (bot still runs `init` without it) ---------------
 

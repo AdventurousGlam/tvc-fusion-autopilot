@@ -2343,15 +2343,37 @@ async function refreshPerpMetrics() {
 // LIVE LIQUIDATIONS — Binance perp force order WS (real-time)
 // ═══════════════════════════════════════════════════════════════════════════
 let _liqWS = null;
+let _liqWSStatus = 'connecting';  // 'connecting' | 'open' | 'closed'
+let _liqReconnectTimer = null;
+let _liqReconnectDelay = 3000;  // ms, grows on repeated failures (capped below)
+let _liqLastMsgAt = 0;
 const recentLiquidations = [];  // [{ ticker, side, qty, price, notional, ts }]
+
 function openLiquidationsWS() {
-  if (_liqWS) return;
+  if (_liqWS && (_liqWS.readyState === WebSocket.OPEN || _liqWS.readyState === WebSocket.CONNECTING)) return;
+  if (_liqReconnectTimer) { clearTimeout(_liqReconnectTimer); _liqReconnectTimer = null; }
   try {
+    _liqWSStatus = 'connecting';
+    renderLiquidationsPanel();
     _liqWS = new WebSocket('wss://fstream.binance.com/ws/!forceOrder@arr');
-    _liqWS.onopen = () => console.log('[liq] WS open');
+    _liqWS.onopen = () => {
+      console.log('[liq] WS open');
+      _liqWSStatus = 'open';
+      _liqReconnectDelay = 3000;  // reset backoff on successful connect
+      renderLiquidationsPanel();
+    };
     _liqWS.onerror = (e) => console.warn('[liq] WS error', e);
+    _liqWS.onclose = () => {
+      console.warn('[liq] WS closed — reconnecting in', _liqReconnectDelay, 'ms');
+      _liqWSStatus = 'closed';
+      renderLiquidationsPanel();
+      _liqWS = null;
+      _liqReconnectTimer = setTimeout(openLiquidationsWS, _liqReconnectDelay);
+      _liqReconnectDelay = Math.min(_liqReconnectDelay * 1.5, 30000);  // cap backoff at 30s
+    };
     _liqWS.onmessage = (msg) => {
       try {
+        _liqLastMsgAt = Date.now();
         const d = JSON.parse(msg.data);
         const o = d.o;
         if (!o) return;
@@ -2378,8 +2400,26 @@ function openLiquidationsWS() {
         renderLiquidationsPanel();
       } catch (e) {}
     };
-  } catch (e) { console.warn('[liq] failed to open WS:', e); }
+  } catch (e) {
+    console.warn('[liq] failed to open WS:', e);
+    _liqWSStatus = 'closed';
+    _liqReconnectTimer = setTimeout(openLiquidationsWS, _liqReconnectDelay);
+  }
 }
+
+// Watchdog — some networks (esp. after laptop sleep/wake) drop the socket
+// without ever firing a 'close' event. Check every 20s and force-reconnect
+// if the socket claims to be open/connecting but nothing has come through
+// in a very long time relative to typical force-order frequency.
+setInterval(() => {
+  if (!_liqWS) return;
+  const stuck = _liqWS.readyState === WebSocket.CLOSED || _liqWS.readyState === WebSocket.CLOSING;
+  if (stuck) {
+    console.warn('[liq] watchdog: socket stuck closed, forcing reconnect');
+    _liqWS = null;
+    openLiquidationsWS();
+  }
+}, 20000);
 function renderLiquidationsPanel() {
   const slot = document.getElementById('liquidations-slot');
   if (!slot) return;
@@ -2388,14 +2428,16 @@ function renderLiquidationsPanel() {
   const totalLongLiq = recent.filter(l => l.side === 'SELL').reduce((s, l) => s + l.notional, 0);
   const totalShortLiq = recent.filter(l => l.side === 'BUY').reduce((s, l) => s + l.notional, 0);
   const fmtN = n => n >= 1e6 ? `$${(n/1e6).toFixed(2)}M` : `$${(n/1e3).toFixed(0)}K`;
+  const statusDot = _liqWSStatus === 'open' ? '🟢' : _liqWSStatus === 'connecting' ? '🟡' : '🔴';
+  const statusText = _liqWSStatus === 'open' ? 'Live' : _liqWSStatus === 'connecting' ? 'Łączenie...' : 'Rozłączono — reconnect...';
   slot.innerHTML = `
     <section class="panel hide-eod hide-morning" style="grid-column: span 6;">
       <div class="panel-head">
         <h3>💥 Live Liquidations · Binance perp</h3>
-        <span class="meta">${recent.length} recent · long liq ${fmtN(totalLongLiq)} · short liq ${fmtN(totalShortLiq)}</span>
+        <span class="meta">${statusDot} ${statusText} · ${recent.length} recent · long liq ${fmtN(totalLongLiq)} · short liq ${fmtN(totalShortLiq)}</span>
       </div>
       ${recent.length === 0 ? `
-        <div style="padding:12px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">Zero liquidations detected. WS połączony, czeka na force orders (>$10K).</div>
+        <div style="padding:12px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">${_liqWSStatus === 'open' ? 'Zero liquidations detected jeszcze. WS live, czeka na force orders (>$10K).' : _liqWSStatus === 'connecting' ? 'Łączenie z Binance...' : 'Połączenie zerwane — reconnect w toku (automatyczny).'}</div>
       ` : `
         <div style="max-height:300px;overflow-y:auto;padding-right:4px">
           ${recent.map(l => {

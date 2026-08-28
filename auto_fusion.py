@@ -158,6 +158,24 @@ def compute_ta_score(klines):
     return int(trend_score * 0.5 + momo_score * 0.35 + vol_score * 0.15)
 
 
+def compute_short_term_momentum(klines_1h):
+    """
+    Szybki sygnał momentum z godzinowych świec — łapie breakdowns/pumpy ZANIM
+    zdąży je zauważyć wolna dzienna EMA/7-day return. Bez tego jeden zły dzień
+    prawie nie rusza 20-30-dniowego trendu i TA score zostaje sztucznie wysoki
+    mimo trwającego spadku w ostatnich godzinach.
+    """
+    if not klines_1h or len(klines_1h) < 13:
+        return 50  # neutral — brak danych
+    closes = [float(k[4]) for k in klines_1h]
+    chg_4h = (closes[-1] - closes[-5]) / closes[-5] * 100 if len(closes) >= 5 else 0
+    chg_12h = (closes[-1] - closes[-13]) / closes[-13] * 100 if len(closes) >= 13 else 0
+    # Recent (4h) move waży mocniej — to jest "wczesne ostrzeżenie" zanim
+    # trend dzienny zdąży zareagować
+    score = 50 + (chg_4h * 4) + (chg_12h * 1.5)
+    return max(0, min(100, int(score)))
+
+
 def compute_score(ticker, price_data, ta_score, fng, etf_flows):
     """
     Combined fusion score 0-100.
@@ -216,20 +234,44 @@ def score_to_action(score, regime):
 
 
 def compute_size(score, regime, ticker):
-    """Position sizing na bazie score + regime multiplier."""
-    if score < 60:
-        return 0
-    base = max(0.5, (score - 60) * 0.1)  # 60 = 0.5%, 80 = 2.0%
-    multiplier = {
-        "TRENDING_UP": 1.0,
-        "TRENDING_UP_VOLATILE": 0.7,
-        "RANGING": 0.6,
-        "TRENDING_DOWN": 0.3,
-        "CRASH": 0.1,
-    }.get(regime, 0.7)
-    # Weekend defensive
+    """
+    Position sizing na bazie score + regime multiplier.
+    score >= 60  → LONG sizing (wyższy score = większa pozycja)
+    score <= 35  → SHORT sizing (niższy score = większa pozycja, symetrycznie do long)
+    36-59        → no man's land, brak pozycji (score za neutralny w obie strony)
+    """
     if datetime.now().weekday() in (5, 6):
-        multiplier *= 0.7
+        weekend_mult = 0.7  # weekend defensive, obie strony
+    else:
+        weekend_mult = 1.0
+
+    if score >= 60:
+        base = max(0.5, (score - 60) * 0.1)  # 60 = 0.5%, 80 = 2.0%
+        multiplier = {
+            "TRENDING_UP": 1.0,
+            "TRENDING_UP_VOLATILE": 0.7,
+            "RANGING": 0.6,
+            "TRENDING_DOWN": 0.3,
+            "TRENDING_DOWN_VOLATILE": 0.2,
+            "CRASH": 0.1,
+        }.get(regime, 0.7)
+    elif score < 40:
+        # próg wyrównany z score_to_action() (SELL/STRONG_SELL zaczyna się < 40)
+        base = max(0.5, (40 - score) * 0.075)  # 39 = 0.5%, 20 = 1.5%, 0 = 3.0%
+        # Regime multiplier dla SHORT: odwrotny do long — trend spadkowy zwiększa
+        # przekonanie do shortów, trend wzrostowy je tłumi (nie walcz z trendem)
+        multiplier = {
+            "TRENDING_DOWN": 1.0,
+            "TRENDING_DOWN_VOLATILE": 0.8,
+            "CRASH": 0.6,  # crash = duża zmienność, mniejszy size mimo wysokiej konwikcji
+            "RANGING": 0.5,
+            "TRENDING_UP": 0.15,
+            "TRENDING_UP_VOLATILE": 0.1,
+        }.get(regime, 0.4)
+    else:
+        return 0
+
+    multiplier *= weekend_mult
     # SUI/small altcoins → cap
     if ticker in ("SUI", "XRP"):
         return round(min(1.0, base * multiplier), 2)
@@ -308,10 +350,14 @@ def generate_catalyst_calendar():
 
 def detect_regime(btc_price_data, fng, btc_dominance):
     """
-    Simple regime detection:
-    - BTC 24h > +3% + F&G > 65 → TRENDING_UP
-    - BTC 24h < -3% + F&G < 35 → TRENDING_DOWN
-    - Wysoki volatility (24h range > 5%) → *_VOLATILE
+    Regime detection:
+    - BTC 24h < -8% → CRASH (price-led, no F&G gate — crashes don't wait for sentiment to catch up)
+    - BTC 24h < -3% → TRENDING_DOWN (price-led — F&G LAGS price, requiring F&G<40 too often
+      blocked real downtrends where sentiment hadn't caught up yet, e.g. F&G still "Greed"
+      the same day BTC dropped -3%+. Price action is the primary signal for direction.)
+    - BTC 24h > +3% + F&G > 60 → TRENDING_UP (kept F&G-gated: chasing pumps without sentiment
+      confirmation is a worse failure mode than being slow to catch an uptrend)
+    - Wysoki volatility (24h range > 5%) → *_VOLATILE variant
     - Inaczej → RANGING
     """
     if not btc_price_data:
@@ -322,12 +368,12 @@ def detect_regime(btc_price_data, fng, btc_dominance):
     low = btc_price_data.get("low_24h", 1)
     range_pct = (high - low) / price * 100
 
-    if change > 3 and fng and fng.get("current", 50) > 60:
-        return "TRENDING_UP_VOLATILE" if range_pct > 5 else "TRENDING_UP"
-    if change < -3 and fng and fng.get("current", 50) < 40:
-        return "TRENDING_DOWN_VOLATILE" if range_pct > 5 else "TRENDING_DOWN"
     if change < -8:
         return "CRASH"
+    if change < -3:
+        return "TRENDING_DOWN_VOLATILE" if range_pct > 5 else "TRENDING_DOWN"
+    if change > 3 and fng and fng.get("current", 50) > 60:
+        return "TRENDING_UP_VOLATILE" if range_pct > 5 else "TRENDING_UP"
     return "RANGING"
 
 
@@ -355,27 +401,45 @@ def generate_fusion():
 
     decisions = []
     for ticker in ["BTC", "ETH", "SOL", "XRP", "SUI"]:
-        klines = fetch_klines(ticker)
-        ta_score = compute_ta_score(klines)
+        klines = fetch_klines(ticker)  # daily, 30 candles — trend/momentum baseline
+        daily_ta_score = compute_ta_score(klines)
+        klines_1h = fetch_klines(ticker, interval="1h", limit=24)  # last 24h, hourly
+        short_term_score = compute_short_term_momentum(klines_1h)
+        # Blend: 60% daily trend (stability) + 40% short-term momentum (wyczulenie na
+        # świeże ruchy — łapie breakdowns na niższych interwałach zanim zrobi to dzienny trend)
+        ta_score = int(daily_ta_score * 0.6 + short_term_score * 0.4)
         score, sources = compute_score(ticker, prices.get(ticker, {}), ta_score, fng, etf_flows)
         action = score_to_action(score, regime)
         size = compute_size(score, regime, ticker)
         current_price = prices.get(ticker, {}).get("price", 0)
 
-        # Entry/SL/TP dynamiczne (proste %-based)
-        if size > 0:
+        direction = None
+        if action in ("STRONG_BUY", "BUY"):
+            direction = "long"
+        elif action in ("SELL", "STRONG_SELL"):
+            direction = "short"
+
+        # Entry/SL/TP dynamiczne (proste %-based) — mirrored dla short: SL powyżej
+        # entry, TP poniżej entry (odwrotnie niż long)
+        if size > 0 and direction == "long":
             entry_low = round(current_price * 0.985, 4)
             entry_high = round(current_price * 1.015, 4)
             sl = round(current_price * 0.95, 4)
             tp1 = round(current_price * 1.06, 4)
             tp2 = round(current_price * 1.12, 4)
+        elif size > 0 and direction == "short":
+            entry_low = round(current_price * 0.985, 4)
+            entry_high = round(current_price * 1.015, 4)
+            sl = round(current_price * 1.05, 4)
+            tp1 = round(current_price * 0.94, 4)
+            tp2 = round(current_price * 0.88, 4)
         else:
             entry_low = entry_high = sl = tp1 = tp2 = None
 
         decisions.append({
             "rank": len(decisions) + 1,
             "ticker": ticker,
-            "direction": "long" if action in ("STRONG_BUY", "BUY") else None,
+            "direction": direction,
             "score": score,
             "action": action,
             "size_pct": size,
@@ -386,7 +450,7 @@ def generate_fusion():
             "tp2": tp2,
             "sources": sources,
             "onchain_data_thin": False,
-            "risk_flag": f"Auto-generated {datetime.now().strftime('%H:%M')}. TA {ta_score}/100. Current ${current_price:.2f} ({prices[ticker]['change_24h']:+.2f}% 24h).",
+            "risk_flag": f"Auto-generated {datetime.now().strftime('%H:%M')}. TA {ta_score}/100 (daily {daily_ta_score} · 1h momentum {short_term_score}). Current ${current_price:.2f} ({prices[ticker]['change_24h']:+.2f}% 24h).",
             "invalidation_note": f"SL @ ${sl}" if sl else "Not entered",
         })
 
@@ -396,6 +460,7 @@ def generate_fusion():
         d["rank"] = i + 1
 
     aggregate_risk = sum(d["size_pct"] for d in decisions if d["direction"] == "long")
+    aggregate_short_risk = sum(d["size_pct"] for d in decisions if d["direction"] == "short")
 
     fusion = {
         "date": datetime.now().strftime("%Y-%m-%d"),
@@ -413,14 +478,14 @@ def generate_fusion():
         "data_provenance": "Auto-fetched: Binance prices/klines, alternative.me F&G, CoinGecko BTC.D, Farside ETF flows. NO Claude credits used.",
         "decisions": decisions,
         "aggregate_long_risk_pct": round(aggregate_risk, 1),
-        "aggregate_short_risk_pct": 0,
+        "aggregate_short_risk_pct": round(aggregate_short_risk, 1),
         "correlation_warnings": [
             "Auto-fusion nie zawiera qualitative context (news, catalysts). Traktuj jako baseline — Claude fusion daje szerszy context.",
         ],
-        "short_blocked_by_regime": [] if "DOWN" in regime else ["Regime bullish blokuje shorts"],
+        "short_blocked_by_regime": [] if regime in ("TRENDING_DOWN", "TRENDING_DOWN_VOLATILE", "CRASH") else [f"Regime {regime} — shorty dozwolone tylko w TRENDING_DOWN/CRASH (paper_bot SHORT_ALLOWED_REGIMES gate)"],
         "catalyst_calendar_this_week": generate_catalyst_calendar(),
         "conclusion": (
-            f"Regime {regime}. Aggregate risk {aggregate_risk:.1f}% capital. "
+            f"Regime {regime}. Long risk {aggregate_risk:.1f}% · Short risk {aggregate_short_risk:.1f}% capital. "
             f"Top pick: {decisions[0]['ticker']} score {decisions[0]['score']} "
             f"({decisions[0]['action']})."
         ),
