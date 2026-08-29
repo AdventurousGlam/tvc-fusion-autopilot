@@ -4,9 +4,10 @@ name: TVC Fusion Auto-Pilot
 # nie wymaga włączonego komputera. Zero kredytów Claude (czysty Python).
 
 on:
-  schedule:
-    - cron: '*/5 * * * *'
-  workflow_dispatch: {}   # pozwala odpalić ręcznie z zakładki Actions na GitHubie
+  # Wewnętrzny cron GitHuba usunięty — niewiarygodny przy interwałach <15 min
+  # (potrafił nie odpalić się godzinami). Cykliczność co 5 min zapewnia teraz
+  # zewnętrzny, niezawodny trigger z cron-job.org wołający workflow_dispatch.
+  workflow_dispatch: {}   # pozwala odpalić ręcznie z zakładki Actions LUB z zewnętrznego crona
 
 concurrency:
   group: tvc-fusion
@@ -59,5 +60,20 @@ jobs:
           git config user.name "tvc-autopilot"
           git config user.email "autopilot@tvcfusion.local"
           git add fusion_*.json paper_trades.db
-          git diff --cached --quiet || git commit -m "auto-update $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          git push
+          if git diff --cached --quiet; then
+            echo "Brak zmian do commitu."
+            exit 0
+          fi
+          git commit -m "auto-update $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          # Retry z rebase — chroni przed race condition gdy dwa runy nachodzą na siebie w czasie
+          for i in 1 2 3 4 5; do
+            if git push; then
+              echo "Push OK (próba $i)."
+              exit 0
+            fi
+            echo "Push odrzucony (próba $i) — pull --rebase i ponawiam..."
+            git pull --rebase origin main
+            sleep $((RANDOM % 8 + 3))
+          done
+          echo "Push nie powiódł się po 5 próbach."
+          exit 1
