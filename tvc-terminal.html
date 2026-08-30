@@ -4690,8 +4690,23 @@ function renderTokenDetailShell(ticker) {
   `;
 }
 
+function msLabel(ms) {
+  if (!ms) return '—';
+  const trendLabel = { bullish: 'Bullish', bearish: 'Bearish', neutral: 'Neutral' }[ms.trend] || ms.trend;
+  if (!ms.last_event) return trendLabel;
+  const eventLabel = { BOS_UP: 'BOS ↑', BOS_DOWN: 'BOS ↓', CHOCH_BULL: '⚡ CHoCH ↑', CHOCH_BEAR: '⚡ CHoCH ↓' }[ms.last_event] || ms.last_event;
+  return `${trendLabel} · ${eventLabel}`;
+}
+function msColorClass(ms) {
+  if (!ms) return '';
+  if (ms.trend === 'bearish') return 'neg';
+  if (ms.trend === 'bullish') return 'pos';
+  return 'amber';
+}
+
 function renderInfoCards(ticker, dec, openPos) {
   const s = dec.sources || {};
+  const ms = dec.market_structure || null;
   const hasSetup = dec.entry_low != null || dec.sl != null;
 
   const setupCard = hasSetup ? `
@@ -4729,6 +4744,16 @@ function renderInfoCards(ticker, dec, openPos) {
         ${dec.onchain_data_thin ? `<div class="row"><div class="k">⚠ Note</div><div class="v amber">Thin on-chain data — defaults used</div></div>` : ''}
       </div>
     </div>
+
+    ${ms ? `
+    <div class="td-info-card onchain">
+      <h4>📐 Market Structure (BOS / CHoCH)</h4>
+      <div class="kv-list">
+        <div class="row"><div class="k">1h</div><div class="v ${msColorClass(ms['1h'])}">${msLabel(ms['1h'])}</div></div>
+        <div class="row"><div class="k">15m</div><div class="v ${msColorClass(ms['15m'])}">${msLabel(ms['15m'])}</div></div>
+      </div>
+      <div style="margin-top:6px;font-size:10px;color:var(--text-muted);line-height:1.4">BOS = kontynuacja trendu · ⚡ CHoCH = złamanie struktury, wczesny sygnał odwrócenia.</div>
+    </div>` : ''}
 
     <div class="td-info-card ${dec.risk_flag ? 'risk' : 'news'}">
       <h4>Risk Flags & Context — ${ticker} <span style="float:right;font-weight:500;color:var(--text-dim);text-transform:none;letter-spacing:0">${fusionAgeLabel()}</span></h4>
