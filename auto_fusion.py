@@ -176,6 +176,112 @@ def compute_short_term_momentum(klines_1h):
     return max(0, min(100, int(score)))
 
 
+def detect_swing_points(klines, lookback=2):
+    """
+    Proste wykrywanie swing high/low metodą fraktalną: świeca i jest swing high
+    jeśli jej high jest wyższe niż `lookback` świec przed i po niej (analogicznie
+    dla swing low). Zwraca listę {idx, type: 'H'/'L', price} posortowaną wg idx,
+    z deduplikacją kolejnych swingów tego samego typu (zostaje bardziej ekstremalny).
+    """
+    if not klines or len(klines) < (lookback * 2 + 3):
+        return []
+    highs = [float(k[2]) for k in klines]
+    lows = [float(k[3]) for k in klines]
+    n = len(klines)
+    swings = []
+    for i in range(lookback, n - lookback):
+        left_h, right_h = highs[i - lookback:i], highs[i + 1:i + 1 + lookback]
+        left_l, right_l = lows[i - lookback:i], lows[i + 1:i + 1 + lookback]
+        if highs[i] > max(left_h) and highs[i] > max(right_h):
+            swings.append({"idx": i, "type": "H", "price": highs[i]})
+        if lows[i] < min(left_l) and lows[i] < min(right_l):
+            swings.append({"idx": i, "type": "L", "price": lows[i]})
+    swings.sort(key=lambda s: s["idx"])
+
+    cleaned = []
+    for s in swings:
+        if cleaned and cleaned[-1]["type"] == s["type"]:
+            if (s["type"] == "H" and s["price"] > cleaned[-1]["price"]) or \
+               (s["type"] == "L" and s["price"] < cleaned[-1]["price"]):
+                cleaned[-1] = s
+        else:
+            cleaned.append(s)
+    return cleaned
+
+
+def analyze_market_structure(klines, lookback=2):
+    """
+    Market structure w stylu smart-money: trend (higher-highs/higher-lows = bullish,
+    lower-highs/lower-lows = bearish), BOS (Break of Structure — kontynuacja trendu,
+    przełamanie ostatniego swingu W KIERUNKU trendu) i CHoCH (Change of Character —
+    pierwsze przełamanie PRZECIWKO trendowi, sygnał potencjalnego odwrócenia).
+    Potwierdzenie przez CLOSE świecy (nie knot) — mniej fałszywych sygnałów.
+    Zwraca: trend, last_event (BOS_UP/BOS_DOWN/CHOCH_BULL/CHOCH_BEAR/None),
+    last_event_price, score (0-100, >50 = bias bullish, <50 = bias bearish).
+    """
+    default = {"trend": "neutral", "last_event": None, "last_event_price": None, "score": 50}
+    if not klines or len(klines) < (lookback * 2 + 5):
+        return default
+
+    swings = detect_swing_points(klines, lookback=lookback)
+    if len(swings) < 2:
+        return default
+
+    closes = [float(k[4]) for k in klines]
+    highs_seq = [s for s in swings if s["type"] == "H"]
+    lows_seq = [s for s in swings if s["type"] == "L"]
+
+    trend = "neutral"
+    if len(highs_seq) >= 2 and len(lows_seq) >= 2:
+        if highs_seq[-1]["price"] > highs_seq[-2]["price"] and lows_seq[-1]["price"] > lows_seq[-2]["price"]:
+            trend = "bullish"
+        elif highs_seq[-1]["price"] < highs_seq[-2]["price"] and lows_seq[-1]["price"] < lows_seq[-2]["price"]:
+            trend = "bearish"
+
+    last_high = highs_seq[-1]["price"] if highs_seq else None
+    last_low = lows_seq[-1]["price"] if lows_seq else None
+    last_swing_idx = swings[-1]["idx"]
+
+    last_event, last_event_price = None, None
+    for i in range(last_swing_idx + 1, len(closes)):
+        c = closes[i]
+        if trend == "bullish":
+            if last_low is not None and c < last_low:
+                last_event, last_event_price = "CHOCH_BEAR", c
+                trend = "bearish"
+                last_low = c  # nowy punkt odniesienia dla ew. kontynuacji w dół (BOS_DOWN)
+            elif last_high is not None and c > last_high:
+                last_event, last_event_price = "BOS_UP", c
+                last_high = c
+        elif trend == "bearish":
+            if last_high is not None and c > last_high:
+                last_event, last_event_price = "CHOCH_BULL", c
+                trend = "bullish"
+                last_high = c
+            elif last_low is not None and c < last_low:
+                last_event, last_event_price = "BOS_DOWN", c
+                last_low = c
+        else:
+            break
+
+    score_map = {"CHOCH_BEAR": 10, "BOS_DOWN": 25, "BOS_UP": 75, "CHOCH_BULL": 90}
+    if last_event:
+        score = score_map[last_event]
+    elif trend == "bullish":
+        score = 60
+    elif trend == "bearish":
+        score = 40
+    else:
+        score = 50
+
+    return {
+        "trend": trend,
+        "last_event": last_event,
+        "last_event_price": round(last_event_price, 6) if last_event_price is not None else None,
+        "score": score,
+    }
+
+
 def compute_score(ticker, price_data, ta_score, fng, etf_flows):
     """
     Combined fusion score 0-100.
@@ -403,11 +509,18 @@ def generate_fusion():
     for ticker in ["BTC", "ETH", "SOL", "XRP", "SUI"]:
         klines = fetch_klines(ticker)  # daily, 30 candles — trend/momentum baseline
         daily_ta_score = compute_ta_score(klines)
-        klines_1h = fetch_klines(ticker, interval="1h", limit=24)  # last 24h, hourly
+        klines_1h = fetch_klines(ticker, interval="1h", limit=50)  # ~2 dni godzinowych — kontekst dla struktury
         short_term_score = compute_short_term_momentum(klines_1h)
-        # Blend: 60% daily trend (stability) + 40% short-term momentum (wyczulenie na
-        # świeże ruchy — łapie breakdowns na niższych interwałach zanim zrobi to dzienny trend)
-        ta_score = int(daily_ta_score * 0.6 + short_term_score * 0.4)
+        klines_15m = fetch_klines(ticker, interval="15m", limit=100)  # ~25h, 15-min świece
+
+        # Market structure (BOS/CHoCH) na 1h (mniej szumu) i 15m (czułość na szybkie zmiany)
+        ms_1h = analyze_market_structure(klines_1h, lookback=2)
+        ms_15m = analyze_market_structure(klines_15m, lookback=2)
+        ms_score = int(ms_1h["score"] * 0.6 + ms_15m["score"] * 0.4)
+
+        # Blend: dzienny trend (kontekst) + 1h momentum (świeże ruchy) + market structure
+        # (BOS/CHoCH 15m+1h — łapie change of character zanim zrobi to reszta wskaźników)
+        ta_score = int(daily_ta_score * 0.40 + short_term_score * 0.25 + ms_score * 0.35)
         score, sources = compute_score(ticker, prices.get(ticker, {}), ta_score, fng, etf_flows)
         action = score_to_action(score, regime)
         size = compute_size(score, regime, ticker)
@@ -436,6 +549,13 @@ def generate_fusion():
         else:
             entry_low = entry_high = sl = tp1 = tp2 = None
 
+        ms_note = f"MS 1h:{ms_1h['trend']}"
+        if ms_1h["last_event"]:
+            ms_note += f"/{ms_1h['last_event']}"
+        ms_note += f" · 15m:{ms_15m['trend']}"
+        if ms_15m["last_event"]:
+            ms_note += f"/{ms_15m['last_event']}"
+
         decisions.append({
             "rank": len(decisions) + 1,
             "ticker": ticker,
@@ -450,7 +570,8 @@ def generate_fusion():
             "tp2": tp2,
             "sources": sources,
             "onchain_data_thin": False,
-            "risk_flag": f"Auto-generated {datetime.now().strftime('%H:%M')}. TA {ta_score}/100 (daily {daily_ta_score} · 1h momentum {short_term_score}). Current ${current_price:.2f} ({prices[ticker]['change_24h']:+.2f}% 24h).",
+            "market_structure": {"1h": ms_1h, "15m": ms_15m},
+            "risk_flag": f"Auto-generated {datetime.now().strftime('%H:%M')}. TA {ta_score}/100 (daily {daily_ta_score} · 1h momo {short_term_score} · {ms_note}). Current ${current_price:.2f} ({prices[ticker]['change_24h']:+.2f}% 24h).",
             "invalidation_note": f"SL @ ${sl}" if sl else "Not entered",
         })
 
