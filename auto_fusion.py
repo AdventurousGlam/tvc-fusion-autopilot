@@ -44,10 +44,26 @@ BINANCE = {
 }
 
 
-def _get_json(url, timeout=15):
+def _get_json(url, timeout=15, retries=3):
+    """Fetch JSON z retry+backoff — GitHub-hosted runnery czasem mają przejściowe
+    problemy sieciowe (DNS/timeout na pojedynczym połączeniu), które same znikają
+    po kilku sekundach. Bez retry taki jeden przejściowy timeout wywalał CAŁY cykl
+    (exit code 1, zero danych na ten przebieg), mimo że kolejna próba zwykle by się
+    udała. 3 próby z rosnącym odstępem (3s, 6s, 12s) kosztują góra ~20s dodatkowo,
+    ale zamieniają "cykl całkiem padł" na "cykl przeżył krótką awarię sieci"."""
     req = ur.Request(url, headers={"User-Agent": UA, "Accept": "application/json"})
-    with ur.urlopen(req, timeout=timeout, context=SSL_CTX) as r:
-        return json.loads(r.read())
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            with ur.urlopen(req, timeout=timeout, context=SSL_CTX) as r:
+                return json.loads(r.read())
+        except Exception as e:
+            last_err = e
+            if attempt < retries:
+                wait = 3 * (2 ** (attempt - 1))  # 3s, 6s, 12s
+                print(f"[http] {url.split('?')[0]} próba {attempt}/{retries} nieudana ({e}) — czekam {wait}s...")
+                time.sleep(wait)
+    raise last_err
 
 
 def fetch_prices():
