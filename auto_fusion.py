@@ -532,18 +532,23 @@ def generate_fusion():
         elif action in ("SELL", "STRONG_SELL"):
             direction = "short"
 
-        # CHoCH override — świeży bearish/bullish Change of Character na 1h (bardziej
-        # wiarygodny interwał niż 15m) sam w sobie odblokowuje short/long dla TEGO tokena,
-        # niezależnie od globalnego BTC-regime i reszty score. Alt może się osłabiać/wzmacniać
-        # niezależnie od tego czy BTC formalnie "crashuje" — regime-gate w paper_bot.py
-        # respektuje ten override (patrz choch_override flag w decyzji).
+        # CHoCH override — bearish/bullish struktura na 1h (bardziej wiarygodny interwał
+        # niż 15m) sama w sobie odblokowuje short/long dla TEGO tokena, niezależnie od
+        # globalnego BTC-regime i reszty score. Alt może się osłabiać/wzmacniać niezależnie
+        # od tego czy BTC formalnie "crashuje" — regime-gate w paper_bot.py respektuje ten
+        # override (patrz choch_override flag w decyzji).
+        # Patrzymy na trend (nie tylko last_event) celowo: CHoCH to tylko pojedyncza
+        # świeca-moment złamania — jeśli spadek trwa dalej, kolejny odczyt pokazuje już
+        # BOS_DOWN (kontynuacja), nie CHOCH_BEAR, i wąskie okno na last_event łatwo
+        # przegapić między cyklami co 5 min. trend=="bearish" obejmuje cały czas trwania
+        # niedźwiedziej struktury, nie tylko moment jej powstania.
         choch_override = False
-        if ms_1h.get("last_event") == "CHOCH_BEAR" and direction != "short":
+        if ms_1h.get("trend") == "bearish" and direction != "short":
             direction = "short"
             action = "SELL"
             size = compute_size(30, regime, ticker)  # syntetyczny bearish score do sizing
             choch_override = True
-        elif ms_1h.get("last_event") == "CHOCH_BULL" and direction != "long":
+        elif ms_1h.get("trend") == "bullish" and direction != "long":
             direction = "long"
             action = "BUY"
             size = compute_size(65, regime, ticker)  # syntetyczny bullish score do sizing
