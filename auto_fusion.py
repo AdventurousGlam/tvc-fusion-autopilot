@@ -532,6 +532,23 @@ def generate_fusion():
         elif action in ("SELL", "STRONG_SELL"):
             direction = "short"
 
+        # CHoCH override — świeży bearish/bullish Change of Character na 1h (bardziej
+        # wiarygodny interwał niż 15m) sam w sobie odblokowuje short/long dla TEGO tokena,
+        # niezależnie od globalnego BTC-regime i reszty score. Alt może się osłabiać/wzmacniać
+        # niezależnie od tego czy BTC formalnie "crashuje" — regime-gate w paper_bot.py
+        # respektuje ten override (patrz choch_override flag w decyzji).
+        choch_override = False
+        if ms_1h.get("last_event") == "CHOCH_BEAR" and direction != "short":
+            direction = "short"
+            action = "SELL"
+            size = compute_size(30, regime, ticker)  # syntetyczny bearish score do sizing
+            choch_override = True
+        elif ms_1h.get("last_event") == "CHOCH_BULL" and direction != "long":
+            direction = "long"
+            action = "BUY"
+            size = compute_size(65, regime, ticker)  # syntetyczny bullish score do sizing
+            choch_override = True
+
         # Entry/SL/TP dynamiczne (proste %-based) — mirrored dla short: SL powyżej
         # entry, TP poniżej entry (odwrotnie niż long)
         if size > 0 and direction == "long":
@@ -571,7 +588,9 @@ def generate_fusion():
             "sources": sources,
             "onchain_data_thin": False,
             "market_structure": {"1h": ms_1h, "15m": ms_15m},
-            "risk_flag": f"Auto-generated {datetime.now().strftime('%H:%M')}. TA {ta_score}/100 (daily {daily_ta_score} · 1h momo {short_term_score} · {ms_note}). Current ${current_price:.2f} ({prices[ticker]['change_24h']:+.2f}% 24h).",
+            "choch_override": choch_override,
+            "risk_flag": f"Auto-generated {datetime.now().strftime('%H:%M')}. TA {ta_score}/100 (daily {daily_ta_score} · 1h momo {short_term_score} · {ms_note}). Current ${current_price:.2f} ({prices[ticker]['change_24h']:+.2f}% 24h)."
+                         + (" ⚡ CHoCH OVERRIDE — 1h change of character, wchodzi mimo regime/score." if choch_override else ""),
             "invalidation_note": f"SL @ ${sl}" if sl else "Not entered",
         })
 
@@ -605,7 +624,7 @@ def generate_fusion():
         "correlation_warnings": [
             "Auto-fusion nie zawiera qualitative context (news, catalysts). Traktuj jako baseline — Claude fusion daje szerszy context.",
         ],
-        "short_blocked_by_regime": [] if regime in ("TRENDING_DOWN", "TRENDING_DOWN_VOLATILE", "CRASH") else [f"Regime {regime} — shorty dozwolone tylko w TRENDING_DOWN/CRASH (paper_bot SHORT_ALLOWED_REGIMES gate)"],
+        "short_blocked_by_regime": [] if regime in ("TRENDING_DOWN", "TRENDING_DOWN_VOLATILE", "CRASH") else [f"Regime {regime} — shorty bez CHoCH override dozwolone tylko w TRENDING_DOWN/CRASH. Token ze świeżym bearish CHoCH na 1h omija ten gate (patrz choch_override w decyzji)."],
         "catalyst_calendar_this_week": generate_catalyst_calendar(),
         "conclusion": (
             f"Regime {regime}. Long risk {aggregate_risk:.1f}% · Short risk {aggregate_short_risk:.1f}% capital. "

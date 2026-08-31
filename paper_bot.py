@@ -268,11 +268,14 @@ def cmd_open(args):
         if direction is None:
             continue  # HOLD/WATCH/SKIP — not actionable
 
-        # v0.2 — SHORT regime constraint
-        if direction == "short" and regime not in SHORT_ALLOWED_REGIMES:
+        # v0.2 — SHORT regime constraint, z wyjątkiem CHoCH override (świeży bearish
+        # change of character na 1h dla TEGO tokena omija globalny BTC-regime gate)
+        if direction == "short" and regime not in SHORT_ALLOWED_REGIMES and not dec.get("choch_override"):
             print(f"[skip] {dec.get('ticker')} SHORT blocked — regime {regime} not in {SHORT_ALLOWED_REGIMES}")
             skipped += 1
             continue
+        if direction == "short" and dec.get("choch_override"):
+            print(f"[open] {dec.get('ticker')} SHORT via CHoCH override — regime {regime} bypassed")
 
         ticker = dec["ticker"]
 

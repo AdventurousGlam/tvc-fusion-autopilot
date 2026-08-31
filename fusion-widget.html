@@ -1341,9 +1341,6 @@ function render() {
       <!-- PORTFOLIO HEALTH — live status wszystkich tokenów -->
       <div id="portfolio-health-slot" class="hide-morning" style="grid-column: span 12; width: 100%;"></div>
 
-      <!-- LIVE LIQUIDATIONS — Binance perp WS -->
-      <div id="liquidations-slot" class="hide-morning hide-eod" style="grid-column: span 12; width: 100%;"></div>
-
       <!-- ═══════════════════════════════════════════════════════════════ -->
       <!-- SECTION 2: CONTEXT · market awareness (this hour/day)            -->
       <!-- ═══════════════════════════════════════════════════════════════ -->
@@ -2205,131 +2202,6 @@ async function refreshPerpMetrics() {
   renderPortfolioHealth();  // re-render portfolio to show funding/OI
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// LIVE LIQUIDATIONS — Binance perp force order WS (real-time)
-// ═══════════════════════════════════════════════════════════════════════════
-let _liqWS = null;
-let _liqWSStatus = 'connecting';  // 'connecting' | 'open' | 'closed'
-let _liqReconnectTimer = null;
-let _liqReconnectDelay = 3000;  // ms, grows on repeated failures (capped below)
-let _liqLastMsgAt = 0;
-const recentLiquidations = [];  // [{ ticker, side, qty, price, notional, ts }]
-
-function openLiquidationsWS() {
-  if (_liqWS && (_liqWS.readyState === WebSocket.OPEN || _liqWS.readyState === WebSocket.CONNECTING)) return;
-  if (_liqReconnectTimer) { clearTimeout(_liqReconnectTimer); _liqReconnectTimer = null; }
-  try {
-    _liqWSStatus = 'connecting';
-    renderLiquidationsPanel();
-    _liqWS = new WebSocket('wss://fstream.binance.com/ws/!forceOrder@arr');
-    _liqWS.onopen = () => {
-      console.log('[liq] WS open');
-      _liqWSStatus = 'open';
-      _liqReconnectDelay = 3000;  // reset backoff on successful connect
-      renderLiquidationsPanel();
-    };
-    _liqWS.onerror = (e) => console.warn('[liq] WS error', e);
-    _liqWS.onclose = () => {
-      console.warn('[liq] WS closed — reconnecting in', _liqReconnectDelay, 'ms');
-      _liqWSStatus = 'closed';
-      renderLiquidationsPanel();
-      _liqWS = null;
-      _liqReconnectTimer = setTimeout(openLiquidationsWS, _liqReconnectDelay);
-      _liqReconnectDelay = Math.min(_liqReconnectDelay * 1.5, 30000);  // cap backoff at 30s
-    };
-    _liqWS.onmessage = (msg) => {
-      try {
-        _liqLastMsgAt = Date.now();
-        const d = JSON.parse(msg.data);
-        const o = d.o;
-        if (!o) return;
-        // Filter to watched tokens
-        const watched = new Set((lastFusion?.decisions || []).map(d => BINANCE_SYMBOLS[d.ticker]).filter(Boolean));
-        if (!watched.has(o.s)) return;
-        // Reverse lookup ticker from symbol
-        const ticker = Object.entries(BINANCE_SYMBOLS).find(([, sym]) => sym === o.s)?.[0];
-        if (!ticker) return;
-        const qty = parseFloat(o.q);
-        const price = parseFloat(o.p);
-        const notional = qty * price;
-        if (notional < 10_000) return;  // ignore small liquidations (<$10K)
-        recentLiquidations.unshift({
-          ticker,
-          side: o.S,  // BUY = short liquidation, SELL = long liquidation
-          qty,
-          price,
-          notional: Math.round(notional),
-          ts: Date.now(),
-        });
-        // Cap at 40 recent liquidations
-        if (recentLiquidations.length > 40) recentLiquidations.length = 40;
-        renderLiquidationsPanel();
-      } catch (e) {}
-    };
-  } catch (e) {
-    console.warn('[liq] failed to open WS:', e);
-    _liqWSStatus = 'closed';
-    _liqReconnectTimer = setTimeout(openLiquidationsWS, _liqReconnectDelay);
-  }
-}
-
-// Watchdog — some networks (esp. after laptop sleep/wake) drop the socket
-// without ever firing a 'close' event. Check every 20s and force-reconnect
-// if the socket claims to be open/connecting but nothing has come through
-// in a very long time relative to typical force-order frequency.
-setInterval(() => {
-  if (!_liqWS) return;
-  const stuck = _liqWS.readyState === WebSocket.CLOSED || _liqWS.readyState === WebSocket.CLOSING;
-  if (stuck) {
-    console.warn('[liq] watchdog: socket stuck closed, forcing reconnect');
-    _liqWS = null;
-    openLiquidationsWS();
-  }
-}, 20000);
-
-function renderLiquidationsPanel() {
-  const slot = document.getElementById('liquidations-slot');
-  if (!slot) return;
-  const now = Date.now();
-  const recent = recentLiquidations.slice(0, 15);
-  const totalLongLiq = recent.filter(l => l.side === 'SELL').reduce((s, l) => s + l.notional, 0);
-  const totalShortLiq = recent.filter(l => l.side === 'BUY').reduce((s, l) => s + l.notional, 0);
-  const fmtN = n => n >= 1e6 ? `$${(n/1e6).toFixed(2)}M` : `$${(n/1e3).toFixed(0)}K`;
-  const statusDot = _liqWSStatus === 'open' ? '🟢' : _liqWSStatus === 'connecting' ? '🟡' : '🔴';
-  const statusText = _liqWSStatus === 'open' ? 'Live' : _liqWSStatus === 'connecting' ? 'Łączenie...' : 'Rozłączono — reconnect...';
-  slot.innerHTML = `
-    <section class="panel hide-eod hide-morning" style="grid-column: span 6;">
-      <div class="panel-head">
-        <h3>💥 Live Liquidations · Binance perp</h3>
-        <span class="meta">${statusDot} ${statusText} · ${recent.length} recent · long liq ${fmtN(totalLongLiq)} · short liq ${fmtN(totalShortLiq)}</span>
-      </div>
-      ${recent.length === 0 ? `
-        <div style="padding:12px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">${_liqWSStatus === 'open' ? 'Zero liquidations detected jeszcze. WS live, czeka na force orders (>$10K).' : _liqWSStatus === 'connecting' ? 'Łączenie z Binance...' : 'Połączenie zerwane — reconnect w toku (automatyczny).'}</div>
-      ` : `
-        <div style="max-height:300px;overflow-y:auto;padding-right:4px">
-          ${recent.map(l => {
-            const ageSec = Math.round((now - l.ts) / 1000);
-            const ageStr = ageSec < 60 ? `${ageSec}s` : ageSec < 3600 ? `${Math.floor(ageSec/60)}m` : `${Math.floor(ageSec/3600)}h`;
-            const isLongLiq = l.side === 'SELL';  // SELL side = long was liquidated
-            const color = isLongLiq ? 'var(--red)' : 'var(--green)';
-            const bg = isLongLiq ? 'rgba(248,113,113,0.08)' : 'rgba(52,211,153,0.08)';
-            const label = isLongLiq ? '🔴 LONG LIQ' : '🟢 SHORT LIQ';
-            return `<div style="display:grid;grid-template-columns:44px 90px 1fr auto auto;gap:6px;align-items:center;padding:6px 8px;background:${bg};border-left:2px solid ${color};margin-bottom:2px;border-radius:3px;font-size:11px">
-              <span style="font-weight:800;color:var(--gold);font-family:var(--mono)">${l.ticker}</span>
-              <span style="color:${color};font-weight:700;font-size:10px">${label}</span>
-              <span style="font-family:var(--mono);color:var(--text)">${fmt(l.price)}</span>
-              <span style="font-family:var(--mono);font-weight:800;color:var(--text)">${fmtN(l.notional)}</span>
-              <span style="font-family:var(--mono);font-size:10px;color:var(--text-dim)">${ageStr}</span>
-            </div>`;
-          }).join('')}
-        </div>
-      `}
-      <div style="margin-top:8px;padding:6px;background:var(--bg-elev-2);border-radius:4px;font-size:9.5px;color:var(--text-dim);text-align:center;line-height:1.5">
-        🔴 LONG LIQ = longs got wiped (bulls forced sold) = bearish momentum<br>
-        🟢 SHORT LIQ = shorts got wiped (bears squeezed) = bullish momentum
-      </div>
-    </section>`;
-}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // FEAR & GREED INDEX LIVE — alternative.me API (free, CORS-enabled)
@@ -3911,10 +3783,6 @@ setTimeout(() => {
   // PERP METRICS (funding + OI) — refresh every 5 min
   refreshPerpMetrics();
   setInterval(refreshPerpMetrics, 300_000);
-  // LIVE LIQUIDATIONS WS — real-time, open once
-  openLiquidationsWS();
-  renderLiquidationsPanel();  // initial empty state
-  setInterval(renderLiquidationsPanel, 2000);  // refresh timestamps
   // F&G INDEX LIVE — refresh every 15 min
   refreshFngLive();
   setInterval(refreshFngLive, 900_000);
