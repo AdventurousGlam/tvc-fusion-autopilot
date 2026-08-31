@@ -279,14 +279,49 @@ def cmd_open(args):
 
         ticker = dec["ticker"]
 
-        # de-dupe: skip if we already have an open position for this ticker today
-        existing = conn.execute(
-            "SELECT 1 FROM positions WHERE date=? AND ticker=? AND status='open'",
-            (trade_date, ticker),
+        # De-dupe / flip logic — patrzymy na KAŻDĄ otwartą pozycję tego tickera,
+        # niezależnie od daty otwarcia (nie tylko "dziś"), żeby nie trzymać
+        # jednocześnie long+short na tym samym tokenie.
+        existing_any = conn.execute(
+            "SELECT * FROM positions WHERE ticker=? AND status='open' ORDER BY opened_at DESC LIMIT 1",
+            (ticker,),
         ).fetchone()
-        if existing:
+
+        if existing_any and existing_any["direction"] == direction:
+            # ta sama strona już otwarta — nic do zrobienia
             skipped += 1
             continue
+
+        if existing_any and existing_any["direction"] != direction:
+            if not dec.get("choch_override"):
+                # przeciwny kierunek, ale bez silnego sygnału CHoCH — nie flipuj,
+                # zostaw starą pozycję żeby SL/TP zrobiły swoje
+                skipped += 1
+                continue
+            # FLIP — CHoCH override daje sygnał przeciwny do otwartej pozycji:
+            # zamknij starą po aktualnej cenie rynkowej, otwórz nową w nowym kierunku
+            try:
+                flip_price = _fetch_current_price(ticker)
+            except Exception as e:
+                print(f"[flip] {ticker} price fetch failed ({e}) — skipping flip this cycle")
+                skipped += 1
+                continue
+            old_dir = existing_any["direction"]
+            old_entry = existing_any["entry_price"]
+            if old_dir == "long":
+                pnl_pct = (flip_price - old_entry) / old_entry * 100
+            else:
+                pnl_pct = (old_entry - flip_price) / old_entry * 100
+            pnl_usd = existing_any["size_usd"] * (pnl_pct / 100)
+            exit_dt = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                """UPDATE positions SET status='closed', exit_price=?, exit_date=?,
+                   pnl_pct=?, pnl_usd=?, hit_or_miss=?, closed_at=? WHERE id=?""",
+                (flip_price, exit_dt, pnl_pct, pnl_usd, "flip_choch", exit_dt, existing_any["id"]),
+            )
+            conn.commit()
+            print(f"[flip] {ticker} closed old {old_dir} @ {flip_price:.4f} PnL {pnl_pct:+.2f}% "
+                  f"(${pnl_usd:+.2f}) — opening new {direction} (CHoCH override)")
 
         entry_price = _mid_entry(dec.get("entry_low"), dec.get("entry_high"), ticker, ex)
         if entry_price == 0.0:
