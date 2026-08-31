@@ -1726,6 +1726,7 @@ const imbalanceHistory = {};// { ticker: [{ts, imb}] } — last 5s of samples fo
 const wallEvents = {};      // { ticker: [{ts, type: 'appear'|'gone'|'grow'|'shrink', wall}] }
 const setupAlerts = {};     // { ticker: [{ts, type, msg, expires}] }
 const alertSounds = {};     // { ticker: Set of alert types shown (dedup) }
+const confluenceHistory = {}; // { ticker: [{type: 'CONFLUENCE_BUY'|'CONFLUENCE_SELL', ts}] } — do wykrywania range (obie strony naprzemiennie)
 
 function openOrderbookStream(ticker) {
   const symbol = BINANCE_SYMBOLS[ticker];
@@ -1874,8 +1875,11 @@ function detectSetupAlerts(ticker, walls, now) {
   const goneSellWalls = recentGone.filter(e => e.side === 'sell').length;
 
   // Alert 1: CONFLUENCE SELL — pred sell zone + live sell wall at same price (±1%)
+  // Próg trwałości ściany podniesiony z 3s → 10s: 3s przepuszczało zbyt dużo spoofingu
+  // (ściany stawiane i zdejmowane w ciągu kilku sekund), co powodowało częste "fałszywe"
+  // confluence alerty i wrażenie że sygnał "przełącza się" buy/sell w kółko.
   for (const wall of walls.sellWalls) {
-    if (wall.ageMs < 3000) continue;  // require persistence (spoofing filter)
+    if (wall.ageMs < 10000) continue;  // require persistence (spoofing filter)
     for (const zone of (predZones.sellZones || [])) {
       const overlap = wall.price >= zone.priceLow * 0.99 && wall.price <= zone.priceHigh * 1.01;
       if (overlap) {
@@ -1889,7 +1893,7 @@ function detectSetupAlerts(ticker, walls, now) {
   }
   // Alert 2: CONFLUENCE BUY — pred buy zone + live buy wall at same price
   for (const wall of walls.buyWalls) {
-    if (wall.ageMs < 3000) continue;
+    if (wall.ageMs < 10000) continue;
     for (const zone of (predZones.buyZones || [])) {
       const overlap = wall.price >= zone.priceLow * 0.99 && wall.price <= zone.priceHigh * 1.01;
       if (overlap) {
@@ -1932,23 +1936,48 @@ function detectSetupAlerts(ticker, walls, now) {
     const lastFired = alertSounds[ticker].get(a.type) || 0;
     if (now - lastFired > 10_000) {  // don't re-fire same alert within 10s
       alertSounds[ticker].set(a.type, now);
-      setupAlerts[ticker].push({ ...a, ts: now, expires: now + 15_000 });
+
+      // RANGE DETECTION — jeśli w ostatnich 5 min ten sam ticker miał confluence
+      // po przeciwnej stronie, to nie jest sprzeczny sygnał tylko oznaka że rynek
+      // gra range: ściany kupna na dole i sprzedaży na górze aktywne naprzemiennie.
+      // Zamiast dwóch mylących, kierunkowych alertów pod rząd — oznaczamy to jawnie.
+      let displayA = { ...a };
+      if (a.type === 'CONFLUENCE_BUY' || a.type === 'CONFLUENCE_SELL') {
+        if (!confluenceHistory[ticker]) confluenceHistory[ticker] = [];
+        confluenceHistory[ticker] = confluenceHistory[ticker].filter(h => now - h.ts < 300_000); // 5 min okno
+        const opposite = a.type === 'CONFLUENCE_BUY' ? 'CONFLUENCE_SELL' : 'CONFLUENCE_BUY';
+        const hasOpposite = confluenceHistory[ticker].some(h => h.type === opposite);
+        confluenceHistory[ticker].push({ type: a.type, ts: now });
+        if (hasOpposite) {
+          displayA = {
+            ...a,
+            rangeBound: true,
+            msg: `🔁 RANGE — obie strony aktywne · ${a.msg}`,
+          };
+        }
+      }
+
+      setupAlerts[ticker].push({ ...displayA, ts: now, expires: now + 15_000 });
       // AUTO-LOG to decision journal
       addJournalEntry({
         ts: now,
         ticker,
         type: a.type,
         severity: a.severity,
-        msg: a.msg,
+        msg: displayA.msg,
         price_at_alert: mid,
         imbalance_at_alert: smoothedImb,
         pressure_at_alert: window[`__pressure_${ticker}`] || null,
         confluence: (a.type === 'CONFLUENCE_BUY' || a.type === 'CONFLUENCE_SELL'),
+        range_bound: !!displayA.rangeBound,
       });
-      // SOUND ALERT — TYLKO mocne sygnały kupna/sprzedaży (CONFLUENCE)
-      // BIG_WALL i AGGRESSIVE alerts = informational, no sound (avoid noise fatigue)
-      if (a.type === 'CONFLUENCE_BUY') playAlertSound('CONFLUENCE_BUY');
-      else if (a.type === 'CONFLUENCE_SELL') playAlertSound('CONFLUENCE_SELL');
+      // SOUND ALERT — TYLKO mocne sygnały kupna/sprzedaży (CONFLUENCE), i tylko gdy
+      // NIE jest to już oznaczone jako range (żeby nie dzwonić na przemian buy/sell
+      // co kilka minut na tym samym tickerze w konsolidacji)
+      if (!displayA.rangeBound) {
+        if (a.type === 'CONFLUENCE_BUY') playAlertSound('CONFLUENCE_BUY');
+        else if (a.type === 'CONFLUENCE_SELL') playAlertSound('CONFLUENCE_SELL');
+      }
     }
   }
 }
@@ -2483,6 +2512,7 @@ function renderAlertsDropdown() {
   const sevColors = {
     high: { bg: 'rgba(245,184,65,0.15)', border: '#F5B841', text: '#F5B841' },
     medium: { bg: 'rgba(96,165,250,0.12)', border: 'var(--blue)', text: 'var(--blue)' },
+    range: { bg: 'rgba(167,139,250,0.14)', border: '#A78BFA', text: '#A78BFA' },
   };
   const now = Date.now();
 
@@ -2501,16 +2531,16 @@ function renderAlertsDropdown() {
       <button onclick="closeAlertsDropdown()" style="background:transparent;color:var(--text-dim);border:none;font-size:16px;cursor:pointer;padding:0 4px" title="Zamknij">×</button>
     </div>
     ${allAlerts.map(a => {
-      const sc = sevColors[a.severity] || sevColors.medium;
+      const sc = a.rangeBound ? sevColors.range : (sevColors[a.severity] || sevColors.medium);
       const ageSec = Math.round((now - a.ts) / 1000);
       const expiresIn = Math.max(0, Math.round((a.expires - now) / 1000));
       return `
         <div onclick="focusAlert('${a.ticker}')" style="padding:8px 10px;background:${sc.bg};border-left:3px solid ${sc.border};border-radius:5px;margin-bottom:5px;cursor:pointer;transition:transform .12s" onmouseover="this.style.transform='translateX(2px)'" onmouseout="this.style.transform='translateX(0)'">
           <div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:3px">
             <span style="font-weight:800;color:${sc.text};font-size:12px">
-              ${a.type} <span style="color:var(--blue);font-family:var(--mono);font-size:11px">· ${a.ticker}</span>
+              ${a.rangeBound ? '🔁 RANGE' : a.type} <span style="color:var(--blue);font-family:var(--mono);font-size:11px">· ${a.ticker}</span>
             </span>
-            <span style="background:${sc.border};color:#000;padding:1px 5px;border-radius:2px;font-size:8.5px;font-weight:800">${a.severity.toUpperCase()}</span>
+            <span style="background:${sc.border};color:#000;padding:1px 5px;border-radius:2px;font-size:8.5px;font-weight:800">${a.rangeBound ? 'INFO' : a.severity.toUpperCase()}</span>
           </div>
           <div style="font-size:10.5px;color:var(--text);line-height:1.4;margin-bottom:3px">${a.msg}</div>
           <div style="display:flex;justify-content:space-between;font-family:var(--mono);font-size:9.5px;color:var(--text-dim)">
@@ -2573,11 +2603,15 @@ function updateCommandBar() {
   if (posEl) posEl.textContent = `· ${openPositions.length} open`;
 
   // Alerts count across all tickers
-  let totalAlerts = 0, confluenceAlerts = 0;
+  // Range-bound confluence (obie strony aktywne naprzemiennie) liczone osobno —
+  // to nie jest kierunkowy sygnał więc nie powinno pulsować jako pilne CONFLUENCE.
+  let totalAlerts = 0, confluenceAlerts = 0, rangeAlerts = 0;
   for (const [ticker, alerts] of Object.entries(setupAlerts)) {
     for (const a of alerts) {
       totalAlerts++;
-      if (a.type === 'CONFLUENCE_BUY' || a.type === 'CONFLUENCE_SELL') confluenceAlerts++;
+      if (a.type === 'CONFLUENCE_BUY' || a.type === 'CONFLUENCE_SELL') {
+        if (a.rangeBound) rangeAlerts++; else confluenceAlerts++;
+      }
     }
   }
   const alertsEl = document.getElementById('cb-alerts');
@@ -2587,8 +2621,11 @@ function updateCommandBar() {
       alertsEl.innerHTML = `<span style="color:var(--text-dim)">◯ 0 alerts</span>${chevron}`;
       alertsEl.style.background = 'transparent';
     } else if (confluenceAlerts > 0) {
-      alertsEl.innerHTML = `<span style="color:var(--gold);animation:alertPulse 1.5s ease-in-out infinite">🎯 ${confluenceAlerts} CONFLUENCE</span> <span style="color:var(--text-muted);font-size:11px">(${totalAlerts} total)</span>${chevron}`;
+      alertsEl.innerHTML = `<span style="color:var(--gold);animation:alertPulse 1.5s ease-in-out infinite">🎯 ${confluenceAlerts} CONFLUENCE</span> <span style="color:var(--text-muted);font-size:11px">(${totalAlerts} total${rangeAlerts > 0 ? `, 🔁${rangeAlerts} range` : ''})</span>${chevron}`;
       alertsEl.style.background = 'rgba(245,184,65,0.10)';
+    } else if (rangeAlerts > 0) {
+      alertsEl.innerHTML = `<span style="color:#A78BFA">🔁 ${rangeAlerts} RANGE</span> <span style="color:var(--text-muted);font-size:11px">(${totalAlerts} total)</span>${chevron}`;
+      alertsEl.style.background = 'rgba(167,139,250,0.10)';
     } else {
       alertsEl.innerHTML = `<span style="color:var(--blue)">⚠️ ${totalAlerts} alerts</span>${chevron}`;
       alertsEl.style.background = 'rgba(96,165,250,0.08)';
@@ -2678,8 +2715,9 @@ function generateCommandCenterActions() {
         command: `python3 ~/Claude/TVCFusion/paper_bot.py close ${ticker}`,
       });
     }
-    // 2. Active CONFLUENCE alerts
-    const confluence = alerts.find(a => a.type === 'CONFLUENCE_BUY' || a.type === 'CONFLUENCE_SELL');
+    // 2. Active CONFLUENCE alerts — pomijamy range-bound (obie strony aktywne
+    // naprzemiennie = rynek w konsolidacji, nie kierunkowy sygnał "rób coś teraz")
+    const confluence = alerts.find(a => (a.type === 'CONFLUENCE_BUY' || a.type === 'CONFLUENCE_SELL') && !a.rangeBound);
     if (confluence) {
       const isBuy = confluence.type === 'CONFLUENCE_BUY';
       actions.push({
@@ -2690,6 +2728,19 @@ function generateCommandCenterActions() {
         title: `${ticker}: ${isBuy ? 'CONFLUENCE BUY' : 'CONFLUENCE SELL'} @ live`,
         reasoning: confluence.msg,
         command: isBuy ? `Consider entry (size ${dec.size_pct}% capital, SL under wall)` : `Take partial NOW, don't chase above`,
+      });
+    }
+    // 2b. Range-bound confluence → osobna, informacyjna (nie URGENT) akcja
+    const rangeConf = alerts.find(a => (a.type === 'CONFLUENCE_BUY' || a.type === 'CONFLUENCE_SELL') && a.rangeBound);
+    if (rangeConf && !confluence) {
+      actions.push({
+        priority: 30,
+        ticker, urgency: 'LOW',
+        icon: '🔁',
+        color: '#A78BFA',
+        title: `${ticker}: RANGE — ściany aktywne po obu stronach`,
+        reasoning: `${rangeConf.msg} — orderbook pokazuje kupno na dole i sprzedaż na górze zakresu naprzemiennie. To nie kierunkowy sygnał — traktuj jako informację o konsolidacji, nie wezwanie do akcji.`,
+        command: `Obserwuj — brak kierunkowej konwiktcji, ewentualnie graj brzegi zakresu`,
       });
     }
     // 3. Fusion risk_flag mentions extension/stretched (like XRP)
@@ -2874,13 +2925,20 @@ function interpretTokenState(ticker) {
   if (nearBuyZone) { score += 1; reasoning.push(`✅ Cena w BUY zone $${fmt(nearBuyZone.priceLow)}–${fmt(nearBuyZone.priceHigh)} (${nearBuyZone.touches}×)`); }
   if (nearSellZone) { score -= 1; reasoning.push(`⚠️ Cena w SELL zone $${fmt(nearSellZone.priceLow)}–${fmt(nearSellZone.priceHigh)} (${nearSellZone.touches}×)`); }
 
-  // 6. ACTIVE ALERTS
-  const activeConfluence = alerts.find(a => a.type === 'CONFLUENCE_BUY' || a.type === 'CONFLUENCE_SELL');
+  // 6. ACTIVE ALERTS — range-bound confluence (obie strony aktywne naprzemiennie)
+  // to NIE kierunkowy sygnał, więc nie powinien przesuwać score ani podnosić
+  // confidence do "high" — inaczej dostajesz sprzeczne verdykty w kółko na tickerach
+  // które po prostu grają w konsolidacji.
+  const activeConfluence = alerts.find(a => (a.type === 'CONFLUENCE_BUY' || a.type === 'CONFLUENCE_SELL') && !a.rangeBound);
+  const rangeBoundConfluence = alerts.find(a => (a.type === 'CONFLUENCE_BUY' || a.type === 'CONFLUENCE_SELL') && a.rangeBound);
   if (activeConfluence) {
     reasoning.push(`🎯 ${activeConfluence.type} alert active`);
     if (activeConfluence.type === 'CONFLUENCE_BUY') score += 2;
     else score -= 2;
     confidence = 'high';
+  } else if (rangeBoundConfluence) {
+    reasoning.push(`🔁 RANGE — kupno i sprzedaż aktywne naprzemiennie, brak kierunku`);
+    // brak zmiany score — celowo neutralne, nie podnosimy ani nie obniżamy confidence
   }
 
   // ═══ VERDICT LOGIC ═══
@@ -3110,7 +3168,8 @@ function renderPortfolioHealth() {
     const price = livePrices[d.ticker]?.price;
     const walls = orderbookWalls[d.ticker];
     const alerts = setupAlerts[d.ticker] || [];
-    const activeConfluence = alerts.find(a => a.type === 'CONFLUENCE_BUY' || a.type === 'CONFLUENCE_SELL');
+    const activeConfluence = alerts.find(a => (a.type === 'CONFLUENCE_BUY' || a.type === 'CONFLUENCE_SELL') && !a.rangeBound);
+    const rangeConfluence = alerts.find(a => (a.type === 'CONFLUENCE_BUY' || a.type === 'CONFLUENCE_SELL') && a.rangeBound);
     const imb = walls?.imbalanceSmoothed;
     const imbColor = imb == null ? 'var(--text-dim)' : imb > 0.15 ? 'var(--green)' : imb < -0.15 ? 'var(--red)' : 'var(--text-muted)';
     const imbStr = imb == null ? '—' : `${imb > 0 ? '+' : ''}${(imb * 100).toFixed(0)}%`;
@@ -3126,7 +3185,7 @@ function renderPortfolioHealth() {
       <span style="font-weight:700;color:${state.color};font-size:11px">${verdictLabels[state.verdict] || state.verdict}</span>
       <span style="font-family:var(--mono);font-size:10px;font-weight:700;color:${imbColor}">${imbStr}</span>
       <span style="font-family:var(--mono);font-size:10px;color:var(--text-muted)">${price ? fmt(price) : '—'}</span>
-      <span style="font-size:11px">${activeConfluence ? '🎯' : alerts.length > 0 ? '⚠️' : '·'}</span>
+      <span style="font-size:11px">${activeConfluence ? '🎯' : rangeConfluence ? '🔁' : alerts.length > 0 ? '⚠️' : '·'}</span>
     </div>`;
   }).join('');
   slot.innerHTML = `
