@@ -583,6 +583,8 @@ def generate_fusion():
     aggregate_risk = sum(d["size_pct"] for d in decisions if d["direction"] == "long")
     aggregate_short_risk = sum(d["size_pct"] for d in decisions if d["direction"] == "short")
 
+    dom_str = f"{dom:.2f}%" if dom is not None else "N/A"
+
     fusion = {
         "date": datetime.now().strftime("%Y-%m-%d"),
         "version": f"auto-{datetime.now().strftime('%H%M')}",
@@ -591,7 +593,7 @@ def generate_fusion():
             f"Auto-generated {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}. "
             f"BTC ${prices.get('BTC', {}).get('price', 0):.0f} ({prices.get('BTC', {}).get('change_24h', 0):+.2f}% 24h), "
             f"F&G {fng['current'] if fng else 'N/A'} ({fng['classification'] if fng else 'N/A'}), "
-            f"BTC.D {dom:.2f}% if dom else 'N/A'. "
+            f"BTC.D {dom_str}. "
             f"Weekday sizing ×1.0"
             f"{' (weekend ×0.7 applied)' if datetime.now().weekday() in (5, 6) else ''}."
         ),
