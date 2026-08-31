@@ -56,6 +56,8 @@ jobs:
 
       - name: Commit zaktualizowany stan z powrotem do repo
         working-directory: /home/runner/home-clone/Claude/TVCFusion
+        env:
+          GIT_EDITOR: "true"   # no-op edytor — git rebase --continue nigdy nie ma czekać na input w CI
         run: |
           git config user.name "tvc-autopilot"
           git config user.email "autopilot@tvcfusion.local"
@@ -65,14 +67,33 @@ jobs:
             exit 0
           fi
           git commit -m "auto-update $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          # Retry z rebase — chroni przed race condition gdy dwa runy nachodzą na siebie w czasie
+          # Retry z rebase — chroni przed race condition gdy dwa runy nachodzą na siebie w czasie.
+          # fusion_*.json jest w całości nadpisywany co cykl, a paper_trades.db to binarny SQLite —
+          # git NIGDY nie zmerguje ich automatycznie na poziomie treści, więc nakładający się drugi
+          # writer zawsze da realny konflikt rebase, nie tylko "non-fast-forward". Dlatego przy
+          # konflikcie rozwiązujemy go automatycznie na korzyść danych z TEGO przebiegu (--theirs
+          # w kontekście rebase = commit który właśnie replayujemy, czyli nasz świeży auto-update) —
+          # to najświeższe policzone dane, i tak zostaną nadpisane kolejnym cyklem za ~5 min.
           for i in 1 2 3 4 5; do
             if git push; then
               echo "Push OK (próba $i)."
               exit 0
             fi
             echo "Push odrzucony (próba $i) — pull --rebase i ponawiam..."
-            git pull --rebase origin main
+            if git pull --rebase origin main; then
+              echo "Rebase czysty, próbuję push ponownie."
+            else
+              echo "Konflikt w rebase — auto-resolve na korzyść danych z tego przebiegu..."
+              git checkout --theirs -- fusion_*.json 2>/dev/null || true
+              git checkout --theirs -- paper_trades.db 2>/dev/null || true
+              git add -A
+              if git rebase --continue; then
+                echo "Konflikt rozwiązany automatycznie."
+              else
+                echo "Nie udało się rozwiązać konfliktu automatycznie — przerywam rebase, ponawiam od zera."
+                git rebase --abort || true
+              fi
+            fi
             sleep $((RANDOM % 8 + 3))
           done
           echo "Push nie powiódł się po 5 próbach."
