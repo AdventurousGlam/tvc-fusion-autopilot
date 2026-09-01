@@ -1592,6 +1592,13 @@ const setupAlerts = {};     // { ticker: [{ts, type, msg, expires}] }
 const alertSounds = {};     // { ticker: Set of alert types shown (dedup) }
 const confluenceHistory = {}; // { ticker: [{type: 'CONFLUENCE_BUY'|'CONFLUENCE_SELL', ts}] } — do wykrywania range (obie strony naprzemiennie)
 
+// ─── LIQUIDITY HEATMAP — rolling orderbook depth history, do wizualizacji i wykrywania trwałych stref płynności ───
+const depthHistory = {};        // { ticker: [{ts, mid, bidMap: {pctBucket: notionalUSD}, askMap: {...}}] }
+const HEATMAP_BUCKET_PCT = 0.1;          // szerokość kubełka ceny: 0.1% od mid
+const HEATMAP_WINDOW_MS = 15 * 60 * 1000;      // trzymaj max 15 min historii (pamięć)
+const HEATMAP_SNAPSHOT_INTERVAL_MS = 2000;     // próbkuj co 2s (WS leci co 100ms — zbyt gęsto żeby zapisywać każdy tick)
+const _heatmapZonesCache = {};  // { ticker: {ts, zones} } — cache computeHeatmapZones żeby nie liczyć przy każdym WS ticku (100ms)
+
 function openOrderbookStream(ticker) {
   const symbol = BINANCE_SYMBOLS[ticker];
   if (!symbol) return;
@@ -1614,6 +1621,7 @@ function openOrderbookStream(ticker) {
         const mid = (bestBid + bestAsk) / 2;
         const now = Date.now();
         liveOrderbook[ticker] = { bids, asks, ts: now, mid };
+        snapshotDepthForHeatmap(ticker, bids, asks, mid, now);
         const walls = detectWalls(bids, asks, mid);
         // ─── Wall persistence tracking (spoofing detection) ───
         trackWallPersistence(ticker, walls, now);
@@ -1655,6 +1663,8 @@ function closeOrderbookStream(ticker) {
   delete wallEvents[ticker];
   delete setupAlerts[ticker];
   delete alertSounds[ticker];
+  delete depthHistory[ticker];
+  delete _heatmapZonesCache[ticker];
 }
 
 // ─── Wall persistence: track walls across snapshots to detect spoofing ───
@@ -1733,6 +1743,7 @@ function detectSetupAlerts(ticker, walls, now) {
   const ob = liveOrderbook[ticker];
   const mid = ob ? ob.mid : 0;
   const predZones = window[`__predZones_${ticker}`] || { buyZones: [], sellZones: [] };
+  const heatmapZones = getHeatmapZones(ticker);
   const smoothedImb = walls.imbalanceSmoothed || 0;
   const recentGone = (wallEvents[ticker] || []).filter(e => now - e.ts < 8000 && e.type === 'gone');
   const goneBuyWalls = recentGone.filter(e => e.side === 'buy').length;
@@ -1747,10 +1758,19 @@ function detectSetupAlerts(ticker, walls, now) {
     for (const zone of (predZones.sellZones || [])) {
       const overlap = wall.price >= zone.priceLow * 0.99 && wall.price <= zone.priceHigh * 1.01;
       if (overlap) {
+        // Trzeci filtr: czy ten poziom pokrywa się też z trwałą strefą z Liquidity
+        // Heatmap (śr. głębokość ostatnich 5 min, nie tylko chwilowa ściana)?
+        // Jeśli tak — to nie przypadkowa zbieżność, tylko historia + żywa ściana +
+        // uporczywa płynność wszystkie zgadzają się co do tego poziomu.
+        const heatmapMatch = mid > 0 && (heatmapZones.sellZones || []).some(z => {
+          const zonePrice = mid * (1 + z.pct / 100);
+          return Math.abs(wall.price - zonePrice) / wall.price < 0.0015;
+        });
         alerts.push({
           type: 'CONFLUENCE_SELL',
           severity: 'high',
-          msg: `⚠️ SELL confluence @ ${fmt(wall.price)} — historical rejection (${zone.touches}× touch) + live wall $${(wall.notional/1e6).toFixed(2)}M standing ${(wall.ageMs/1000).toFixed(0)}s`,
+          heatmapConfirmed: heatmapMatch,
+          msg: `${heatmapMatch ? '🔥⚠️ STRONG SELL confluence' : '⚠️ SELL confluence'} @ ${fmt(wall.price)} — historical rejection (${zone.touches}× touch) + live wall $${(wall.notional/1e6).toFixed(2)}M standing ${(wall.ageMs/1000).toFixed(0)}s${heatmapMatch ? ' + trwała płynność w heatmapie (5 min)' : ''}`,
         });
       }
     }
@@ -1761,10 +1781,15 @@ function detectSetupAlerts(ticker, walls, now) {
     for (const zone of (predZones.buyZones || [])) {
       const overlap = wall.price >= zone.priceLow * 0.99 && wall.price <= zone.priceHigh * 1.01;
       if (overlap) {
+        const heatmapMatch = mid > 0 && (heatmapZones.buyZones || []).some(z => {
+          const zonePrice = mid * (1 + z.pct / 100);
+          return Math.abs(wall.price - zonePrice) / wall.price < 0.0015;
+        });
         alerts.push({
           type: 'CONFLUENCE_BUY',
           severity: 'high',
-          msg: `✅ BUY confluence @ ${fmt(wall.price)} — historical support (${zone.touches}× touch) + live wall $${(wall.notional/1e6).toFixed(2)}M standing ${(wall.ageMs/1000).toFixed(0)}s`,
+          heatmapConfirmed: heatmapMatch,
+          msg: `${heatmapMatch ? '🔥✅ STRONG BUY confluence' : '✅ BUY confluence'} @ ${fmt(wall.price)} — historical support (${zone.touches}× touch) + live wall $${(wall.notional/1e6).toFixed(2)}M standing ${(wall.ageMs/1000).toFixed(0)}s${heatmapMatch ? ' + trwała płynność w heatmapie (5 min)' : ''}`,
         });
       }
     }
@@ -2083,6 +2108,7 @@ function throttledUpdatePanel(ticker, now) {
   // Only update UI panels for EXPANDED token (others are background)
   if (expandedToken === ticker) {
     updateOrderbookPanel(ticker);
+    renderLiquidityHeatmap(ticker);
     updateAlertsPanel(ticker);
     renderLiveInterpretation(ticker);
   }
@@ -2790,6 +2816,15 @@ function interpretTokenState(ticker) {
   if (nearBuyZone) { score += 1; reasoning.push(`✅ Cena w BUY zone $${fmt(nearBuyZone.priceLow)}–${fmt(nearBuyZone.priceHigh)} (${nearBuyZone.touches}×)`); }
   if (nearSellZone) { score -= 1; reasoning.push(`⚠️ Cena w SELL zone $${fmt(nearSellZone.priceLow)}–${fmt(nearSellZone.priceHigh)} (${nearSellZone.touches}×)`); }
 
+  // 5b. LIQUIDITY HEATMAP proximity — trwała głębokość orderbooka (śr. z ostatnich
+  // 5 min), silniejszy i bardziej aktualny sygnał niż historyczne pred zones (które
+  // patrzą na odrzucenia z przeszłości, nie na to co stoi w książce TERAZ).
+  const heatmapZonesForScore = getHeatmapZones(ticker);
+  const nearHeatmapBuy = price ? (heatmapZonesForScore.buyZones || []).find(z => Math.abs(price - price * (1 + z.pct / 100)) / price < 0.0015) : null;
+  const nearHeatmapSell = price ? (heatmapZonesForScore.sellZones || []).find(z => Math.abs(price - price * (1 + z.pct / 100)) / price < 0.0015) : null;
+  if (nearHeatmapBuy) { score += 1; reasoning.push(`🔥 Cena przy trwałej heatmap buy zone ($${(nearHeatmapBuy.avgNotional/1e6).toFixed(2)}M śr. głębokość, ${Math.round(nearHeatmapBuy.persistence*100)}% czasu ost. 5 min)`); }
+  if (nearHeatmapSell) { score -= 1; reasoning.push(`🔥 Cena przy trwałej heatmap sell zone ($${(nearHeatmapSell.avgNotional/1e6).toFixed(2)}M śr. głębokość, ${Math.round(nearHeatmapSell.persistence*100)}% czasu ost. 5 min)`); }
+
   // 6. ACTIVE ALERTS — range-bound confluence (obie strony aktywne naprzemiennie)
   // to NIE kierunkowy sygnał, więc nie powinien przesuwać score ani podnosić
   // confidence do "high" — inaczej dostajesz sprzeczne verdykty w kółko na tickerach
@@ -3064,6 +3099,81 @@ function updateWallLogPanel(ticker) {
     </div>`;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// LIQUIDITY HEATMAP — orderbook depth zebrany w czasie (nie tylko outlier "walls"
+// jak detectWalls, tylko CAŁA widoczna głębokość top20 bid/ask, kubełkowana wg
+// % odległości od mid). Pozwala zobaczyć gdzie płynność TRWALE się kumuluje,
+// a nie tylko gdzie w danej chwili stoi jedno duże zlecenie.
+// ═══════════════════════════════════════════════════════════════════════════
+function snapshotDepthForHeatmap(ticker, bids, asks, mid, now) {
+  if (!depthHistory[ticker]) depthHistory[ticker] = [];
+  const hist = depthHistory[ticker];
+  const last = hist[hist.length - 1];
+  if (last && now - last.ts < HEATMAP_SNAPSHOT_INTERVAL_MS) return;  // throttle — WS leci co 100ms, próbkujemy co 2s
+  const bucket = (price) => ((Math.round(((price - mid) / mid * 100) / HEATMAP_BUCKET_PCT)) * HEATMAP_BUCKET_PCT).toFixed(1);
+  const bidMap = {}, askMap = {};
+  for (const [p, q] of bids) {
+    const b = bucket(p);
+    bidMap[b] = (bidMap[b] || 0) + p * q;
+  }
+  for (const [p, q] of asks) {
+    const b = bucket(p);
+    askMap[b] = (askMap[b] || 0) + p * q;
+  }
+  hist.push({ ts: now, mid, bidMap, askMap });
+  while (hist.length && now - hist[0].ts > HEATMAP_WINDOW_MS) hist.shift();
+}
+
+// Trwałe strefy płynności — kubełek liczy się jako "strefa" tylko jeśli jego
+// średnia głębokość w oknie jest >2.5× medianą ORAZ pojawiał się w >=50% próbek
+// (nie jednorazowy skok, tylko coś co realnie stoi tam większość czasu).
+function computeHeatmapZones(ticker, windowMs = 5 * 60 * 1000) {
+  const now = Date.now();
+  const hist = (depthHistory[ticker] || []).filter(s => now - s.ts < windowMs);
+  if (hist.length < 3) return { buyZones: [], sellZones: [] };
+  const bidTotals = {}, bidCounts = {}, askTotals = {}, askCounts = {};
+  for (const snap of hist) {
+    for (const [b, notional] of Object.entries(snap.bidMap)) {
+      bidTotals[b] = (bidTotals[b] || 0) + notional;
+      bidCounts[b] = (bidCounts[b] || 0) + 1;
+    }
+    for (const [b, notional] of Object.entries(snap.askMap)) {
+      askTotals[b] = (askTotals[b] || 0) + notional;
+      askCounts[b] = (askCounts[b] || 0) + 1;
+    }
+  }
+  const toZones = (totals, counts, sideFilter) => {
+    const entries = Object.keys(totals).map(b => ({
+      pct: parseFloat(b),
+      avgNotional: totals[b] / hist.length,
+      persistence: counts[b] / hist.length,
+    })).filter(sideFilter);
+    if (entries.length === 0) return [];
+    const sortedVals = [...entries].sort((a, b) => a.avgNotional - b.avgNotional);
+    const median = sortedVals[Math.floor(sortedVals.length / 2)]?.avgNotional || 0;
+    if (median <= 0) return [];
+    return entries
+      .filter(z => z.avgNotional > median * 2.5 && z.persistence >= 0.5)
+      .sort((a, b) => b.avgNotional - a.avgNotional)
+      .slice(0, 5);
+  };
+  return {
+    buyZones: toZones(bidTotals, bidCounts, z => z.pct <= 0),   // bid side = na/poniżej mid
+    sellZones: toZones(askTotals, askCounts, z => z.pct >= 0),  // ask side = na/powyżej mid
+  };
+}
+
+// Cache — computeHeatmapZones iteruje po ~150-450 snapshotach, nie chcemy tego
+// liczyć przy każdym WS ticku (100ms), tylko raz na 2s (tyle co próbkowanie).
+function getHeatmapZones(ticker) {
+  const now = Date.now();
+  const cached = _heatmapZonesCache[ticker];
+  if (cached && now - cached.ts < HEATMAP_SNAPSHOT_INTERVAL_MS) return cached.zones;
+  const zones = computeHeatmapZones(ticker);
+  _heatmapZonesCache[ticker] = { ts: now, zones };
+  return zones;
+}
+
 // Wall detection: find bids/asks that are STATISTICALLY OUTLIERS
 // (3× median size = "wall" — someone placed a big order at that level)
 function detectWalls(bids, asks, mid) {
@@ -3093,6 +3203,98 @@ function detectWalls(bids, asks, mid) {
     totalBidNotional: Math.round(totalBidNotional),
     totalAskNotional: Math.round(totalAskNotional),
   };
+}
+
+// ─── LIQUIDITY HEATMAP panel — canvas, oś Y = % od mid, oś X = czas, kolor = $ głębokości ───
+function renderLiquidityHeatmap(ticker) {
+  const slot = document.getElementById(`heatmap-slot-${ticker}`);
+  if (!slot) return;
+  const hist = depthHistory[ticker] || [];
+  if (hist.length < 2) {
+    slot.innerHTML = `
+      <div style="padding:10px 12px;background:var(--bg-elev-2);border-radius:6px;margin-top:8px">
+        <div style="font-size:10px;font-weight:800;letter-spacing:0.08em;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px">🔥 Liquidity Heatmap</div>
+        <div style="padding:8px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">Zbieram dane orderbooka... (potrzeba kilku sekund)</div>
+      </div>`;
+    return;
+  }
+  // Zbuduj shell tylko raz (nie niszcz/twórz canvas na nowo co 500ms — powoduje miganie)
+  if (!slot.querySelector('canvas')) {
+    slot.innerHTML = `
+      <div style="padding:10px 12px;background:var(--bg-elev-2);border-radius:6px;margin-top:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <span style="font-size:10px;font-weight:800;letter-spacing:0.08em;color:var(--text-muted);text-transform:uppercase">🔥 Liquidity Heatmap · głębokość orderbooka (10 min)</span>
+          <span style="font-size:9px;color:var(--text-dim);font-family:var(--mono)">🟢 bids · 🔴 asks · jaśniej = więcej $</span>
+        </div>
+        <canvas id="heatmap-canvas-${ticker}" width="640" height="220" style="width:100%;height:220px;display:block;border-radius:4px"></canvas>
+        <div id="heatmap-zones-summary-${ticker}" style="font-size:9.5px;color:var(--text-dim);margin-top:6px;line-height:1.5"></div>
+        <div style="font-size:9px;color:var(--text-dim);text-align:center;margin-top:4px">oś Y: % od aktualnej ceny (środek = mid) · oś X: czas → · żółta linia = mid</div>
+      </div>`;
+  }
+  const canvas = document.getElementById(`heatmap-canvas-${ticker}`);
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, W, H);
+
+  const windowMs = 10 * 60 * 1000;
+  const now = Date.now();
+  const recent = hist.filter(s => now - s.ts < windowMs);
+  const maxCols = 60;
+  const step = Math.max(1, Math.ceil(recent.length / maxCols));
+  const cols = recent.filter((_, i) => i % step === 0);
+  if (cols.length === 0) return;
+
+  const RANGE = 1.5; // pokaż ±1.5% od mid
+  const rows = [];
+  for (let p = RANGE; p >= -RANGE - 1e-9; p -= HEATMAP_BUCKET_PCT) rows.push(parseFloat(p.toFixed(1)));
+
+  let maxNotional = 1;
+  for (const c of cols) {
+    for (const v of Object.values(c.bidMap)) maxNotional = Math.max(maxNotional, v);
+    for (const v of Object.values(c.askMap)) maxNotional = Math.max(maxNotional, v);
+  }
+
+  const colW = W / cols.length;
+  const rowH = H / rows.length;
+
+  cols.forEach((c, ci) => {
+    rows.forEach((pctKey, ri) => {
+      const key = pctKey.toFixed(1);
+      const bidVal = c.bidMap[key];
+      const askVal = c.askMap[key];
+      const val = bidVal || askVal || 0;
+      if (val <= 0) return;
+      const intensity = Math.min(1, Math.log(val + 1) / Math.log(maxNotional + 1));
+      const isBid = !!bidVal;
+      const alpha = 0.15 + intensity * 0.75;
+      ctx.fillStyle = isBid ? `rgba(52,211,153,${alpha})` : `rgba(248,113,113,${alpha})`;
+      ctx.fillRect(ci * colW, ri * rowH, colW + 1, rowH + 1);
+    });
+  });
+
+  const midRowIdx = rows.indexOf(0);
+  if (midRowIdx >= 0) {
+    ctx.strokeStyle = 'rgba(245,184,65,0.55)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, midRowIdx * rowH + rowH / 2);
+    ctx.lineTo(W, midRowIdx * rowH + rowH / 2);
+    ctx.stroke();
+  }
+
+  // Text summary pod heatmapą — trwałe strefy które faktycznie zasilają sygnały
+  const zonesSlot = document.getElementById(`heatmap-zones-summary-${ticker}`);
+  if (zonesSlot) {
+    const zones = getHeatmapZones(ticker);
+    const fmtZone = (z, isBuy) => `<span style="color:${isBuy ? 'var(--green)' : 'var(--red)'}">${z.pct > 0 ? '+' : ''}${z.pct}% · $${(z.avgNotional/1e6).toFixed(2)}M · ${Math.round(z.persistence*100)}% czasu</span>`;
+    const buyStr = (zones.buyZones || []).map(z => fmtZone(z, true)).join(' &nbsp;·&nbsp; ');
+    const sellStr = (zones.sellZones || []).map(z => fmtZone(z, false)).join(' &nbsp;·&nbsp; ');
+    zonesSlot.innerHTML = (buyStr || sellStr)
+      ? `${buyStr ? `🟢 Trwałe strefy kupna: ${buyStr}<br>` : ''}${sellStr ? `🔴 Trwałe strefy sprzedaży: ${sellStr}` : ''}`
+      : `<span style="font-style:italic">Brak wyraźnych trwałych stref w ostatnich 5 min — płynność rozproszona.</span>`;
+  }
 }
 
 function updateOrderbookPanel(ticker) {
@@ -4314,6 +4516,7 @@ function renderTokenDetailShell(ticker) {
     <div id="alerts-slot-${ticker}"></div>
     <div id="predzones-slot-${ticker}"></div>
     <div id="orderbook-slot-${ticker}"></div>
+    <div id="heatmap-slot-${ticker}"></div>
     <div id="walllog-slot-${ticker}"></div>
 
     <div class="td-live-panel">
