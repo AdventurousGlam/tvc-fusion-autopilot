@@ -3486,7 +3486,7 @@ function computeHeatmapZones(ticker, windowMs = 5 * 60 * 1000) {
     return entries
       .filter(z => z.avgNotional > median * 2.5 && z.persistence >= 0.5)
       .sort((a, b) => b.avgNotional - a.avgNotional)
-      .slice(0, 5);
+      .slice(0, 1); // tylko #1 NAJSILNIEJSZA strefa po każdej stronie — inaczej etykiety się nakładają i nic nie widać
   };
   return {
     buyZones: toZones(bidTotals, bidCounts, z => z.pct <= 0),   // bid side = na/poniżej mid
@@ -5274,22 +5274,45 @@ function renderTokenChart(ticker, ohlc) {
           let maxRow = 1;
           for (let i = 0; i < numRows; i++) maxRow = Math.max(maxRow, bidRows[i], askRows[i]);
           const maxBarWidth = (chartArea.right - chartArea.left) * 0.32;
+          // Znajdź GLOBALNIE najsilniejszy wiersz po każdej stronie — to jest
+          // "gdzie jest największe skupisko zleceń", czyli dokładnie to czego
+          // brakowało: wyraźny punkt odniesienia zamiast jednolitej ściany.
+          let topBidIdx = -1, topBidVal = 0, topAskIdx = -1, topAskVal = 0;
+          for (let i = 0; i < numRows; i++) {
+            if (bidRows[i] > topBidVal) { topBidVal = bidRows[i]; topBidIdx = i; }
+            if (askRows[i] > topAskVal) { topAskVal = askRows[i]; topAskIdx = i; }
+          }
           for (let i = 0; i < numRows; i++) {
             const bidVal = bidRows[i], askVal = askRows[i];
             const val = Math.max(bidVal, askVal);
             if (val <= 0) continue;
-            const intensity = Math.min(1, Math.log(val + 1) / Math.log(maxRow + 1));
-            if (intensity < 0.05) continue; // odetnij szum
+            // Krzywa potęgowa (nie logarytmiczna) — mocno wygasza tło i uwypukla
+            // szczyty, więc widać KONTRAST zamiast jednolitego muru.
+            const norm = val / maxRow;
+            const intensity = Math.pow(norm, 2.2);
+            if (intensity < 0.03) continue; // odetnij szum
             const isBid = bidVal >= askVal;
             const barW = Math.max(2, intensity * maxBarWidth);
-            const alpha = 0.14 + intensity * 0.62;
+            const alpha = 0.10 + intensity * 0.68;
             const y = chartArea.top + i * rowPx;
             ctx.fillStyle = isBid ? `rgba(52,211,153,${alpha})` : `rgba(248,113,113,${alpha})`;
             ctx.fillRect(chartArea.right - barW, y, barW, Math.max(1, rowPx - 0.4));
           }
 
-          // Trwałe strefy — te faktycznie napędzają CONFLUENCE/scoring, więc
-          // dostają wyraźną etykietę z $ głębokości i % czasu obecności.
+          // 💎 Podświetl NAJWIĘKSZE skupisko po każdej stronie jasnym, pełnym
+          // paskiem sięgającym maxBarWidth — jednoznaczny wizualny punkt "tu jest ściana".
+          const drawTopCluster = (rowIdx, isBid) => {
+            if (rowIdx < 0) return;
+            const y = chartArea.top + rowIdx * rowPx;
+            const color = isBid ? '#34D399' : '#F87171';
+            ctx.fillStyle = color;
+            ctx.fillRect(chartArea.right - maxBarWidth, y - 1, maxBarWidth, rowPx + 2);
+          };
+          drawTopCluster(topBidIdx, true);
+          drawTopCluster(topAskIdx, false);
+
+          // Trwałe strefy (>=50% czasu w ostatnich 5 min) — tylko #1 najsilniejsza
+          // po każdej stronie, z wyraźną etykietą "💎 NAJWIĘKSZE SKUPISKO".
           const heatmapZonesChart = getHeatmapZones(ticker);
           const drawPersistentZone = (z, isBid) => {
             const price = latest.mid * (1 + z.pct / 100);
@@ -5297,21 +5320,24 @@ function renderTokenChart(ticker, ohlc) {
             if (isNaN(y) || y < chartArea.top || y > chartArea.bottom) return;
             const color = isBid ? '#34D399' : '#F87171';
             ctx.strokeStyle = color;
-            ctx.lineWidth = 1.5;
-            ctx.setLineDash([2, 2]);
+            ctx.lineWidth = 2;
+            ctx.setLineDash([3, 2]);
             ctx.beginPath();
             ctx.moveTo(chartArea.left, y);
             ctx.lineTo(chartArea.right, y);
             ctx.stroke();
             ctx.setLineDash([]);
-            const label = `🔥 $${(z.avgNotional/1e6).toFixed(2)}M · ${Math.round(z.persistence*100)}% czasu`;
-            ctx.font = 'bold 9px SF Mono, Menlo, monospace';
+            const label = `💎 NAJWIĘKSZE SKUPISKO ${isBid ? 'KUPNA' : 'SPRZEDAŻY'} · $${(z.avgNotional/1e6).toFixed(2)}M · ${Math.round(z.persistence*100)}% czasu`;
+            ctx.font = 'bold 10px SF Mono, Menlo, monospace';
             ctx.textAlign = 'right';
-            const textW = ctx.measureText(label).width + 8;
-            const labelX = chartArea.right - 65; // odsunięte od prawej krawędzi żeby nie kolidować z ceną na osi
-            const labelY = isBid ? y + 14 : y - 6; // bid label pod linią, ask label nad linią — mniej kolizji
-            ctx.fillStyle = 'rgba(10,14,26,0.85)';
-            ctx.fillRect(labelX - textW, labelY - 10, textW, 12);
+            const textW = ctx.measureText(label).width + 10;
+            const labelX = chartArea.right - 6;
+            const labelY = isBid ? y + 16 : y - 8; // bid label pod linią, ask label nad linią — mniej kolizji
+            ctx.fillStyle = 'rgba(10,14,26,0.92)';
+            ctx.fillRect(labelX - textW, labelY - 11, textW, 14);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(labelX - textW, labelY - 11, textW, 14);
             ctx.fillStyle = color;
             ctx.fillText(label, labelX, labelY);
           };
