@@ -354,6 +354,7 @@
   body[data-preset="trading"] .hide-trading { display: none !important; }
   body[data-preset="eod"] .hide-eod { display: none !important; }
   .toggle-btn.active.breakout { color: #FB923C; border-color: #FB923C; background: rgba(251,146,60,0.14); }
+  .toggle-btn.active.heatmap { color: #FF6B35; border-color: #FF6B35; background: rgba(255,107,53,0.15); }
   /* Explicit OFF state — makes toggle clearly visible when disabled */
   .toggle-btn:not(.active) { opacity: 0.55; text-decoration: line-through; text-decoration-color: rgba(125,139,171,0.4); }
 
@@ -5213,10 +5214,17 @@ function renderTokenChart(ticker, ohlc) {
         const hist = depthHistory[ticker] || [];
         const latest = hist[hist.length - 1];
         if (latest) {
-          const maxBarWidth = (chartArea.right - chartArea.left) * 0.22;
+          const maxBarWidth = (chartArea.right - chartArea.left) * 0.30;
           let maxNotional = 1;
           for (const v of Object.values(latest.bidMap)) maxNotional = Math.max(maxNotional, v);
           for (const v of Object.values(latest.askMap)) maxNotional = Math.max(maxNotional, v);
+          // Wysokość paska = szerokość kubełka w pikselach (żeby sąsiednie kubełki się stykały,
+          // zamiast być cienką ledwo widoczną kreską niezależnie od zoomu Y).
+          const bucketPct = latest.bucketPct || 0.05;
+          const priceAtMid = latest.mid;
+          const yTopOfBucket = yScale.getPixelForValue(priceAtMid * (1 + bucketPct / 200));
+          const yBotOfBucket = yScale.getPixelForValue(priceAtMid * (1 - bucketPct / 200));
+          const barH = Math.max(3, Math.min(16, Math.abs(yBotOfBucket - yTopOfBucket)));
 
           const drawBucket = (pctKey, notional, isBid) => {
             const pct = parseFloat(pctKey);
@@ -5224,10 +5232,10 @@ function renderTokenChart(ticker, ohlc) {
             const y = yScale.getPixelForValue(price);
             if (isNaN(y) || y < chartArea.top || y > chartArea.bottom) return;
             const intensity = Math.min(1, Math.log(notional + 1) / Math.log(maxNotional + 1));
-            const barW = Math.max(1, intensity * maxBarWidth);
-            const alpha = 0.10 + intensity * 0.55;
+            const barW = Math.max(6, intensity * maxBarWidth);
+            const alpha = 0.28 + intensity * 0.55;
             ctx.fillStyle = isBid ? `rgba(52,211,153,${alpha})` : `rgba(248,113,113,${alpha})`;
-            ctx.fillRect(chartArea.right - barW, y - 1, barW, 2);
+            ctx.fillRect(chartArea.right - barW, y - barH / 2, barW, barH);
           };
           Object.entries(latest.bidMap).forEach(([k, v]) => drawBucket(k, v, true));
           Object.entries(latest.askMap).forEach(([k, v]) => drawBucket(k, v, false));
@@ -5248,10 +5256,16 @@ function renderTokenChart(ticker, ohlc) {
             ctx.lineTo(chartArea.right, y);
             ctx.stroke();
             ctx.setLineDash([]);
-            ctx.fillStyle = color;
+            const label = `🔥 $${(z.avgNotional/1e6).toFixed(2)}M · ${Math.round(z.persistence*100)}% czasu`;
             ctx.font = 'bold 9px SF Mono, Menlo, monospace';
             ctx.textAlign = 'right';
-            ctx.fillText(`🔥 $${(z.avgNotional/1e6).toFixed(2)}M · ${Math.round(z.persistence*100)}% czasu`, chartArea.right - 4, y - 3);
+            const textW = ctx.measureText(label).width + 8;
+            const labelX = chartArea.right - 65; // odsunięte od prawej krawędzi żeby nie kolidować z ceną na osi
+            const labelY = isBid ? y + 14 : y - 6; // bid label pod linią, ask label nad linią — mniej kolizji
+            ctx.fillStyle = 'rgba(10,14,26,0.85)';
+            ctx.fillRect(labelX - textW, labelY - 10, textW, 12);
+            ctx.fillStyle = color;
+            ctx.fillText(label, labelX, labelY);
           };
           (heatmapZonesChart.buyZones || []).forEach(z => drawPersistentZone(z, true));
           (heatmapZonesChart.sellZones || []).forEach(z => drawPersistentZone(z, false));
