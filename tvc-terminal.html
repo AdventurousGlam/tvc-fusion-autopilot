@@ -912,6 +912,7 @@ function saveOverlays() {
 // User zoom state — persists across renders + refreshes so chart never
 // snaps back to auto-scale unless user explicitly clicks Reset ⟲
 const userZoom = {}; // { [ticker]: { yMin, yMax, xMin, xMax, tf } }
+const chartHoverY = {}; // { [ticker]: pixelY } — crosshair state, TradingView-style price-on-hover
 try {
   const saved = localStorage.getItem('tvc_zoom');
   if (saved) Object.assign(userZoom, JSON.parse(saved));
@@ -3494,14 +3495,29 @@ function computeHeatmapZones(ticker, windowMs = 5 * 60 * 1000) {
   };
 }
 
+// Elastyczne okno agregacji w zależności od timeframe wykresu — na scalpingowym
+// 5m/15m chcemy szybko reagujące strefy (2 min), na 1D/7D wolniej zmieniające
+// się, stabilniejsze (15 min = max co mamy zebrane, bo dane orderbooka nie są
+// historyczne — trzymamy tylko rolling window od momentu otwarcia strony).
+const HEATMAP_TF_WINDOW_MS = {
+  '5m': 2 * 60 * 1000, '15m': 2 * 60 * 1000,
+  '1h': 4 * 60 * 1000, '4h': 8 * 60 * 1000,
+  '1D': 15 * 60 * 1000, '7D': 15 * 60 * 1000,
+};
+function heatmapWindowForTf(tf) {
+  return HEATMAP_TF_WINDOW_MS[tf] || 5 * 60 * 1000;
+}
+
 // Cache — computeHeatmapZones iteruje po ~150-450 snapshotach, nie chcemy tego
 // liczyć przy każdym WS ticku (100ms), tylko raz na 2s (tyle co próbkowanie).
-function getHeatmapZones(ticker) {
+function getHeatmapZones(ticker, tf) {
+  const windowMs = heatmapWindowForTf(tf);
   const now = Date.now();
-  const cached = _heatmapZonesCache[ticker];
+  const cacheKey = `${ticker}_${windowMs}`;
+  const cached = _heatmapZonesCache[cacheKey];
   if (cached && now - cached.ts < HEATMAP_SNAPSHOT_INTERVAL_MS) return cached.zones;
-  const zones = computeHeatmapZones(ticker);
-  _heatmapZonesCache[ticker] = { ts: now, zones };
+  const zones = computeHeatmapZones(ticker, windowMs);
+  _heatmapZonesCache[cacheKey] = { ts: now, zones };
   return zones;
 }
 
@@ -5246,7 +5262,10 @@ function renderTokenChart(ticker, ohlc) {
       // Podświetlone przerywane linie = TRWAŁE strefy (śr. z 5 min, >=50% czasu) —
       // to dokładnie te same poziomy które zasilają CONFLUENCE alerty i scoring.
       if (overlays.heatmap) {
-        const hist = depthHistory[ticker] || [];
+        // Okno agregacji tekstury elastyczne wg timeframe wykresu — zob. heatmapWindowForTf.
+        const heatmapWinMs = heatmapWindowForTf(tfForSFP);
+        const heatmapNow = Date.now();
+        const hist = (depthHistory[ticker] || []).filter(s => heatmapNow - s.ts < heatmapWinMs);
         const latest = hist[hist.length - 1];
         if (latest && hist.length) {
           const rowPx = 2; // wysokość jednego wiersza siatki w px — gęstość tekstury
@@ -5313,7 +5332,7 @@ function renderTokenChart(ticker, ohlc) {
 
           // Trwałe strefy (>=50% czasu w ostatnich 5 min) — tylko #1 najsilniejsza
           // po każdej stronie, z wyraźną etykietą "💎 NAJWIĘKSZE SKUPISKO".
-          const heatmapZonesChart = getHeatmapZones(ticker);
+          const heatmapZonesChart = getHeatmapZones(ticker, tfForSFP);
           const drawPersistentZone = (z, isBid) => {
             const price = latest.mid * (1 + z.pct / 100);
             const y = yScale.getPixelForValue(price);
@@ -5327,7 +5346,7 @@ function renderTokenChart(ticker, ohlc) {
             ctx.lineTo(chartArea.right, y);
             ctx.stroke();
             ctx.setLineDash([]);
-            const label = `💎 NAJWIĘKSZE SKUPISKO ${isBid ? 'KUPNA' : 'SPRZEDAŻY'} · $${(z.avgNotional/1e6).toFixed(2)}M · ${Math.round(z.persistence*100)}% czasu`;
+            const label = `💎 ${fmt(price)} · SKUPISKO ${isBid ? 'KUPNA' : 'SPRZEDAŻY'} · $${(z.avgNotional/1e6).toFixed(2)}M · ${Math.round(z.persistence*100)}% czasu`;
             ctx.font = 'bold 10px SF Mono, Menlo, monospace';
             ctx.textAlign = 'right';
             const textW = ctx.measureText(label).width + 10;
@@ -5343,6 +5362,32 @@ function renderTokenChart(ticker, ohlc) {
           };
           (heatmapZonesChart.buyZones || []).forEach(z => drawPersistentZone(z, true));
           (heatmapZonesChart.sellZones || []).forEach(z => drawPersistentZone(z, false));
+        }
+      }
+
+      // 🎯 Crosshair — TradingView-style: pozioma kreskowana linia pod kursorem +
+      // etykieta z dokładną ceną na tym poziomie. Rysowane na samym końcu, żeby
+      // było zawsze na wierzchu (nad heatmapą, strefami, świecami itd).
+      const hoverY = chartHoverY[ticker];
+      if (hoverY !== undefined && hoverY >= chartArea.top && hoverY <= chartArea.bottom) {
+        const hoverPrice = yScale.getValueForPixel(hoverY);
+        if (hoverPrice !== undefined && !isNaN(hoverPrice)) {
+          ctx.strokeStyle = 'rgba(226,232,240,0.55)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 3]);
+          ctx.beginPath();
+          ctx.moveTo(chartArea.left, hoverY);
+          ctx.lineTo(chartArea.right, hoverY);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          const label = fmt(hoverPrice);
+          ctx.font = 'bold 11px SF Mono, Menlo, monospace';
+          ctx.textAlign = 'left';
+          const textW = ctx.measureText(label).width + 12;
+          ctx.fillStyle = '#E2E8F0';
+          ctx.fillRect(chartArea.right, hoverY - 9, textW, 18);
+          ctx.fillStyle = '#0A0E1A';
+          ctx.fillText(label, chartArea.right + 6, hoverY + 4);
         }
       }
 
@@ -5647,6 +5692,7 @@ function setupChartInteractions(ticker, canvas) {
   };
 
   // Cursor hint: change cursor over Y-axis area (right 55px) and X-axis area (bottom 32px)
+  // Also drives the TradingView-style price crosshair — pokazuje cenę pod kursorem.
   const hoverHandler = (e) => {
     if (isDragging) return;
     const rect = canvas.getBoundingClientRect();
@@ -5655,6 +5701,15 @@ function setupChartInteractions(ticker, canvas) {
     if (rect.width - x < 55) canvas.style.cursor = 'ns-resize';       // Y-axis zone → vertical scale
     else if (rect.height - y < 32) canvas.style.cursor = 'ew-resize'; // X-axis zone → horizontal scale
     else canvas.style.cursor = 'crosshair';
+    chartHoverY[ticker] = y;
+    const chart = tokenCharts[ticker];
+    if (chart) chart.draw();
+  };
+  const clearHover = () => {
+    if (chartHoverY[ticker] === undefined) return;
+    delete chartHoverY[ticker];
+    const chart = tokenCharts[ticker];
+    if (chart) chart.draw();
   };
 
   const downHandler = (e) => {
@@ -5735,7 +5790,7 @@ function setupChartInteractions(ticker, canvas) {
   canvas.addEventListener('pointermove', moveHandler);
   canvas.addEventListener('pointerup', upHandler);
   canvas.addEventListener('pointercancel', upHandler);
-  canvas.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') upHandler(); });
+  canvas.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') { upHandler(); clearHover(); } });
   canvas.addEventListener('dblclick', () => resetZoom(ticker));
   canvas.addEventListener('touchmove', touchPreventScroll, { passive: false });
 
