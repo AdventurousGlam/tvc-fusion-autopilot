@@ -343,6 +343,7 @@
   body[data-preset="eod"] .hide-eod { display: none !important; }
   .toggle-btn.active.breakout { color: #FB923C; border-color: #FB923C; background: rgba(251,146,60,0.14); }
   .toggle-btn.active.heatmap { color: #FF6B35; border-color: #FF6B35; background: rgba(255,107,53,0.15); }
+  .toggle-btn.active.fvg { color: #FBBF24; border-color: #FBBF24; background: rgba(251,191,36,0.14); }
   /* Explicit OFF state — makes toggle clearly visible when disabled */
   .toggle-btn:not(.active) { opacity: 0.55; text-decoration: line-through; text-decoration-color: rgba(125,139,171,0.4); }
 
@@ -788,7 +789,7 @@ let sparklineData = {};
 let ohlcCache = {};         // { "SOL_1D": [[ts,o,h,l,c], ...] }
 let expandedToken = null;
 let overlays = {
-  sr: true, ob: true, sfp: true, liq: true, pressure: true, breakout: true, pred: true, walls: true, heatmap: true
+  sr: true, ob: true, sfp: true, liq: true, pressure: true, breakout: true, pred: true, walls: true, heatmap: true, fvg: true
 };
 try {
   const saved = localStorage.getItem('tvc_overlays');
@@ -1077,6 +1078,40 @@ function detectOrderBlocks(ohlc) {
     }
   }
   return blocks.slice(-5); // keep most recent 5
+}
+
+// Fair Value Gap (FVG) — ICT/Smart Money Concept: a 3-candle price imbalance
+// where candle i's wicks don't overlap with BOTH neighbors, leaving a "gap" the
+// market tends to revisit. Bullish FVG = candle[i-1].high < candle[i+1].low
+// (gap up). Bearish FVG = candle[i-1].low > candle[i+1].high (gap down).
+// Only unfilled (or partially filled) gaps are kept — once price fully trades
+// back through the zone, it's considered mitigated and dropped.
+function detectFVG(ohlc) {
+  if (!ohlc || ohlc.length < 3) return [];
+  const gaps = [];
+  for (let i = 1; i < ohlc.length - 1; i++) {
+    const prev = ohlc[i - 1], next = ohlc[i + 1];
+    const prevHigh = prev[2], prevLow = prev[3];
+    const nextHigh = next[2], nextLow = next[3];
+    if (nextLow > prevHigh) {
+      gaps.push({ ts: ohlc[i][0], idx: i, top: nextLow, bottom: prevHigh, type: 'bullish' });
+    } else if (nextHigh < prevLow) {
+      gaps.push({ ts: ohlc[i][0], idx: i, top: prevLow, bottom: nextHigh, type: 'bearish' });
+    }
+  }
+  const lastIdx = ohlc.length - 1;
+  gaps.forEach(g => {
+    g.filled = false;
+    g.touched = false;
+    for (let j = g.idx + 2; j <= lastIdx; j++) {
+      const [, , h, l] = ohlc[j];
+      if (h >= g.bottom && l <= g.top) {
+        g.touched = true;
+        if (l <= g.bottom && h >= g.top) { g.filled = true; break; } // fully traded through → mitigated
+      }
+    }
+  });
+  return gaps.filter(g => !g.filled).slice(-6); // most recent 6 still-open gaps
 }
 
 // Swing Failure Pattern — requires REVERSAL CONFIRMATION (next 3 candles moved
@@ -4501,6 +4536,7 @@ function renderTokenDetailShell(ticker) {
       <div class="toggles-group">
         <button class="toggle-btn sr ${overlays.sr ? 'active' : ''}" onclick="toggleOverlay('sr', '${ticker}')">S/R</button>
         <button class="toggle-btn ob ${overlays.ob ? 'active' : ''}" onclick="toggleOverlay('ob', '${ticker}')">OB</button>
+        <button class="toggle-btn fvg ${overlays.fvg ? 'active' : ''}" onclick="toggleOverlay('fvg', '${ticker}')" title="Fair Value Gap (ICT/Smart Money Concept) — 3-świecowa luka cenowa (imbalans), którą rynek ma tendencję odwiedzać ponownie. Pokazane tylko niewypełnione/częściowo wypełnione strefy.">FVG</button>
         <button class="toggle-btn sfp ${overlays.sfp ? 'active' : ''}" onclick="toggleOverlay('sfp', '${ticker}')">SFP</button>
         <button class="toggle-btn liq ${overlays.liq ? 'active' : ''}" onclick="toggleOverlay('liq', '${ticker}')">Liq</button>
         <button class="toggle-btn breakout ${overlays.breakout ? 'active' : ''}" onclick="toggleOverlay('breakout', '${ticker}')">Breakout</button>
@@ -4718,6 +4754,7 @@ function renderTokenChart(ticker, ohlc) {
   const tfForSFP = window[`__tf_${ticker}`] || '7D';
   const srZones = overlays.sr ? detectSupportResistance(ohlc).sort((a,b) => b.touches - a.touches).slice(0, 3) : [];
   const orderBlocks = overlays.ob ? detectOrderBlocks(ohlc).slice(-2) : [];
+  const fvgZones = overlays.fvg ? detectFVG(ohlc) : [];
   const sfpPatterns = overlays.sfp ? detectSFP(ohlc, tfForSFP) : [];
   const liqZones = overlays.liq ? detectLiquidityZones(ohlc).sort((a,b) => b.count - a.count).slice(0, 3) : [];
   const breakouts = overlays.breakout ? detectBreakouts(ohlc) : [];
@@ -4937,6 +4974,31 @@ function renderTokenChart(ticker, ohlc) {
         ctx.font = 'bold 9px SF Mono, Menlo, monospace';
         ctx.textAlign = 'left';
         ctx.fillText(`OB ${ob.type[0].toUpperCase()}`, xStart + 3, yHigh + 10);
+      });
+
+      // Fair Value Gaps (ICT/Smart Money Concept) — 3-świecowa luka cenowa,
+      // rynek ma tendencję do jej "wypełniania" (mitygacji). Rysowana jako
+      // półprzezroczysty prostokąt od świecy powstania do prawej krawędzi;
+      // strefy dotknięte (ale nie w pełni wypełnione) mają przerywaną obwódkę.
+      fvgZones.forEach(g => {
+        const idx = tsToIndex.get(g.ts);
+        if (idx == null) return;
+        const xStart = xScale.getPixelForValue(idx);
+        const yTop = yScale.getPixelForValue(g.top);
+        const yBottom = yScale.getPixelForValue(g.bottom);
+        const color = g.type === 'bullish' ? 'rgba(251,191,36,0.16)' : 'rgba(251,191,36,0.10)';
+        const borderColor = '#FBBF24';
+        ctx.fillStyle = color;
+        ctx.fillRect(xStart, yTop, chartArea.right - xStart, yBottom - yTop);
+        ctx.strokeStyle = borderColor;
+        ctx.lineWidth = 1;
+        ctx.setLineDash(g.touched ? [4, 3] : []);
+        ctx.strokeRect(xStart, yTop, chartArea.right - xStart, yBottom - yTop);
+        ctx.setLineDash([]);
+        ctx.fillStyle = borderColor;
+        ctx.font = 'bold 9px SF Mono, Menlo, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`FVG ${g.type === 'bullish' ? '↑' : '↓'}`, xStart + 3, yBottom - 3);
       });
 
       // Liquidity zones
