@@ -1575,6 +1575,7 @@ function openAllOrderbookStreams() {
     if (!orderbookWS[ticker]) {
       openOrderbookStream(ticker);
     }
+    startHeatmapPolling(ticker);
   }
   console.log(`[background] Monitoring ${tickers.length} tickers w tle:`, tickers.join(', '));
 }
@@ -1599,6 +1600,34 @@ const HEATMAP_WINDOW_MS = 15 * 60 * 1000;      // trzymaj max 15 min historii (p
 const HEATMAP_SNAPSHOT_INTERVAL_MS = 2000;     // próbkuj co 2s (WS leci co 100ms — zbyt gęsto żeby zapisywać każdy tick)
 const _heatmapZonesCache = {};  // { ticker: {ts, zones} } — cache computeHeatmapZones żeby nie liczyć przy każdym WS ticku (100ms)
 
+// ─── Heatmap depth polling — REST, NIE WebSocket ───
+// WS `@depth20@100ms` daje tylko 20 najlepszych poziomów, które dla płynnych par
+// (np. ETH) mieszczą się w promieniu ~0.01% od mid — praktycznie 2-3 kubełki,
+// za mało żeby zbudować sensowną heatmapę. REST /api/v3/depth?limit=1000 daje
+// pełne ~1000 poziomów na stronę, co dla ETH pokrywa realnie ±0.3-0.7% od mid —
+// wystarczająco szeroko żeby heatmapa wyglądała jak grzebień, a nie jedna linia.
+const heatmapPollTimers = {};
+async function _pollHeatmapDepth(ticker) {
+  const symbol = BINANCE_SYMBOLS[ticker];
+  if (!symbol) return;
+  try {
+    const r = await fetch(`https://data-api.binance.vision/api/v3/depth?symbol=${symbol}&limit=1000`);
+    const d = await r.json();
+    const bids = (d.bids || []).map(([p, q]) => [parseFloat(p), parseFloat(q)]);
+    const asks = (d.asks || []).map(([p, q]) => [parseFloat(p), parseFloat(q)]);
+    if (bids.length === 0 || asks.length === 0) return;
+    const mid = (bids[0][0] + asks[0][0]) / 2;
+    snapshotDepthForHeatmap(ticker, bids, asks, mid, Date.now());
+  } catch (e) {
+    console.warn(`[heatmap] REST depth poll failed for ${ticker}`, e);
+  }
+}
+function startHeatmapPolling(ticker) {
+  if (heatmapPollTimers[ticker]) return; // już działa
+  _pollHeatmapDepth(ticker);
+  heatmapPollTimers[ticker] = setInterval(() => _pollHeatmapDepth(ticker), 4000);
+}
+
 function openOrderbookStream(ticker) {
   const symbol = BINANCE_SYMBOLS[ticker];
   if (!symbol) return;
@@ -1621,7 +1650,9 @@ function openOrderbookStream(ticker) {
         const mid = (bestBid + bestAsk) / 2;
         const now = Date.now();
         liveOrderbook[ticker] = { bids, asks, ts: now, mid };
-        snapshotDepthForHeatmap(ticker, bids, asks, mid, now);
+        // Heatmapę zasila WYŁĄCZNIE _pollHeatmapDepth (REST, pełne 1000 poziomów) —
+        // NIE ten WS depth20 handler. Top-20 WS mieści się w ~0.01% od mid, więc
+        // mieszanie go z szerokim REST snapshotem tylko zawężało wspólny EMA bucketPct.
         const walls = detectWalls(bids, asks, mid);
         // ─── Wall persistence tracking (spoofing detection) ───
         trackWallPersistence(ticker, walls, now);
