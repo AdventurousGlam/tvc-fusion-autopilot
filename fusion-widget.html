@@ -3206,7 +3206,7 @@ function computeHeatmapZones(ticker, windowMs = 5 * 60 * 1000) {
     return entries
       .filter(z => z.avgNotional > median * 2.5 && z.persistence >= 0.5)
       .sort((a, b) => b.avgNotional - a.avgNotional)
-      .slice(0, 1); // tylko #1 NAJSILNIEJSZA strefa po każdej stronie — inaczej etykiety się nakładają i nic nie widać
+      .slice(0, 3); // #1 NAJSILNIEJSZA strefa (pełna etykieta) + 2 kolejne (kompaktowe, do orientacji)
   };
   return {
     buyZones: toZones(bidTotals, bidCounts, z => z.pct <= 0),   // bid side = na/poniżej mid
@@ -5048,35 +5048,56 @@ function renderTokenChart(ticker, ohlc) {
           drawTopCluster(topAskIdx, false);
 
           const heatmapZonesChart = getHeatmapZones(ticker, tfForSFP);
-          const drawPersistentZone = (z, isBid) => {
+          const usedLabelRanges = []; // anti-kolizja etykiet (współdzielona między bid/ask)
+          const findFreeBaseline = (desiredBaseline, topOff, botOff) => {
+            let baseline = desiredBaseline;
+            for (let iter = 0; iter < 20; iter++) {
+              const top = baseline - topOff, bot = baseline + botOff;
+              const collision = usedLabelRanges.find(r => !(bot < r.top - 1 || top > r.bottom + 1));
+              if (!collision) break;
+              baseline = collision.bottom + topOff + 2;
+            }
+            usedLabelRanges.push({ top: baseline - topOff, bottom: baseline + botOff });
+            return baseline;
+          };
+          const drawPersistentZone = (z, isBid, idx) => {
             const price = latest.mid * (1 + z.pct / 100);
             const y = yScale.getPixelForValue(price);
             if (isNaN(y) || y < chartArea.top || y > chartArea.bottom) return;
             const color = isBid ? '#34D399' : '#F87171';
+            const isTop = idx === 0;
             ctx.strokeStyle = color;
-            ctx.lineWidth = 2;
-            ctx.setLineDash([3, 2]);
+            ctx.lineWidth = isTop ? 2 : 1;
+            ctx.globalAlpha = isTop ? 1 : 0.6;
+            ctx.setLineDash(isTop ? [3, 2] : [2, 3]);
             ctx.beginPath();
             ctx.moveTo(chartArea.left, y);
             ctx.lineTo(chartArea.right, y);
             ctx.stroke();
             ctx.setLineDash([]);
-            const label = `💎 ${fmt(price)} · SKUPISKO ${isBid ? 'KUPNA' : 'SPRZEDAŻY'} · $${(z.avgNotional/1e6).toFixed(2)}M · ${Math.round(z.persistence*100)}% czasu`;
-            ctx.font = 'bold 10px SF Mono, Menlo, monospace';
+            ctx.globalAlpha = 1;
+            const label = isTop
+              ? `💎 ${fmt(price)} · SKUPISKO ${isBid ? 'KUPNA' : 'SPRZEDAŻY'} · $${(z.avgNotional/1e6).toFixed(2)}M · ${Math.round(z.persistence*100)}% czasu`
+              : `${fmt(price)} · $${(z.avgNotional/1e6).toFixed(2)}M`;
+            ctx.font = isTop ? 'bold 10px SF Mono, Menlo, monospace' : '9px SF Mono, Menlo, monospace';
             ctx.textAlign = 'right';
-            const textW = ctx.measureText(label).width + 10;
+            const textW = ctx.measureText(label).width + (isTop ? 10 : 6);
             const labelX = chartArea.right - 6;
-            const labelY = isBid ? y + 16 : y - 8;
-            ctx.fillStyle = 'rgba(10,14,26,0.92)';
-            ctx.fillRect(labelX - textW, labelY - 11, textW, 14);
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 1;
-            ctx.strokeRect(labelX - textW, labelY - 11, textW, 14);
+            const topOff = isTop ? 11 : 8, botOff = 3;
+            const desiredBaseline = isBid ? y + (isTop ? 16 : 13) : y - (isTop ? 8 : 6);
+            const baseline = findFreeBaseline(desiredBaseline, topOff, botOff);
+            ctx.fillStyle = isTop ? 'rgba(10,14,26,0.92)' : 'rgba(10,14,26,0.82)';
+            ctx.fillRect(labelX - textW, baseline - topOff, textW, topOff + botOff);
+            if (isTop) {
+              ctx.strokeStyle = color;
+              ctx.lineWidth = 1;
+              ctx.strokeRect(labelX - textW, baseline - topOff, textW, topOff + botOff);
+            }
             ctx.fillStyle = color;
-            ctx.fillText(label, labelX, labelY);
+            ctx.fillText(label, labelX, baseline);
           };
-          (heatmapZonesChart.buyZones || []).forEach(z => drawPersistentZone(z, true));
-          (heatmapZonesChart.sellZones || []).forEach(z => drawPersistentZone(z, false));
+          (heatmapZonesChart.buyZones || []).forEach((z, idx) => drawPersistentZone(z, true, idx));
+          (heatmapZonesChart.sellZones || []).forEach((z, idx) => drawPersistentZone(z, false, idx));
         }
       }
 
