@@ -389,12 +389,24 @@
     color: var(--text-dim); font-size: 12px; pointer-events: none; opacity: 0.5;
   }
   .zoom-hint {
-    position: absolute; top: 8px; left: 12px;
+    position: absolute; top: 28px; left: 12px;
     font-size: 9px; color: var(--text-dim); font-weight: 600;
     letter-spacing: 0.04em; text-transform: uppercase;
     pointer-events: none; opacity: 0.6;
     background: rgba(10,14,26,0.7); padding: 3px 6px; border-radius: 3px;
   }
+  .ohlc-readout {
+    position: absolute; top: 6px; left: 12px; right: 90px;
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    font-size: 11px; font-family: var(--mono); font-weight: 600;
+    color: var(--text-muted); pointer-events: none; z-index: 3;
+    background: rgba(10,14,26,0.55); padding: 3px 8px; border-radius: 4px;
+    line-height: 1.3;
+  }
+  .ohlc-readout .ohlc-date { color: var(--text-dim); font-weight: 700; margin-right: 2px; }
+  .ohlc-readout .ohlc-item { white-space: nowrap; color: var(--text-dim); }
+  .ohlc-readout .ohlc-item b { font-weight: 700; }
+  .ohlc-readout .ohlc-chg { font-weight: 800; }
   .zoom-reset-btn {
     position: absolute; top: 6px; right: 12px;
     background: var(--bg-hover); border: 1px solid var(--border);
@@ -913,6 +925,30 @@ function saveOverlays() {
 // snaps back to auto-scale unless user explicitly clicks Reset ⟲
 const userZoom = {}; // { [ticker]: { yMin, yMax, xMin, xMax, tf } }
 const chartHoverY = {}; // { [ticker]: pixelY } — crosshair state, TradingView-style price-on-hover
+const tokenChartData = {}; // { [ticker]: { ohlc, labels } } — backing data for the top OHLC readout bar
+
+// Updates the TradingView/MEXC-style OHLC readout bar above the chart. If idx is
+// omitted, shows the last (current) candle — matching default TradingView behavior.
+function updateOhlcReadout(ticker, idx) {
+  const el = document.getElementById(`ohlc-readout-${ticker}`);
+  if (!el) return;
+  const data = tokenChartData[ticker];
+  if (!data || !data.ohlc || !data.ohlc.length) { el.innerHTML = ''; return; }
+  const { ohlc, labels } = data;
+  const i = (idx === undefined || idx === null) ? ohlc.length - 1 : Math.max(0, Math.min(ohlc.length - 1, idx));
+  const [_ts, o, h, l, c] = ohlc[i];
+  const chg = o !== 0 ? ((c - o) / o * 100) : 0;
+  const up = chg >= 0;
+  const color = up ? 'var(--green)' : 'var(--red)';
+  el.innerHTML = `
+    <span class="ohlc-date">${labels[i] || ''}</span>
+    <span class="ohlc-item">O <b style="color:${color}">$${fmt(o)}</b></span>
+    <span class="ohlc-item">H <b style="color:${color}">$${fmt(h)}</b></span>
+    <span class="ohlc-item">L <b style="color:${color}">$${fmt(l)}</b></span>
+    <span class="ohlc-item">C <b style="color:${color}">$${fmt(c)}</b></span>
+    <span class="ohlc-item ohlc-chg" style="color:${color}">${up ? '+' : ''}${chg.toFixed(2)}%</span>
+  `;
+}
 try {
   const saved = localStorage.getItem('tvc_zoom');
   if (saved) Object.assign(userZoom, JSON.parse(saved));
@@ -4759,6 +4795,7 @@ function renderTokenDetailShell(ticker) {
     </div>
 
     <div class="td-chart-wrap" id="chart-wrap-${ticker}">
+      <div class="ohlc-readout" id="ohlc-readout-${ticker}"></div>
       <div class="zoom-hint">wheel · zoom Y &nbsp;·&nbsp; shift+wheel · zoom X &nbsp;·&nbsp; drag · pan X+Y &nbsp;·&nbsp; drag on Y-axis (prawa krawędź) · scale Y like TradingView &nbsp;·&nbsp; EMA21 blue / EMA50 purple</div>
       <button class="zoom-reset-btn" onclick="resetZoom('${ticker}')">Reset ⟲</button>
       <canvas id="td-chart-${ticker}"></canvas>
@@ -4955,6 +4992,10 @@ function renderTokenChart(ticker, ohlc) {
   // Map ts → index for overlay plugin (category scale)
   const tsToIndex = new Map(ohlc.map((c, i) => [c[0], i]));
   const dec = (lastFusion.decisions || []).find(d => d.ticker === ticker) || {};
+
+  // Backing data for the top-of-chart OHLC readout bar (TradingView/MEXC-style)
+  tokenChartData[ticker] = { ohlc, labels };
+  updateOhlcReadout(ticker);
 
   // TA calculations — cap output to reduce label clutter on tight ranges
   const tfForSFP = window[`__tf_${ticker}`] || '7D';
@@ -5498,26 +5539,10 @@ function renderTokenChart(ticker, ohlc) {
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
-        tooltip: {
-          backgroundColor: '#151d34',
-          titleColor: '#e8ecf7',
-          bodyColor: '#e8ecf7',
-          borderColor: '#1e2a44',
-          borderWidth: 1,
-          callbacks: {
-            title: (items) => labels[items[0].dataIndex],
-            label: (ctx) => {
-              const [_ts, o, h, l, c] = ohlc[ctx.dataIndex];
-              const chg = ((c - o) / o * 100);
-              return [
-                `Open  $${fmt(o)}`,
-                `High  $${fmt(h)}`,
-                `Low   $${fmt(l)}`,
-                `Close $${fmt(c)}  (${chg >= 0 ? '+' : ''}${chg.toFixed(2)}%)`
-              ];
-            }
-          }
-        }
+        // Default floating tooltip disabled — replaced by the top-of-chart OHLC
+        // readout bar (updateOhlcReadout), which also fixes the old bug where
+        // this tooltip repeated the OHLC text 3x (once per dataset: Wick/EMA21/EMA50).
+        tooltip: { enabled: false }
       },
       scales: {
         x: {
@@ -5725,13 +5750,26 @@ function setupChartInteractions(ticker, canvas) {
     else canvas.style.cursor = 'crosshair';
     chartHoverY[ticker] = y;
     const chart = tokenCharts[ticker];
-    if (chart) chart.draw();
+    if (chart) {
+      chart.draw();
+      // Per-candle OHLC readout, TradingView-style: map cursor X → nearest candle index
+      const xScale = chart.scales.x;
+      const data = tokenChartData[ticker];
+      if (xScale && data && data.ohlc && data.ohlc.length) {
+        const rawIdx = xScale.getValueForPixel(x);
+        if (rawIdx !== undefined && !isNaN(rawIdx)) {
+          const idx = Math.max(0, Math.min(data.ohlc.length - 1, Math.round(rawIdx)));
+          updateOhlcReadout(ticker, idx);
+        }
+      }
+    }
   };
   const clearHover = () => {
     if (chartHoverY[ticker] === undefined) return;
     delete chartHoverY[ticker];
     const chart = tokenCharts[ticker];
     if (chart) chart.draw();
+    updateOhlcReadout(ticker); // reset to last/current candle
   };
 
   const downHandler = (e) => {
