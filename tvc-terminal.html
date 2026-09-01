@@ -898,7 +898,7 @@ let sparklineData = {};
 let ohlcCache = {};         // { "SOL_1D": [[ts,o,h,l,c], ...] }
 let expandedToken = null;
 let overlays = {
-  sr: true, ob: true, sfp: true, liq: true, pressure: true, breakout: true, pred: true, walls: true
+  sr: true, ob: true, sfp: true, liq: true, pressure: true, breakout: true, pred: true, walls: true, heatmap: true
 };
 try {
   const saved = localStorage.getItem('tvc_overlays');
@@ -1729,8 +1729,7 @@ const alertSounds = {};     // { ticker: Set of alert types shown (dedup) }
 const confluenceHistory = {}; // { ticker: [{type: 'CONFLUENCE_BUY'|'CONFLUENCE_SELL', ts}] } — do wykrywania range (obie strony naprzemiennie)
 
 // ─── LIQUIDITY HEATMAP — rolling orderbook depth history, do wizualizacji i wykrywania trwałych stref płynności ───
-const depthHistory = {};        // { ticker: [{ts, mid, bidMap: {pctBucket: notionalUSD}, askMap: {...}}] }
-const HEATMAP_BUCKET_PCT = 0.1;          // szerokość kubełka ceny: 0.1% od mid
+const depthHistory = {};        // { ticker: [{ts, mid, bidMap: {pctBucket: notionalUSD}, askMap: {...}, bucketPct}] }
 const HEATMAP_WINDOW_MS = 15 * 60 * 1000;      // trzymaj max 15 min historii (pamięć)
 const HEATMAP_SNAPSHOT_INTERVAL_MS = 2000;     // próbkuj co 2s (WS leci co 100ms — zbyt gęsto żeby zapisywać każdy tick)
 const _heatmapZonesCache = {};  // { ticker: {ts, zones} } — cache computeHeatmapZones żeby nie liczyć przy każdym WS ticku (100ms)
@@ -2244,7 +2243,6 @@ function throttledUpdatePanel(ticker, now) {
   // Only update UI panels for EXPANDED token (others are background)
   if (expandedToken === ticker) {
     updateOrderbookPanel(ticker);
-    renderLiquidityHeatmap(ticker);
     updateAlertsPanel(ticker);
     renderLiveInterpretation(ticker);
   }
@@ -3381,12 +3379,37 @@ function updateWallLogPanel(ticker) {
 // % odległości od mid). Pozwala zobaczyć gdzie płynność TRWALE się kumuluje,
 // a nie tylko gdzie w danej chwili stoi jedno duże zlecenie.
 // ═══════════════════════════════════════════════════════════════════════════
+// Szerokość kubełka MUSI być adaptacyjna per-ticker — stała 0.1% od mid okazała się
+// zbyt gruba dla płynnych par (np. ETH: top20 głębokości mieści się w ułamku 0.1%,
+// więc CAŁA głębokość zlewała się w 1-2 kubełki = płaski jednolity pasek zamiast
+// heatmapy). Liczymy rzeczywisty rozstaw widocznych poziomów i dzielimy go na
+// ~25 kubełków, wygładzając (EMA) żeby nie skakało co tick.
+const _heatmapBucketPct = {};  // { ticker: aktualna adaptacyjna szerokość kubełka w % }
+const HEATMAP_TARGET_BUCKETS = 25;
+const HEATMAP_BUCKET_PCT_FLOOR = 0.004;
+const HEATMAP_BUCKET_PCT_CEIL = 0.3;
+
+function getAdaptiveBucketPct(ticker, bids, asks, mid) {
+  const allPrices = [];
+  for (const [p] of bids) allPrices.push(p);
+  for (const [p] of asks) allPrices.push(p);
+  if (allPrices.length < 2 || mid <= 0) return _heatmapBucketPct[ticker] || 0.05;
+  const span = Math.max(...allPrices) - Math.min(...allPrices);
+  let raw = (span / HEATMAP_TARGET_BUCKETS) / mid * 100;
+  raw = Math.min(HEATMAP_BUCKET_PCT_CEIL, Math.max(HEATMAP_BUCKET_PCT_FLOOR, raw || HEATMAP_BUCKET_PCT_FLOOR));
+  const prev = _heatmapBucketPct[ticker];
+  const smoothed = prev ? prev * 0.85 + raw * 0.15 : raw;
+  _heatmapBucketPct[ticker] = smoothed;
+  return smoothed;
+}
+
 function snapshotDepthForHeatmap(ticker, bids, asks, mid, now) {
   if (!depthHistory[ticker]) depthHistory[ticker] = [];
   const hist = depthHistory[ticker];
   const last = hist[hist.length - 1];
   if (last && now - last.ts < HEATMAP_SNAPSHOT_INTERVAL_MS) return;  // throttle — WS leci co 100ms, próbkujemy co 2s
-  const bucket = (price) => ((Math.round(((price - mid) / mid * 100) / HEATMAP_BUCKET_PCT)) * HEATMAP_BUCKET_PCT).toFixed(1);
+  const bucketPct = getAdaptiveBucketPct(ticker, bids, asks, mid);
+  const bucket = (price) => ((Math.round(((price - mid) / mid * 100) / bucketPct)) * bucketPct).toFixed(3);
   const bidMap = {}, askMap = {};
   for (const [p, q] of bids) {
     const b = bucket(p);
@@ -3396,7 +3419,7 @@ function snapshotDepthForHeatmap(ticker, bids, asks, mid, now) {
     const b = bucket(p);
     askMap[b] = (askMap[b] || 0) + p * q;
   }
-  hist.push({ ts: now, mid, bidMap, askMap });
+  hist.push({ ts: now, mid, bidMap, askMap, bucketPct });
   while (hist.length && now - hist[0].ts > HEATMAP_WINDOW_MS) hist.shift();
 }
 
@@ -3479,98 +3502,6 @@ function detectWalls(bids, asks, mid) {
     totalBidNotional: Math.round(totalBidNotional),
     totalAskNotional: Math.round(totalAskNotional),
   };
-}
-
-// ─── LIQUIDITY HEATMAP panel — canvas, oś Y = % od mid, oś X = czas, kolor = $ głębokości ───
-function renderLiquidityHeatmap(ticker) {
-  const slot = document.getElementById(`heatmap-slot-${ticker}`);
-  if (!slot) return;
-  const hist = depthHistory[ticker] || [];
-  if (hist.length < 2) {
-    slot.innerHTML = `
-      <div style="padding:10px 12px;background:var(--bg-elev-2);border-radius:6px;margin-top:8px">
-        <div style="font-size:10px;font-weight:800;letter-spacing:0.08em;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px">🔥 Liquidity Heatmap</div>
-        <div style="padding:8px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">Zbieram dane orderbooka... (potrzeba kilku sekund)</div>
-      </div>`;
-    return;
-  }
-  // Zbuduj shell tylko raz (nie niszcz/twórz canvas na nowo co 500ms — powoduje miganie)
-  if (!slot.querySelector('canvas')) {
-    slot.innerHTML = `
-      <div style="padding:10px 12px;background:var(--bg-elev-2);border-radius:6px;margin-top:8px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-          <span style="font-size:10px;font-weight:800;letter-spacing:0.08em;color:var(--text-muted);text-transform:uppercase">🔥 Liquidity Heatmap · głębokość orderbooka (10 min)</span>
-          <span style="font-size:9px;color:var(--text-dim);font-family:var(--mono)">🟢 bids · 🔴 asks · jaśniej = więcej $</span>
-        </div>
-        <canvas id="heatmap-canvas-${ticker}" width="640" height="220" style="width:100%;height:220px;display:block;border-radius:4px"></canvas>
-        <div id="heatmap-zones-summary-${ticker}" style="font-size:9.5px;color:var(--text-dim);margin-top:6px;line-height:1.5"></div>
-        <div style="font-size:9px;color:var(--text-dim);text-align:center;margin-top:4px">oś Y: % od aktualnej ceny (środek = mid) · oś X: czas → · żółta linia = mid</div>
-      </div>`;
-  }
-  const canvas = document.getElementById(`heatmap-canvas-${ticker}`);
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  const W = canvas.width, H = canvas.height;
-  ctx.fillStyle = '#0d1117';
-  ctx.fillRect(0, 0, W, H);
-
-  const windowMs = 10 * 60 * 1000;
-  const now = Date.now();
-  const recent = hist.filter(s => now - s.ts < windowMs);
-  const maxCols = 60;
-  const step = Math.max(1, Math.ceil(recent.length / maxCols));
-  const cols = recent.filter((_, i) => i % step === 0);
-  if (cols.length === 0) return;
-
-  const RANGE = 1.5; // pokaż ±1.5% od mid
-  const rows = [];
-  for (let p = RANGE; p >= -RANGE - 1e-9; p -= HEATMAP_BUCKET_PCT) rows.push(parseFloat(p.toFixed(1)));
-
-  let maxNotional = 1;
-  for (const c of cols) {
-    for (const v of Object.values(c.bidMap)) maxNotional = Math.max(maxNotional, v);
-    for (const v of Object.values(c.askMap)) maxNotional = Math.max(maxNotional, v);
-  }
-
-  const colW = W / cols.length;
-  const rowH = H / rows.length;
-
-  cols.forEach((c, ci) => {
-    rows.forEach((pctKey, ri) => {
-      const key = pctKey.toFixed(1);
-      const bidVal = c.bidMap[key];
-      const askVal = c.askMap[key];
-      const val = bidVal || askVal || 0;
-      if (val <= 0) return;
-      const intensity = Math.min(1, Math.log(val + 1) / Math.log(maxNotional + 1));
-      const isBid = !!bidVal;
-      const alpha = 0.15 + intensity * 0.75;
-      ctx.fillStyle = isBid ? `rgba(52,211,153,${alpha})` : `rgba(248,113,113,${alpha})`;
-      ctx.fillRect(ci * colW, ri * rowH, colW + 1, rowH + 1);
-    });
-  });
-
-  const midRowIdx = rows.indexOf(0);
-  if (midRowIdx >= 0) {
-    ctx.strokeStyle = 'rgba(245,184,65,0.55)';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(0, midRowIdx * rowH + rowH / 2);
-    ctx.lineTo(W, midRowIdx * rowH + rowH / 2);
-    ctx.stroke();
-  }
-
-  // Text summary pod heatmapą — trwałe strefy które faktycznie zasilają sygnały
-  const zonesSlot = document.getElementById(`heatmap-zones-summary-${ticker}`);
-  if (zonesSlot) {
-    const zones = getHeatmapZones(ticker);
-    const fmtZone = (z, isBuy) => `<span style="color:${isBuy ? 'var(--green)' : 'var(--red)'}">${z.pct > 0 ? '+' : ''}${z.pct}% · $${(z.avgNotional/1e6).toFixed(2)}M · ${Math.round(z.persistence*100)}% czasu</span>`;
-    const buyStr = (zones.buyZones || []).map(z => fmtZone(z, true)).join(' &nbsp;·&nbsp; ');
-    const sellStr = (zones.sellZones || []).map(z => fmtZone(z, false)).join(' &nbsp;·&nbsp; ');
-    zonesSlot.innerHTML = (buyStr || sellStr)
-      ? `${buyStr ? `🟢 Trwałe strefy kupna: ${buyStr}<br>` : ''}${sellStr ? `🔴 Trwałe strefy sprzedaży: ${sellStr}` : ''}`
-      : `<span style="font-style:italic">Brak wyraźnych trwałych stref w ostatnich 5 min — płynność rozproszona.</span>`;
-  }
 }
 
 function updateOrderbookPanel(ticker) {
@@ -4775,6 +4706,7 @@ function renderTokenDetailShell(ticker) {
         <button class="toggle-btn pressure ${overlays.pressure ? 'active' : ''}" onclick="toggleOverlay('pressure', '${ticker}')" title="Buy/Sell Pressure gauge (pod chartem). Kombinuje body direction, close position, volume + live boost dla ostatnich 3 świec.">Pressure</button>
         <button class="toggle-btn pred ${overlays.pred ? 'active' : ''}" onclick="toggleOverlay('pred', '${ticker}')" title="Predictive Buy/Sell Zones — wykrywa gdzie zbierają się orders (rejection clusters + volume) PRZED ruchem ceny. Adaptive per timeframe.">🎯 Pred Zones</button>
         <button class="toggle-btn walls ${overlays.walls ? 'active' : ''}" onclick="toggleOverlay('walls', '${ticker}')" title="Live Walls — realne orders w Binance orderbook TERAZ (WebSocket, 100ms). Buy Wall (bid) = ktoś stoi z dużym zleceniem kupna. Sell Wall (ask) = ściana sprzedaży.">🌊 Live Walls</button>
+        <button class="toggle-btn heatmap ${overlays.heatmap ? 'active' : ''}" onclick="toggleOverlay('heatmap', '${ticker}')" title="Liquidity Heatmap — CAŁA widoczna głębokość orderbooka (nie tylko outlier walls) jako paski od prawej krawędzi. Podświetlone linie = trwałe strefy (śr. z 5 min), te same które zasilają CONFLUENCE alerty i scoring tokena.">🔥 Heatmap</button>
       </div>
     </div>
 
@@ -4794,7 +4726,6 @@ function renderTokenDetailShell(ticker) {
     <div id="alerts-slot-${ticker}"></div>
     <div id="predzones-slot-${ticker}"></div>
     <div id="orderbook-slot-${ticker}"></div>
-    <div id="heatmap-slot-${ticker}"></div>
     <div id="walllog-slot-${ticker}"></div>
 
     <div class="td-live-panel">
@@ -5271,6 +5202,60 @@ function renderTokenChart(ticker, ohlc) {
         };
         (predZones.buyZones || []).forEach(z => drawPredZone(z, true));
         (predZones.sellZones || []).forEach(z => drawPredZone(z, false));
+      }
+
+      // 🔥 Liquidity Heatmap — CAŁA widoczna głębokość orderbooka (nie tylko
+      // outlier "walls") narysowana jako paski od prawej krawędzi, jak Bookmap.
+      // Bazowy teksturowy pasek = najnowszy snapshot (aktualna sytuacja TERAZ).
+      // Podświetlone przerywane linie = TRWAŁE strefy (śr. z 5 min, >=50% czasu) —
+      // to dokładnie te same poziomy które zasilają CONFLUENCE alerty i scoring.
+      if (overlays.heatmap) {
+        const hist = depthHistory[ticker] || [];
+        const latest = hist[hist.length - 1];
+        if (latest) {
+          const maxBarWidth = (chartArea.right - chartArea.left) * 0.22;
+          let maxNotional = 1;
+          for (const v of Object.values(latest.bidMap)) maxNotional = Math.max(maxNotional, v);
+          for (const v of Object.values(latest.askMap)) maxNotional = Math.max(maxNotional, v);
+
+          const drawBucket = (pctKey, notional, isBid) => {
+            const pct = parseFloat(pctKey);
+            const price = latest.mid * (1 + pct / 100);
+            const y = yScale.getPixelForValue(price);
+            if (isNaN(y) || y < chartArea.top || y > chartArea.bottom) return;
+            const intensity = Math.min(1, Math.log(notional + 1) / Math.log(maxNotional + 1));
+            const barW = Math.max(1, intensity * maxBarWidth);
+            const alpha = 0.10 + intensity * 0.55;
+            ctx.fillStyle = isBid ? `rgba(52,211,153,${alpha})` : `rgba(248,113,113,${alpha})`;
+            ctx.fillRect(chartArea.right - barW, y - 1, barW, 2);
+          };
+          Object.entries(latest.bidMap).forEach(([k, v]) => drawBucket(k, v, true));
+          Object.entries(latest.askMap).forEach(([k, v]) => drawBucket(k, v, false));
+
+          // Trwałe strefy — te faktycznie napędzają CONFLUENCE/scoring, więc
+          // dostają wyraźną etykietę z $ głębokości i % czasu obecności.
+          const heatmapZonesChart = getHeatmapZones(ticker);
+          const drawPersistentZone = (z, isBid) => {
+            const price = latest.mid * (1 + z.pct / 100);
+            const y = yScale.getPixelForValue(price);
+            if (isNaN(y) || y < chartArea.top || y > chartArea.bottom) return;
+            const color = isBid ? '#34D399' : '#F87171';
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([2, 2]);
+            ctx.beginPath();
+            ctx.moveTo(chartArea.left, y);
+            ctx.lineTo(chartArea.right, y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = color;
+            ctx.font = 'bold 9px SF Mono, Menlo, monospace';
+            ctx.textAlign = 'right';
+            ctx.fillText(`🔥 $${(z.avgNotional/1e6).toFixed(2)}M · ${Math.round(z.persistence*100)}% czasu`, chartArea.right - 4, y - 3);
+          };
+          (heatmapZonesChart.buyZones || []).forEach(z => drawPersistentZone(z, true));
+          (heatmapZonesChart.sellZones || []).forEach(z => drawPersistentZone(z, false));
+        }
       }
 
       ctx.restore();
