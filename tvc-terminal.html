@@ -4855,9 +4855,11 @@ function toggleOverlay(key, ticker) {
   saveOverlays();
   // update button state
   document.querySelectorAll(`.toggle-btn.${key}`).forEach(b => b.classList.toggle('active'));
-  // redraw chart
-  const days = window[`__tf_${ticker}`] || 7;
-  const key2 = `${ticker}_${days}`;
+  // redraw chart — cache key MUSI używać tego samego domyślnego formatu co
+  // fetchOhlc ('7D' string, nie liczba 7), inaczej lookup nie trafia i chart
+  // się nie przerysowuje dopóki user ręcznie nie zmieni timeframe raz.
+  const tf = window[`__tf_${ticker}`] || '7D';
+  const key2 = `${ticker}_${tf}`;
   if (ohlcCache[key2]) renderTokenChart(ticker, ohlcCache[key2]);
 }
 

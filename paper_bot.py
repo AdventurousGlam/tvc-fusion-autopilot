@@ -227,21 +227,16 @@ def extract_fusion_json(path: Path, fmt: str) -> dict:
 # --- open --------------------------------------------------------------
 
 def _mid_entry(entry_low, entry_high, ticker, ex) -> float:
-    """Use midpoint of entry_zone; fall back to current market price."""
+    """Use midpoint of entry_zone; fall back to current market price.
+    Fallback uses Binance public REST (sprawdzone jako niezawodne z GH Actions)
+    zamiast ccxt/Bybit, który bywał blokowany dla IP data-center."""
     if entry_low and entry_high:
         return (float(entry_low) + float(entry_high)) / 2
-    ticker_market = f"{ticker}/USDT:USDT" if ticker.upper() != "BTC" else "BTC/USDT:USDT"
     try:
-        ohlcv = ex.fetch_ohlcv(ticker_market, timeframe="1m", limit=1)
-        return float(ohlcv[-1][4])  # close of most recent minute
-    except Exception:
-        # try spot
-        try:
-            ohlcv = ex.fetch_ohlcv(f"{ticker.upper()}/USDT", timeframe="1m", limit=1)
-            return float(ohlcv[-1][4])
-        except Exception as e:
-            print(f"[warn] could not fetch {ticker} price: {e}")
-            return 0.0
+        return _fetch_current_price(ticker)
+    except Exception as e:
+        print(f"[warn] could not fetch {ticker} price: {e}")
+        return 0.0
 
 
 def cmd_open(args):
@@ -493,7 +488,6 @@ def _snapshot_equity(conn, open_rows):
 
 def cmd_check(args):
     db_init()
-    ex = get_exchange()
     conn = db()
     open_rows = conn.execute("SELECT * FROM positions WHERE status='open'").fetchall()
 
@@ -506,7 +500,11 @@ def cmd_check(args):
         return
 
     for r in open_rows:
-        ohlc = _fetch_ohlc_since(ex, r["ticker"], r["opened_at"], "5m")
+        try:
+            ohlc = _fetch_klines_binance(r["ticker"], r["opened_at"], "5m")
+        except Exception as e:
+            print(f"[check] {r['ticker']}: klines fetch failed ({e}) — skip this cycle")
+            continue
         if not ohlc:
             print(f"[check] {r['ticker']}: no ohlc data")
             continue
@@ -1407,6 +1405,14 @@ def cmd_loop(args):
             break
 
 
+BINANCE_SYMBOL_MAP = {'BTC': 'BTCUSDT', 'ETH': 'ETHUSDT', 'SOL': 'SOLUSDT', 'XRP': 'XRPUSDT', 'SUI': 'SUIUSDT'}
+
+
+def _binance_symbol(ticker: str) -> str:
+    t = ticker.upper()
+    return BINANCE_SYMBOL_MAP.get(t, f"{t}USDT")
+
+
 def _fetch_current_price(ticker):
     """Fetch current price for ticker from Binance."""
     import urllib.request as ur
@@ -1416,14 +1422,37 @@ def _fetch_current_price(ticker):
         ssl_ctx = ssl.create_default_context(cafile=certifi.where())
     except ImportError:
         ssl_ctx = ssl.create_default_context()
-    sym_map = {'BTC': 'BTCUSDT', 'ETH': 'ETHUSDT', 'SOL': 'SOLUSDT', 'XRP': 'XRPUSDT', 'SUI': 'SUIUSDT'}
-    sym = sym_map.get(ticker.upper())
-    if not sym:
-        raise ValueError(f"Unknown ticker {ticker}")
+    sym = _binance_symbol(ticker)
     url = f"https://data-api.binance.vision/api/v3/ticker/price?symbol={sym}"
     req = ur.Request(url, headers={"User-Agent": "Mozilla/5.0 tvc-fusion-bot/0.2"})
     with ur.urlopen(req, timeout=10, context=ssl_ctx) as resp:
         return float(json.loads(resp.read()).get('price', 0))
+
+
+def _fetch_klines_binance(ticker: str, since_iso: str, interval: str = "5m", limit: int = 1000):
+    """Fetch OHLCV klines z Binance public REST API (data-api.binance.vision) —
+    zero-auth, wysokie rate limity, sprawdzone jako niezawodne z GitHub Actions.
+    Zastępuje wcześniejsze ccxt/Bybit fetche w cmd_check, które bywały blokowane
+    dla IP data-center GitHub-hosted runnerów (cichy fail → pozycje nigdy się
+    nie aktualizowały/zamykały, bo _fetch_ohlc_since zwracał None bez żadnego
+    widocznego błędu w logach).
+    Zwraca listę [ts, open, high, low, close, volume] (format zgodny z ccxt OHLCV)."""
+    import urllib.request as ur
+    import ssl
+    try:
+        import certifi
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        ssl_ctx = ssl.create_default_context()
+    sym = _binance_symbol(ticker)
+    since_ms = int(datetime.fromisoformat(since_iso).timestamp() * 1000)
+    url = (f"https://data-api.binance.vision/api/v3/klines?symbol={sym}"
+           f"&interval={interval}&startTime={since_ms}&limit={limit}")
+    req = ur.Request(url, headers={"User-Agent": "Mozilla/5.0 tvc-fusion-bot/0.2"})
+    with ur.urlopen(req, timeout=15, context=ssl_ctx) as resp:
+        raw = json.loads(resp.read())
+    # Binance kline: [openTime, open, high, low, close, volume, closeTime, ...] (wszystko stringi poza openTime)
+    return [[k[0], float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])] for k in raw]
 
 
 def main():
