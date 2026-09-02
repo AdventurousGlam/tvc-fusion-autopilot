@@ -23,6 +23,9 @@ jobs:
       HOME: /home/runner/home-clone
       GITHUB_TOKEN: ${{ secrets.GIST_PAT }}
       TVC_GIST_ID: ${{ secrets.TVC_GIST_ID }}
+      # v0.3 — powiadomienia Telegram (opcjonalne: bez sekretów bot działa bez alertów)
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
       - name: Checkout repo (standard path)
         uses: actions/checkout@v4
@@ -98,3 +101,18 @@ jobs:
           done
           echo "Push nie powiódł się po 5 próbach."
           exit 1
+
+      # v0.3 — alert awarii: jeśli którykolwiek krok padł, Telegram dostaje wiadomość
+      # z linkiem do logu. Bez sekretów krok jest cichym no-opem.
+      - name: Alert Telegram przy awarii cyklu
+        if: failure()
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Brak sekretów Telegram — pomijam alert."; exit 0
+          fi
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "text=🚨 <b>TVC Autopilot — cykl NIE POWIÓDŁ SIĘ</b>
+          Run #${{ github.run_number }} · $(date -u +%H:%M) UTC
+          Log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >/dev/null || true

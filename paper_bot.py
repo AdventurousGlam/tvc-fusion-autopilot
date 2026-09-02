@@ -256,6 +256,108 @@ def _mid_entry(entry_low, entry_high, ticker, ex) -> float:
         return 0.0
 
 
+# --- Telegram notifications (v0.3) --------------------------------------
+# Wymaga env: TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID (GitHub Secrets w workflow).
+# Bez nich funkcja jest no-op — bot działa jak dotąd, tylko bez powiadomień.
+
+def _telegram_send(text: str) -> bool:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if not token or not chat_id:
+        return False
+    import urllib.request as ur
+    import urllib.parse as up
+    import ssl
+    try:
+        import certifi
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        ssl_ctx = ssl.create_default_context()
+    try:
+        data = up.urlencode({"chat_id": chat_id, "text": text, "parse_mode": "HTML",
+                             "disable_web_page_preview": "true"}).encode()
+        req = ur.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data)
+        with ur.urlopen(req, timeout=10, context=ssl_ctx) as resp:
+            return resp.status == 200
+    except Exception as e:
+        print(f"[telegram] send failed: {e}")
+        return False
+
+
+def _fmt_px(v) -> str:
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    return f"{v:,.0f}" if v >= 100 else f"{v:.2f}" if v >= 1 else f"{v:.4f}"
+
+
+def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime, override=False):
+    arrow = "🟢 LONG" if direction == "long" else "🔴 SHORT"
+    _telegram_send(
+        f"<b>{arrow} {ticker}</b> otwarty @ {_fmt_px(entry)}\n"
+        f"Size ${size_usd:.0f} · score {score} · {regime}{' · ⚡CHoCH' if override else ''}\n"
+        f"SL {_fmt_px(sl)} · TP1 {_fmt_px(tp1)} · TP2 {_fmt_px(tp2)}"
+    )
+
+
+def _notify_close(ticker, direction, entry, exit_price, pnl_pct, pnl_usd, reason):
+    icon = {"hit_tp1": "🎯 TP1", "hit_tp2": "🎯🎯 TP2", "hit_sl": "🛑 SL",
+            "hit_trailing_sl": "📈🛑 Trailing SL", "flip_choch": "🔁 Flip",
+            "manual_close": "✋ Manual"}.get(reason, reason)
+    res = "✅" if pnl_usd > 0 else "❌" if pnl_usd < 0 else "➖"
+    _telegram_send(
+        f"{res} <b>{ticker} {direction.upper()}</b> zamknięty — {icon}\n"
+        f"{_fmt_px(entry)} → {_fmt_px(exit_price)} · <b>{pnl_pct:+.2f}%</b> (${pnl_usd:+.2f})"
+    )
+
+
+def _meta_get(conn, key, default=None):
+    conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+    row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    return row[0] if row else default
+
+
+def _meta_set(conn, key, value):
+    conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, str(value)))
+    conn.commit()
+
+
+DAILY_DIGEST_HOUR_UTC = 6   # 08:00 CEST / 07:00 CET
+
+def _maybe_daily_digest(conn):
+    """Raz dziennie (po 06:00 UTC) wysyła podsumowanie ostatnich 24h na Telegram."""
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+    if now.hour < DAILY_DIGEST_HOUR_UTC or _meta_get(conn, "last_digest_date") == today:
+        return
+    since = (now - timedelta(hours=24)).isoformat()
+    closed = [dict(r) for r in conn.execute(
+        "SELECT * FROM positions WHERE status='closed' AND closed_at >= ?", (since,)).fetchall()]
+    opened = [dict(r) for r in conn.execute(
+        "SELECT * FROM positions WHERE opened_at >= ?", (since,)).fetchall()]
+    open_now = [dict(r) for r in conn.execute("SELECT * FROM positions WHERE status='open'").fetchall()]
+    pnl = sum(r.get("pnl_usd") or 0 for r in closed)
+    wins = sum(1 for r in closed if (r.get("pnl_usd") or 0) > 0)
+    stats = _compute_equity_stats(conn) or {}
+    lines = [f"📊 <b>TVC Fusion — raport dzienny {today}</b>",
+             f"Ostatnie 24h: {len(opened)} otwartych · {len(closed)} zamkniętych"
+             + (f" ({wins}W/{len(closed)-wins}L, ${pnl:+.2f})" if closed else ""),
+             f"Otwarte teraz: {len(open_now)}"
+             + (" — " + ", ".join(f"{r['ticker']} {r['direction'][0].upper()}" for r in open_now) if open_now else "")]
+    if stats and stats.get("total_closed"):
+        tot_pnl = stats.get("total_pnl_usd", 0) or 0
+        wr_all = (stats.get("wins", 0) / stats["total_closed"] * 100) if stats["total_closed"] else 0
+        pf = stats.get("profit_factor")
+        lines.append(f"Od startu: ${PAPER_CAPITAL + tot_pnl:,.0f} ({tot_pnl / PAPER_CAPITAL * 100:+.2f}%) "
+                     f"· WR {wr_all:.0f}% ({stats['total_closed']} trade'ów)"
+                     f"{' · PF ' + format(pf, '.2f') if pf else ''}"
+                     f" · maxDD {stats.get('max_drawdown_pct', 0) or 0:.1f}%")
+    if _telegram_send("\n".join(lines)):
+        _meta_set(conn, "last_digest_date", today)
+
+
 def cmd_open(args):
     db_init()
     path, fmt = find_fusion_input()
@@ -398,6 +500,7 @@ def cmd_open(args):
             conn.commit()
             print(f"[flip] {ticker} closed old {old_dir} @ {flip_price:.4f} PnL {pnl_pct:+.2f}% "
                   f"(${pnl_usd:+.2f}) — opening new {direction} (CHoCH override)")
+            _notify_close(ticker, old_dir, old_entry, flip_price, pnl_pct, pnl_usd, "flip_choch")
 
         entry_price = _mid_entry(dec.get("entry_low"), dec.get("entry_high"), ticker, ex)
         if entry_price == 0.0:
@@ -458,6 +561,8 @@ def cmd_open(args):
         print(f"[open] {arrow} {direction.upper():5s} {ticker} @ {entry_price:.4f}  size ${size_usd:.2f}  "
               f"SL {dec.get('sl')} TP1 {dec.get('tp1')} TP2 {dec.get('tp2')}  "
               f"score {dec.get('score')}")
+        _notify_open(ticker, direction, entry_price, size_usd, dec.get("sl"), dec.get("tp1"),
+                     dec.get("tp2"), dec.get("score"), regime, bool(dec.get("choch_override")))
 
     conn.commit()
     conn.close()
@@ -578,6 +683,7 @@ def cmd_check(args):
 
     if not open_rows:
         print("[check] no open positions")
+        _maybe_daily_digest(conn)
         conn.close()
         return
 
@@ -664,7 +770,9 @@ def cmd_check(args):
         arrow = "↗" if direction == "long" else "↘"
         print(f"[close] {arrow} {direction.upper():5s} {r['ticker']} {hit_or_miss} @ {exit_price:.4f}  "
               f"PnL {pnl_pct:+.2f}% (${pnl_usd:+.2f})")
+        _notify_close(r["ticker"], direction, r["entry_price"], exit_price, pnl_pct, pnl_usd, hit_or_miss)
 
+    _maybe_daily_digest(conn)
     conn.close()
 
 
@@ -1321,11 +1429,36 @@ def cmd_upload(args):
         "SELECT * FROM positions WHERE status='closed' ORDER BY closed_at DESC LIMIT 20"
     ).fetchall()]
     total_pnl = sum((r.get("pnl_usd") or 0) for r in recent_closed)
-    wins = sum(1 for r in recent_closed if (r.get("hit_or_miss") or "").startswith("hit_tp"))
+    # v0.3 — wygrana = dodatni PnL (spójnie z panelem P&L History). Wcześniej liczono
+    # tylko hit_tp*, więc terminal pokazywał "WIN RATE 0%" mimo zyskownych trade'ów
+    # zamkniętych trailing stopem / ręcznie.
+    wins = sum(1 for r in recent_closed if (r.get("pnl_usd") or 0) > 0)
     win_rate = (wins / len(recent_closed) * 100) if recent_closed else 0.0
     equity_history = _get_equity_history(conn, days=30)
     equity_stats = _compute_equity_stats(conn)
+    last_open_row = conn.execute("SELECT MAX(opened_at) FROM positions").fetchone()[0]
+    last_close_row = conn.execute("SELECT MAX(closed_at) FROM positions").fetchone()[0]
     conn.close()
+
+    # v0.3 — health block: terminal pokazuje "Autopilot: X min temu" i ostrzega gdy
+    # cykl milczy. generated_at = heartbeat tego cyklu.
+    health = {
+        "autopilot_last_cycle": datetime.now(timezone.utc).isoformat(),
+        "cycle_interval_min": 5,
+        "bot_version": "0.3",
+        "telegram_enabled": bool(os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID")),
+        "last_position_opened": last_open_row,
+        "last_position_closed": last_close_row,
+        "open_count": len(open_positions),
+        "gates": {
+            "min_long_score": MIN_LONG_SCORE,
+            "min_long_score_ranging": MIN_LONG_SCORE_RANGING,
+            "max_short_score": MAX_SHORT_SCORE,
+            "min_hold_min": MIN_HOLD_MINUTES,
+            "reopen_cooldown_min": REOPEN_COOLDOWN_MINUTES,
+            "max_trades_per_day": MAX_NEW_TRADES_PER_DAY,
+        },
+    }
 
     # Fetch per-token news server-side (Python has no CORS issue)
     news_by_token = _fetch_news_for_tickers(fusion_data.get("decisions", []))
@@ -1344,6 +1477,7 @@ def cmd_upload(args):
         "whales_live": whales_by_token,
         "equity_history": equity_history,
         "equity_stats": equity_stats,
+        "health": health,
     }
 
     content = json.dumps(fusion_data, indent=2, default=str)
@@ -1434,6 +1568,7 @@ def cmd_close(args):
         arrow = "↗" if direction == "long" else "↘"
         print(f"[close] {arrow} MANUAL {direction.upper():5s} {ticker} @ {exit_price:.4f}  "
               f"PnL {pnl_pct:+.2f}% (${pnl_usd:+.2f})")
+        _notify_close(ticker, direction, r['entry_price'], exit_price, pnl_pct, pnl_usd, "manual_close")
     conn.close()
     # AUTO-UPLOAD po close żeby widget widział świeże dane
     print("[close] Auto-uploading do Gist...")

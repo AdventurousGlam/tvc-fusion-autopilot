@@ -870,18 +870,56 @@ async function fetchFusion() {
     }
   }
 }
+// v0.3 — SYSTEM HEALTH. Autopilot (GitHub Actions) ma cykl co ~5 min, więc stara
+// logika "Live przez 4h" ukrywała martwego bota przez pół dnia. Teraz:
+//   < 12 min  → zielony  "Autopilot ✓ 3 min temu"
+//   < 30 min  → bursztyn "Autopilot opóźniony 18 min"
+//   >= 30 min → czerwony "AUTOPILOT MILCZY 2h" + baner ostrzegawczy nad treścią
+// Odświeżane co minutę lokalnie (bez fetchu), żeby licznik i kolor żyły.
+const HEALTH_WARN_MIN = 12, HEALTH_CRIT_MIN = 30;
+function healthAgeMin() {
+  const h = lastFusion?.state?.health;
+  const iso = h?.autopilot_last_cycle || lastFusion?.state?.generated_at;
+  if (!iso) return null;
+  return (Date.now() - new Date(iso).getTime()) / 60000;
+}
+function fmtAge(min) {
+  if (min < 1) return 'przed chwilą';
+  if (min < 60) return `${Math.round(min)} min temu`;
+  if (min < 48 * 60) return `${(min / 60).toFixed(1)}h temu`;
+  return `${Math.floor(min / 1440)}d temu`;
+}
 function updateStatusBadge() {
   const badge = document.getElementById('status-badge');
   if (!lastFusion) return;
-  const generatedAt = lastFusion?.state?.generated_at
-    ? new Date(lastFusion.state.generated_at)
-    : new Date((lastFusion.date || '2000-01-01') + 'T06:00:00');
-  const ageH = (Date.now() - generatedAt.getTime()) / 1000 / 3600;
-  const fmt = generatedAt.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
-  if (ageH < 4) { badge.className = 'status-badge live'; badge.textContent = `● Live · ${fmt}`; }
-  else if (ageH < 24) { badge.className = 'status-badge stale'; badge.textContent = `● Stale ${ageH.toFixed(1)}h · ${fmt}`; }
-  else { badge.className = 'status-badge error'; badge.textContent = `● Old ${Math.floor(ageH / 24)}d · ${fmt}`; }
+  const min = healthAgeMin();
+  const h = lastFusion?.state?.health || {};
+  const tg = h.telegram_enabled ? ' · 📲' : '';
+  let level;
+  if (min == null) { level = 'stale'; badge.className = 'status-badge stale'; badge.textContent = '● Brak heartbeat'; }
+  else if (min < HEALTH_WARN_MIN) { level = 'ok'; badge.className = 'status-badge live'; badge.textContent = `● Autopilot ✓ ${fmtAge(min)}${tg}`; }
+  else if (min < HEALTH_CRIT_MIN) { level = 'warn'; badge.className = 'status-badge stale'; badge.textContent = `● Autopilot opóźniony ${fmtAge(min)}`; }
+  else { level = 'crit'; badge.className = 'status-badge error'; badge.textContent = `● AUTOPILOT MILCZY ${fmtAge(min)}`; }
+  badge.title = `Ostatni cykl bota: ${h.autopilot_last_cycle || lastFusion?.state?.generated_at || '?'}`
+    + (h.bot_version ? ` · bot v${h.bot_version}` : '')
+    + (h.gates ? ` · gates: LONG≥${h.gates.min_long_score} (RANGING≥${h.gates.min_long_score_ranging}), SHORT≤${h.gates.max_short_score}, hold ${h.gates.min_hold_min}min, cooldown ${h.gates.reopen_cooldown_min}min, max ${h.gates.max_trades_per_day}/dzień` : '')
+    + (h.telegram_enabled ? ' · Telegram: aktywny' : ' · Telegram: brak (dodaj sekrety)');
+  renderHealthBanner(level, min);
 }
+function renderHealthBanner(level, min) {
+  let el = document.getElementById('health-banner');
+  if (level !== 'crit') { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'health-banner';
+    el.style.cssText = 'margin:0 0 8px;padding:9px 12px;border-radius:6px;background:var(--red-soft);border:1px solid var(--red);color:var(--red);font-size:11px;font-weight:700;display:flex;gap:10px;align-items:center;flex-wrap:wrap';
+    const cc = document.getElementById('command-center-slot');
+    if (cc && cc.parentNode) cc.parentNode.insertBefore(el, cc); else document.body.prepend(el);
+  }
+  el.innerHTML = `🚨 AUTOPILOT NIE ODPOWIADA od ${fmtAge(min)} — pozycje NIE są sprawdzane (SL/TP nie zadziałają), sygnały są nieaktualne.
+    <span style="font-weight:600;color:var(--text-muted)">Sprawdź: GitHub → Actions (czy workflow się wywala) lub cron-job.org (czy trigger działa).</span>`;
+}
+setInterval(updateStatusBadge, 60 * 1000);
 
 /* ============================================================
    LIVE PRICES + GLOBAL DATA
