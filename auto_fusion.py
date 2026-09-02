@@ -558,13 +558,26 @@ def generate_fusion():
         # BOS_DOWN (kontynuacja), nie CHOCH_BEAR, i wąskie okno na last_event łatwo
         # przegapić między cyklami co 5 min. trend=="bearish" obejmuje cały czas trwania
         # niedźwiedziej struktury, nie tylko moment jej powstania.
+        # v0.3 — override MOCNO ograniczony. Audyt 50 zamkniętych paper trade'ów
+        # (2026-09-02): exit=flip_choch to 31/50 trade'ów z win rate 3% (-$9.44),
+        # regime RANGING: 39 trade'ów, 5% WR. Override sam z siebie generował
+        # ping-pong long↔short co kilka minut na szumie 1h w rynku bocznym.
+        # Teraz override wymaga JEDNOCZEŚNIE:
+        #   (1) regime != RANGING — w range 1h CHoCH to szum, nie sygnał,
+        #   (2) zgodności struktury 1h I 15m (obie bearish / obie bullish),
+        #   (3) zgodności z fusion score: short tylko gdy score < 40 (nie shortujemy
+        #       tokena, którego własny score mówi 57 = lekko bullish), long tylko
+        #       gdy score >= 55.
         choch_override = False
-        if ms_1h.get("trend") == "bearish" and direction != "short":
+        override_allowed = regime != "RANGING"
+        ms_agree_bear = ms_1h.get("trend") == "bearish" and ms_15m.get("trend") == "bearish"
+        ms_agree_bull = ms_1h.get("trend") == "bullish" and ms_15m.get("trend") == "bullish"
+        if override_allowed and ms_agree_bear and score < 40 and direction != "short":
             direction = "short"
             action = "SELL"
             size = compute_size(30, regime, ticker)  # syntetyczny bearish score do sizing
             choch_override = True
-        elif ms_1h.get("trend") == "bullish" and direction != "long":
+        elif override_allowed and ms_agree_bull and score >= 55 and direction != "long":
             direction = "long"
             action = "BUY"
             size = compute_size(65, regime, ticker)  # syntetyczny bullish score do sizing

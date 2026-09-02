@@ -60,6 +60,23 @@ SHORT_SIZE_CAP_PCT = 0.5    # max % capital per SHORT trade (unlimited upside ri
 # v0.2 — SHORT regime constraint: only allow SHORTs in these regimes
 SHORT_ALLOWED_REGIMES = {"TRENDING_DOWN", "TRENDING_DOWN_VOLATILE", "CRASH"}
 
+# v0.3 — QUALITY GATES. Wyprowadzone z audytu 50 zamkniętych paper trade'ów
+# (paper_trades.db, 2026-09-02):
+#   fusion score >= 70 → 7 trade'ów, 86% WR, +$39.26
+#   fusion score 60-69 → 10 trade'ów, 10% WR, -$2.19
+#   fusion score  < 60 → 33 trade'ów,  3% WR, -$7.60
+#   regime RANGING     → 39 trade'ów,  5% WR  |  TRENDING_UP → 4 trade'y, 100% WR
+#   exit = flip_choch  → 31 trade'ów,  3% WR (ping-pong long↔short co kilka minut)
+#   SHORT              → 20 trade'ów,  0 wygranych
+# Wniosek: system działa świetnie przy wysokiej konwikcji, a traci wyłącznie na
+# niskiej jakości wejściach. Gates poniżej odcinają szum, nie zmieniają sygnału.
+MIN_LONG_SCORE = 65            # minimalny score dla LONG w regime trendowym
+MIN_LONG_SCORE_RANGING = 70    # w RANGING wymagamy jeszcze wyższej konwikcji
+MAX_SHORT_SCORE = 40           # SHORT tylko gdy score jest faktycznie bearish
+MIN_HOLD_MINUTES = 240         # nie flipuj pozycji młodszej niż 4h (anty ping-pong)
+REOPEN_COOLDOWN_MINUTES = 120  # po zamknięciu tickera 2h przerwy przed nowym wejściem
+MAX_NEW_TRADES_PER_DAY = 3     # bezpiecznik anty-overtrading (Sep 1: 14 trade'ów/dzień)
+
 # --- ccxt lazy import (bot still runs `init` without it) ---------------
 
 def get_exchange():
@@ -257,22 +274,70 @@ def cmd_open(args):
     conn = db()
     opened = 0
     skipped = 0
+    now_utc = datetime.now(timezone.utc)
+
+    # v0.3 — dzienny limit nowych wejść (bezpiecznik anty-overtrading)
+    day_start = now_utc.strftime("%Y-%m-%dT00:00:00")
+    opened_today = conn.execute(
+        "SELECT COUNT(*) FROM positions WHERE opened_at >= ?", (day_start,)
+    ).fetchone()[0]
 
     for dec in data.get("decisions", []):
         direction = _direction_from_action(dec.get("action"))
         if direction is None:
             continue  # HOLD/WATCH/SKIP — not actionable
 
+        ticker = dec["ticker"]
+        score = int(dec.get("score") or 0)
+
+        # v0.3 — SCORE GATE. Dane: score>=70 → 86% WR, score<70 → ~5% WR.
+        if direction == "long":
+            min_long = MIN_LONG_SCORE_RANGING if regime == "RANGING" else MIN_LONG_SCORE
+            if score < min_long:
+                print(f"[skip] {ticker} LONG score {score} < {min_long} (regime {regime}) — za niska konwikcja")
+                skipped += 1
+                continue
+        else:
+            if score > MAX_SHORT_SCORE:
+                print(f"[skip] {ticker} SHORT score {score} > {MAX_SHORT_SCORE} — score nie jest bearish")
+                skipped += 1
+                continue
+
         # v0.2 — SHORT regime constraint, z wyjątkiem CHoCH override (świeży bearish
         # change of character na 1h dla TEGO tokena omija globalny BTC-regime gate)
         if direction == "short" and regime not in SHORT_ALLOWED_REGIMES and not dec.get("choch_override"):
-            print(f"[skip] {dec.get('ticker')} SHORT blocked — regime {regime} not in {SHORT_ALLOWED_REGIMES}")
+            print(f"[skip] {ticker} SHORT blocked — regime {regime} not in {SHORT_ALLOWED_REGIMES}")
             skipped += 1
             continue
         if direction == "short" and dec.get("choch_override"):
-            print(f"[open] {dec.get('ticker')} SHORT via CHoCH override — regime {regime} bypassed")
+            print(f"[open] {ticker} SHORT via CHoCH override — regime {regime} bypassed")
 
-        ticker = dec["ticker"]
+        # v0.3 — DAILY LIMIT
+        if opened_today >= MAX_NEW_TRADES_PER_DAY:
+            print(f"[skip] {ticker} — dzienny limit {MAX_NEW_TRADES_PER_DAY} nowych trade'ów wyczerpany")
+            skipped += 1
+            continue
+
+        # v0.3 — REOPEN COOLDOWN. Sep 2: SOL miał 4 trade'y w 35 minut (short→long→
+        # short→long), każdy stratny. Po zamknięciu tickera czekamy zanim wejdziemy znowu.
+        last_closed = conn.execute(
+            "SELECT closed_at FROM positions WHERE ticker=? AND status='closed' AND closed_at IS NOT NULL "
+            "ORDER BY closed_at DESC LIMIT 1",
+            (ticker,),
+        ).fetchone()
+        if last_closed and last_closed["closed_at"]:
+            try:
+                closed_dt = datetime.fromisoformat(last_closed["closed_at"])
+                if closed_dt.tzinfo is None:
+                    closed_dt = closed_dt.replace(tzinfo=timezone.utc)
+                mins_since_close = (now_utc - closed_dt).total_seconds() / 60
+                if mins_since_close < REOPEN_COOLDOWN_MINUTES:
+                    print(f"[skip] {ticker} — cooldown: zamknięty {mins_since_close:.0f} min temu "
+                          f"(< {REOPEN_COOLDOWN_MINUTES} min)")
+                    skipped += 1
+                    continue
+            except (ValueError, TypeError):
+                pass
 
         # De-dupe / flip logic — patrzymy na KAŻDĄ otwartą pozycję tego tickera,
         # niezależnie od daty otwarcia (nie tylko "dziś"), żeby nie trzymać
@@ -293,6 +358,22 @@ def cmd_open(args):
                 # zostaw starą pozycję żeby SL/TP zrobiły swoje
                 skipped += 1
                 continue
+            # v0.3 — MIN HOLD. Nie flipuj pozycji, która nie miała szansy zadziałać.
+            # Dane: mediana życia trade'u zamkniętego przez flip_choch była w porządku,
+            # ale 8 z 31 żyło < 60 min — czysty szum. SL/TP mają pierwszeństwo.
+            try:
+                opened_dt = datetime.fromisoformat(existing_any["opened_at"])
+                if opened_dt.tzinfo is None:
+                    opened_dt = opened_dt.replace(tzinfo=timezone.utc)
+                age_min = (now_utc - opened_dt).total_seconds() / 60
+            except (ValueError, TypeError):
+                age_min = MIN_HOLD_MINUTES  # brak daty → nie blokuj
+            if age_min < MIN_HOLD_MINUTES:
+                print(f"[skip] {ticker} flip zablokowany — pozycja ma {age_min:.0f} min "
+                      f"(< {MIN_HOLD_MINUTES} min), SL/TP niech zadziałają")
+                skipped += 1
+                continue
+
             # FLIP — CHoCH override daje sygnał przeciwny do otwartej pozycji:
             # zamknij starą po aktualnej cenie rynkowej, otwórz nową w nowym kierunku
             try:
@@ -372,6 +453,7 @@ def cmd_open(args):
             row,
         )
         opened += 1
+        opened_today += 1
         arrow = "↗" if direction == "long" else "↘"
         print(f"[open] {arrow} {direction.upper():5s} {ticker} @ {entry_price:.4f}  size ${size_usd:.2f}  "
               f"SL {dec.get('sl')} TP1 {dec.get('tp1')} TP2 {dec.get('tp2')}  "
