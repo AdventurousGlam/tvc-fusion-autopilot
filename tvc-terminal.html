@@ -6015,7 +6015,7 @@ function renderPosition(p) {
     }
   }
   return `
-    <div class="position">
+    <div class="position" data-ticker="${p.ticker}" data-direction="${direction}" data-entry="${entry}" data-sl="${sl}" data-tp1="${tp1}" data-size="${sizeUsd}">
       <div class="p-head">
         <div class="p-ticker">${p.ticker}</div>
         <div class="p-dir ${direction}">${direction === 'long' ? '↗ LONG' : '↘ SHORT'}</div>
@@ -6024,7 +6024,7 @@ function renderPosition(p) {
       <div class="p-body">
         <div class="p-prices">
           <div class="col"><div class="k">Entry</div><div class="v">${fmt(entry)}</div></div>
-          <div class="col"><div class="k">Current</div><div class="v ${pnlClass}">${current ? fmt(current) : '—'}</div></div>
+          <div class="col"><div class="k">Current</div><div class="v v-current ${pnlClass}">${current ? fmt(current) : '—'}</div></div>
           <div class="col"><div class="k">Size</div><div class="v">$${sizeUsd.toFixed(0)}</div></div>
         </div>
         <div class="pnl-track">
@@ -6299,6 +6299,53 @@ function updatePriceCells() {
     const priceStr = '$' + lp.price.toLocaleString('en-US', { maximumFractionDigits: lp.price >= 100 ? 0 : lp.price >= 1 ? 2 : 4 });
     const chgClass = lp.change24h > 0 ? 'pos' : lp.change24h < 0 ? 'neg' : 'zero';
     cell.innerHTML = `<div class="price">${priceStr}</div><div class="chg ${chgClass}">${lp.change24h > 0 ? '+' : ''}${lp.change24h.toFixed(2)}%</div>`;
+  });
+  updatePositionPrices();
+}
+
+// Bug fix: "Open Paper Positions" panel was rendered ONCE as a static HTML
+// string (renderPosition), baking in whatever livePrices happened to hold at
+// that instant — usually empty, since fetchPrices() resolves asynchronously
+// AFTER the initial render. Result: Current/PnL stayed stuck on "—"/0.00%
+// forever, even though livePrices itself kept updating fine in the background.
+// This patches each already-rendered .position card in place (via data-*
+// attributes set in renderPosition) every time fresh prices come in, without
+// tearing down/re-rendering the whole dashboard.
+function updatePositionPrices() {
+  document.querySelectorAll('.position[data-ticker]').forEach(el => {
+    const ticker = el.dataset.ticker;
+    const live = livePrices[ticker];
+    if (!live) return;
+    const current = live.price;
+    const direction = el.dataset.direction;
+    const entry = parseFloat(el.dataset.entry);
+    const sl = parseFloat(el.dataset.sl);
+    const tp1 = parseFloat(el.dataset.tp1);
+    const sizeUsd = parseFloat(el.dataset.size);
+    let pnlPct = 0, pnlUsd = 0;
+    if (current && entry) {
+      pnlPct = direction === 'long' ? (current - entry) / entry * 100 : (entry - current) / entry * 100;
+      pnlUsd = sizeUsd * (pnlPct / 100);
+    }
+    const pnlClass = pnlPct > 0.01 ? 'pos' : pnlPct < -0.01 ? 'neg' : 'zero';
+    const currentEl = el.querySelector('.v-current');
+    if (currentEl) { currentEl.textContent = current ? fmt(current) : '—'; currentEl.className = 'v v-current ' + pnlClass; }
+    const pctEl = el.querySelector('.p-pnl .pct');
+    if (pctEl) { pctEl.textContent = (pnlPct > 0 ? '+' : '') + pnlPct.toFixed(2) + '%'; pctEl.className = 'pct ' + pnlClass; }
+    const usdEl = el.querySelector('.p-pnl .usd');
+    if (usdEl) { usdEl.textContent = fmtUsdSigned(pnlUsd); usdEl.className = 'usd ' + pnlClass; }
+    let progressPct = 50, entryPct = 50;
+    if (current && entry && sl && tp1) {
+      if (direction === 'long') {
+        const range = tp1 - sl;
+        if (range > 0) { progressPct = Math.max(0, Math.min(100, (current - sl) / range * 100)); entryPct = Math.max(0, Math.min(100, (entry - sl) / range * 100)); }
+      } else {
+        const range = sl - tp1;
+        if (range > 0) { progressPct = Math.max(0, Math.min(100, (current - tp1) / range * 100)); entryPct = Math.max(0, Math.min(100, (entry - tp1) / range * 100)); }
+      }
+    }
+    const marker = el.querySelector('.marker.current');
+    if (marker) marker.style.left = progressPct + '%';
   });
 }
 
