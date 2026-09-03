@@ -1381,6 +1381,63 @@ def _compute_equity_stats(conn):
         return {}
 
 
+def _compute_performance_breakdown(conn):
+    """v0.3 — analityka 'co działa': WR / PnL / profit factor w rozbiciu po score,
+    regime, kierunku, typie wyjścia i wersji bramek. To ten sam audyt, który
+    wykrył degradację v0.2 — teraz liczony automatycznie co cykl, żeby spadek
+    jakości było widać po 2 dniach, nie po 40 stratnych trade'ach."""
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM positions WHERE status='closed' AND closed_at IS NOT NULL ORDER BY closed_at"
+    ).fetchall()]
+    if not rows:
+        return {}
+
+    def agg(rs):
+        n = len(rs)
+        wins = [r["pnl_usd"] for r in rs if (r["pnl_usd"] or 0) > 0]
+        losses = [r["pnl_usd"] for r in rs if (r["pnl_usd"] or 0) < 0]
+        pnl = sum((r["pnl_usd"] or 0) for r in rs)
+        pf = (sum(wins) / abs(sum(losses))) if losses and sum(losses) != 0 else (None if not wins else 99.0)
+        return {"n": n, "wins": len(wins), "wr": round(len(wins) / n * 100, 1) if n else 0,
+                "pnl": round(pnl, 2), "avg_pnl_pct": round(sum((r["pnl_pct"] or 0) for r in rs) / n, 2) if n else 0,
+                "pf": round(pf, 2) if pf is not None else None}
+
+    def bucketize(keyfn, order=None):
+        groups = {}
+        for r in rows:
+            k = keyfn(r)
+            groups.setdefault(k, []).append(r)
+        keys = order if order else sorted(groups.keys(), key=lambda x: str(x))
+        return [{"label": k, **agg(groups[k])} for k in keys if k in groups]
+
+    def score_bucket(r):
+        s = r.get("fusion_score") or 0
+        return ">=70" if s >= 70 else "60-69" if s >= 60 else "50-59" if s >= 50 else "<50"
+
+    exit_labels = {"hit_tp2": "TP2", "hit_tp1": "TP1", "hit_trailing_sl": "Trailing SL",
+                   "hit_sl": "SL", "flip_choch": "Flip CHoCH", "manual_close": "Manual"}
+    now = datetime.now(timezone.utc)
+    cut7 = (now - timedelta(days=7)).isoformat()
+    cut14 = (now - timedelta(days=14)).isoformat()
+    last7 = [r for r in rows if r["closed_at"] >= cut7]
+    prev7 = [r for r in rows if cut14 <= r["closed_at"] < cut7]
+    v03_since = "2026-09-02T19:00:00"  # deploy bramek v0.3 (commit c890e34)
+    return {
+        "computed_at": now.isoformat(),
+        "all": agg(rows),
+        "by_score": bucketize(score_bucket, [">=70", "60-69", "50-59", "<50"]),
+        "by_regime": bucketize(lambda r: r.get("regime") or "?"),
+        "by_direction": bucketize(lambda r: (r.get("direction") or "long").upper(), ["LONG", "SHORT"]),
+        "by_exit": bucketize(lambda r: exit_labels.get(r.get("hit_or_miss"), str(r.get("hit_or_miss")))),
+        "by_ticker": bucketize(lambda r: r.get("ticker") or "?"),
+        "trend": {"last7": agg(last7) if last7 else None, "prev7": agg(prev7) if prev7 else None},
+        "by_version": [
+            {"label": "v0.2 (przed bramkami)", **agg([r for r in rows if r["opened_at"] < v03_since])},
+            {"label": "v0.3 (bramki)", **agg([r for r in rows if r["opened_at"] >= v03_since])},
+        ],
+    }
+
+
 def cmd_upload(args):
     """Push today's fusion JSON to a GitHub Gist so the terminal widget can fetch it.
 
@@ -1436,6 +1493,7 @@ def cmd_upload(args):
     win_rate = (wins / len(recent_closed) * 100) if recent_closed else 0.0
     equity_history = _get_equity_history(conn, days=30)
     equity_stats = _compute_equity_stats(conn)
+    performance = _compute_performance_breakdown(conn)
     last_open_row = conn.execute("SELECT MAX(opened_at) FROM positions").fetchone()[0]
     last_close_row = conn.execute("SELECT MAX(closed_at) FROM positions").fetchone()[0]
     conn.close()
@@ -1478,6 +1536,7 @@ def cmd_upload(args):
         "equity_history": equity_history,
         "equity_stats": equity_stats,
         "health": health,
+        "performance": performance,
     }
 
     content = json.dumps(fusion_data, indent=2, default=str)

@@ -1726,6 +1726,9 @@ function render() {
       <!-- P&L HISTORY — equity curve + trade stats -->
       <div id="pnl-history-slot" style="grid-column: span 12; width: 100%;"></div>
 
+      <!-- CO DZIAŁA — analityka skuteczności po score/regime/kierunku/wyjściu (v0.3) -->
+      <div id="performance-slot" style="grid-column: span 12; width: 100%;"></div>
+
       <!-- DECISION JOURNAL — auto-log alerts, manual notes, CSV export
            ALWAYS visible (no hide-* classes) — potrzebne w każdym preset dla outcomes -->
       <div id="journal-slot" style="grid-column: span 12; width: 100%;"></div>
@@ -3192,6 +3195,83 @@ function renderLiveInterpretation(ticker) {
     </div>`;
 }
 
+// ─── CO DZIAŁA — analityka skuteczności (v0.3) ───
+// Ten sam audyt, który wykrył degradację v0.2 (score>=70 → 86% WR, reszta → 5%),
+// liczony automatycznie przez bota co cykl (state.performance). Cel: spadek
+// jakości widać po 2 dniach, nie po 40 stratnych trade'ach.
+function renderPerformancePanel() {
+  const slot = document.getElementById('performance-slot');
+  if (!slot || !lastFusion) return;
+  const perf = lastFusion.state?.performance;
+  if (!perf || !perf.all || !perf.all.n) { slot.innerHTML = ''; return; }
+
+  const wrColor = w => w >= 60 ? 'var(--green)' : w >= 40 ? 'var(--amber)' : 'var(--red)';
+  const pnlColor = p => p > 0 ? 'var(--green)' : p < 0 ? 'var(--red)' : 'var(--text-dim)';
+  const pfTxt = pf => pf == null ? '—' : pf >= 99 ? '∞' : pf.toFixed(2);
+  const table = (title, rows, hint) => {
+    if (!rows || !rows.length) return '';
+    const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const best = rows.reduce((a, b) => (b.n >= 3 && b.pnl > 0 && (a == null || b.pnl > a.pnl)) ? b : a, null);
+    return `
+      <div style="background:var(--bg-elev-2);border-radius:6px;padding:8px 10px;min-width:0">
+        <div style="font-size:9.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700;margin-bottom:6px;display:flex;justify-content:space-between;gap:6px">
+          <span>${title}</span>${hint ? `<span title="${hint}" style="cursor:help;color:var(--text-muted)">ⓘ</span>` : ''}
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10.5px">
+          <thead><tr style="color:var(--text-dim);font-size:8.5px;text-transform:uppercase;letter-spacing:0.05em">
+            <th style="text-align:left;padding:2px 0;font-weight:700">Segment</th>
+            <th style="text-align:right;padding:2px 4px;font-weight:700">N</th>
+            <th style="text-align:right;padding:2px 4px;font-weight:700">WR</th>
+            <th style="text-align:right;padding:2px 4px;font-weight:700">PnL</th>
+            <th style="text-align:right;padding:2px 0;font-weight:700" title="Profit factor = suma zysków / suma strat. >1.5 dobrze, <1 = strategia traci.">PF</th>
+          </tr></thead>
+          <tbody>${rows.map(r => `
+            <tr style="${best && r === best ? 'background:rgba(52,211,153,0.08);' : ''}border-top:1px solid var(--border)">
+              <td style="padding:3px 0;color:var(--text);font-weight:${best && r === best ? 800 : 600}">${best && r === best ? '★ ' : ''}${esc(r.label)}</td>
+              <td style="text-align:right;padding:3px 4px;color:${r.n < 5 ? 'var(--text-dim)' : 'var(--text-muted)'}" title="${r.n < 5 ? 'Mała próba — traktuj ostrożnie' : ''}">${r.n}${r.n < 5 ? '*' : ''}</td>
+              <td style="text-align:right;padding:3px 4px;font-weight:800;color:${wrColor(r.wr)}">${r.wr.toFixed(0)}%</td>
+              <td style="text-align:right;padding:3px 4px;font-weight:700;color:${pnlColor(r.pnl)}">${r.pnl >= 0 ? '+' : ''}$${r.pnl.toFixed(2)}</td>
+              <td style="text-align:right;padding:3px 0;color:${r.pf == null ? 'var(--text-dim)' : r.pf >= 1.5 ? 'var(--green)' : r.pf >= 1 ? 'var(--amber)' : 'var(--red)'}">${pfTxt(r.pf)}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  };
+
+  // Wskaźnik trendu jakości: ostatnie 7 dni vs poprzednie 7
+  const t = perf.trend || {};
+  let trendHtml = '';
+  if (t.last7 && t.prev7 && t.prev7.n >= 5 && t.last7.n >= 5) {
+    const dWr = t.last7.wr - t.prev7.wr;
+    const worse = dWr <= -15 || (t.last7.pnl < 0 && t.prev7.pnl > 0);
+    const better = dWr >= 15 || (t.last7.pnl > 0 && t.prev7.pnl < 0);
+    const col = worse ? 'var(--red)' : better ? 'var(--green)' : 'var(--text-muted)';
+    trendHtml = `<span style="color:${col};font-weight:700">${worse ? '⚠️ DEGRADACJA' : better ? '📈 POPRAWA' : '➖ STABILNIE'}</span>
+      <span style="color:var(--text-dim)">· 7d: WR ${t.last7.wr.toFixed(0)}% / $${t.last7.pnl.toFixed(2)} (${t.last7.n}) vs poprzednie 7d: WR ${t.prev7.wr.toFixed(0)}% / $${t.prev7.pnl.toFixed(2)} (${t.prev7.n})</span>`;
+  } else if (t.last7) {
+    trendHtml = `<span style="color:var(--text-dim)">Ostatnie 7d: WR ${t.last7.wr.toFixed(0)}% · $${t.last7.pnl.toFixed(2)} (${t.last7.n} trade'ów) — za mało danych na porównanie okres-do-okresu</span>`;
+  }
+
+  const a = perf.all;
+  slot.innerHTML = `
+    <section class="panel" style="grid-column: span 12">
+      <div class="panel-head">
+        <h3>🔬 Co działa · Analityka skuteczności</h3>
+        <span class="meta">${a.n} zamkniętych · WR <strong style="color:${wrColor(a.wr)}">${a.wr.toFixed(0)}%</strong> · PnL <strong style="color:${pnlColor(a.pnl)}">${a.pnl >= 0 ? '+' : ''}$${a.pnl.toFixed(2)}</strong> · PF <strong>${pfTxt(a.pf)}</strong></span>
+      </div>
+      <div style="font-size:10.5px;margin:0 0 8px;padding:6px 10px;background:var(--bg-elev-2);border-radius:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">${trendHtml}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px">
+        ${table('Wg fusion score', perf.by_score, 'Score w momencie wejścia. Bramki v0.3: LONG ≥65 (RANGING ≥70), SHORT ≤40 — wynika wprost z tej tabeli.')}
+        ${table('Wg regime', perf.by_regime, 'Regime BTC w momencie wejścia (RANGING = rynek boczny, TRENDING_UP/DOWN = trend).')}
+        ${table('Wg kierunku', perf.by_direction)}
+        ${table('Wg typu wyjścia', perf.by_exit, 'Flip CHoCH = zamknięcie przez odwrócenie struktury (w v0.3 mocno ograniczone). Trailing SL = zysk zabezpieczony stopem.')}
+        ${table('Wg tokena', perf.by_ticker)}
+        ${table('Wg wersji bota', perf.by_version, 'v0.3 (bramki jakości) wdrożone 2 września. Tu zobaczysz, czy bramki faktycznie podniosły skuteczność.')}
+      </div>
+      <div style="font-size:9.5px;color:var(--text-dim);margin-top:8px">★ = najlepszy segment (PnL, min. 3 trade'y) · * = mała próba (&lt;5), nie wyciągaj wniosków · liczone przez bota co cykl z pełnej historii</div>
+    </section>`;
+}
+
 // ─── PORTFOLIO HEALTH — summary wszystkich tokenów w sidebar ───
 function renderPnLHistory() {
   const slot = document.getElementById('pnl-history-slot');
@@ -4399,6 +4479,7 @@ setTimeout(() => {
   renderPortfolioHealth();                 // initial portfolio panel (populates as WS data arrives)
   setInterval(renderPortfolioHealth, 3000);// refresh portfolio health every 3s
   renderPnLHistory();                      // P&L history + equity curve
+  renderPerformancePanel();                // v0.3 — co działa: WR/PnL po score, regime, kierunku, wyjściu
   setInterval(renderPnLHistory, 30000);    // refresh every 30s
   refreshBrowserNews();                    // browser-side news fetch (bypasses stale Gist)
   setInterval(refreshBrowserNews, 600000); // 10min auto-refresh news
