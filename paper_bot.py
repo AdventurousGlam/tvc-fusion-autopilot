@@ -325,6 +325,42 @@ def _telegram_api(method: str, params: dict | None = None):
         return False, f"{type(e).__name__}: {e}"
 
 
+def _fmt_px(v) -> str:
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return "—"
+    return f"{v:,.0f}" if v >= 100 else f"{v:.2f}" if v >= 1 else f"{v:.4f}"
+
+
+def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime, override=False):
+    """Telegram: otwarcie pozycji. No-op bez sekretów; nigdy nie rzuca wyjątku."""
+    try:
+        arrow = "🟢 LONG" if direction == "long" else "🔴 SHORT"
+        _telegram_send(
+            f"<b>{arrow} {ticker}</b> otwarty @ {_fmt_px(entry)}\n"
+            f"Size ${size_usd:.0f} · score {score} · {regime}{' · ⚡CHoCH' if override else ''}\n"
+            f"SL {_fmt_px(sl)} · TP1 {_fmt_px(tp1)} · TP2 {_fmt_px(tp2)}"
+        )
+    except Exception as e:
+        print(f"[telegram] notify_open failed: {e}")
+
+
+def _notify_close(ticker, direction, entry, exit_price, pnl_pct, pnl_usd, reason):
+    """Telegram: zamknięcie pozycji. No-op bez sekretów; nigdy nie rzuca wyjątku."""
+    try:
+        icon = {"hit_tp1": "🎯 TP1", "hit_tp2": "🎯🎯 TP2", "hit_sl": "🛑 SL",
+                "hit_trailing_sl": "📈🛑 Trailing SL", "flip_choch": "🔁 Flip",
+                "manual_close": "✋ Manual"}.get(reason, reason)
+        res = "✅" if pnl_usd > 0 else "❌" if pnl_usd < 0 else "➖"
+        _telegram_send(
+            f"{res} <b>{ticker} {direction.upper()}</b> zamknięty — {icon}\n"
+            f"{_fmt_px(entry)} → {_fmt_px(exit_price)} · <b>{pnl_pct:+.2f}%</b> (${pnl_usd:+.2f})"
+        )
+    except Exception as e:
+        print(f"[telegram] notify_close failed: {e}")
+
+
 def cmd_telegram_test(args):
     """Weryfikacja Telegrama. Domyślnie CICHA (getMe + getChat — nic nie wysyła);
     z flagą --send wysyła wiadomość testową. Wynik trafia do meta → health → terminal."""
