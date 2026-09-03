@@ -187,6 +187,16 @@
   }
   .refresh-btn:hover { background: var(--gold-soft); color: var(--gold); border-color: var(--gold); }
 
+  /* ============ LANG TOGGLE ============ */
+  .lang-group { display: inline-flex; gap: 2px; margin-left: 6px; }
+  .lang-toggle {
+    background: transparent; color: var(--text-dim); border: 1px solid var(--border);
+    border-radius: 3px; padding: 2px 6px; font-size: 11px; cursor: pointer;
+    transition: all .12s; line-height: 1.2;
+  }
+  .lang-toggle:hover { border-color: var(--gold); color: var(--text-muted); }
+  .lang-toggle.active { background: var(--gold-soft); color: var(--gold); border-color: var(--gold); font-weight: 600; }
+
   /* ============ MAIN GRID ============ */
   main { display: grid; grid-template-columns: repeat(12, 1fr); gap: 8px; }
   .panel {
@@ -859,22 +869,212 @@
   <div class="status-cell">
     <span class="status-badge live" id="status-badge">● Loading</span>
     <button class="refresh-btn" id="refresh-btn" title="Refresh">↻ Refresh</button>
+    <span class="lang-group">
+      <button class="lang-toggle" data-lang="pl" onclick="setLang('pl')">PL</button>
+      <button class="lang-toggle" data-lang="en" onclick="setLang('en')">EN</button>
+    </span>
   </div>
 </div>
 
 <!-- COMMAND CENTER — ranked actions, single source of truth for "what to do NOW" -->
 <div id="command-center-slot" style="margin-bottom:8px"></div>
 
-<div id="content"><div class="loading">Loading fusion data…</div></div>
+<div id="content"><div class="loading" id="loading-msg">Loading fusion data…</div></div>
 
 <footer>
-  <div>Auto-refresh 60s prices · 5min fusion data · Click any token row to expand chart + zones</div>
+  <div id="footer-text">Auto-refresh 60s prices · 5min fusion data · Click any token row to expand chart + zones</div>
   <div class="cmds">
     <span>Update: <code>odpal fusion</code> → <code>paper_bot.py upload</code></span>
   </div>
 </footer>
 
 <script>
+/* ============================================================
+   i18n — BILINGUAL PL / EN
+   ============================================================ */
+let _lang = 'pl';
+try { const s = localStorage.getItem('tvc_lang'); if (s === 'en' || s === 'pl') _lang = s; } catch(e){}
+
+const I18N = {
+  // ─── HERO + STATUS ───
+  loading:            { pl: '● Ładowanie',                        en: '● Loading' },
+  refresh:            { pl: '↻ Odśwież',                          en: '↻ Refresh' },
+  regime:             { pl: 'Reżim',                              en: 'Regime' },
+  long_risk:          { pl: 'Ryzyko long',                        en: 'Long risk' },
+  short_lbl:          { pl: 'Short',                              en: 'Short' },
+  // ─── HEALTH ───
+  no_heartbeat:       { pl: '● Brak heartbeat',                   en: '● No heartbeat' },
+  autopilot_ok:       { pl: '● Autopilot ✓',                      en: '● Autopilot ✓' },
+  autopilot_delayed:  { pl: '● Autopilot opóźniony',              en: '● Autopilot delayed' },
+  autopilot_silent:   { pl: '● AUTOPILOT MILCZY',                 en: '● AUTOPILOT SILENT' },
+  ago_just_now:       { pl: 'przed chwilą',                       en: 'just now' },
+  ago_min:            { pl: 'min temu',                            en: 'min ago' },
+  ago_h:              { pl: 'h temu',                              en: 'h ago' },
+  ago_d:              { pl: 'd temu',                              en: 'd ago' },
+  health_banner:      { pl: '🚨 AUTOPILOT NIE ODPOWIADA od',      en: '🚨 AUTOPILOT NOT RESPONDING for' },
+  health_banner2:     { pl: '— pozycje NIE są sprawdzane (SL/TP nie zadziałają), sygnały są nieaktualne.', en: '— positions NOT being checked (SL/TP won\'t fire), signals are stale.' },
+  health_check:       { pl: 'Sprawdź: GitHub → Actions (czy workflow się wywala) lub cron-job.org (czy trigger działa).', en: 'Check: GitHub → Actions (is workflow failing) or cron-job.org (is trigger working).' },
+  last_cycle:         { pl: 'Ostatni cykl bota',                  en: 'Last bot cycle' },
+  per_day:            { pl: '/dzień',                              en: '/day' },
+  tg_missing:         { pl: 'Telegram: brak (dodaj sekrety)',      en: 'Telegram: missing (add secrets)' },
+  tg_error:           { pl: 'Telegram: BŁĄD',                     en: 'Telegram: ERROR' },
+  tg_ok:              { pl: 'Telegram: OK',                        en: 'Telegram: OK' },
+  tg_last_send:       { pl: 'ost. wysyłka',                       en: 'last sent' },
+  digest_label:       { pl: 'raport dzienny',                      en: 'daily digest' },
+  digest_not_yet:     { pl: 'jeszcze nie wysłany',                 en: 'not sent yet' },
+  digest_error:       { pl: 'błąd raportu',                        en: 'digest error' },
+  fetch_failed:       { pl: '● Pobieranie nie powiodło się',       en: '● Fetch failed' },
+  fetch_error:        { pl: 'Nie mogę pobrać fusion data',         en: 'Cannot fetch fusion data' },
+  loading_data:       { pl: 'Ładowanie danych fusion…',            en: 'Loading fusion data…' },
+  // ─── SECTIONS ───
+  sec_now:            { pl: '▸ TERAZ',                             en: '▸ NOW' },
+  sec_now_sub:        { pl: 'monitoring w czasie rzeczywistym · ta minuta · stan portfela na żywo', en: 'real-time monitoring · this minute · portfolio live state' },
+  sec_context:        { pl: '▸ KONTEKST',                          en: '▸ CONTEXT' },
+  sec_context_sub:    { pl: 'świadomość rynku · strategia fusion · news · przepływ wielorybów · kliknij token aby rozwinąć analizę', en: 'market awareness · fusion strategy · news · whale flow · click token to expand analysis' },
+  sec_planning:       { pl: '▸ PLANOWANIE',                        en: '▸ PLANNING' },
+  sec_planning_sub:   { pl: 'strategia · kalendarz katalizatorów · sub-score\'y · dziennik decyzji · wnioski z przeszłości', en: 'strategy · catalyst calendar · sub-scores · decision journal · past learnings' },
+  // ─── PANELS ───
+  fusion_decisions:   { pl: 'Fusion Decisions',                    en: 'Fusion Decisions' },
+  actionable:         { pl: 'akcyjne',                             en: 'actionable' },
+  total:              { pl: 'łącznie',                             en: 'total' },
+  click_analysis:     { pl: '🔬 kliknij token dla ANALIZY',        en: '🔬 click token for ANALYSIS deep-dive' },
+  open_positions:     { pl: 'Otwarte pozycje paper',               en: 'Open Paper Positions' },
+  open_lbl:           { pl: 'otwartych',                           en: 'open' },
+  cum_pnl:            { pl: 'Suma PnL',                            en: 'Cum PnL' },
+  closed:             { pl: 'Zamknięte',                           en: 'Closed' },
+  win_rate:           { pl: 'Win rate',                            en: 'Win rate' },
+  total_pnl:          { pl: 'Razem PnL',                           en: 'Total PnL' },
+  no_positions:       { pl: 'Brak otwartych pozycji.',             en: 'No open positions.' },
+  tx_history:         { pl: '📜 Historia transakcji',               en: '📜 Transaction History' },
+  click_expand:       { pl: 'kliknij aby rozwinąć ▾',              en: 'click to expand ▾' },
+  legend_label:       { pl: 'Legenda',                             en: 'Legend' },
+  market_news:        { pl: '📰 Market News',                      en: '📰 Market News' },
+  live_whales:        { pl: '🐋 Wieloryby na żywo',                en: '🐋 Live Whales — real-time' },
+  loading_whales:     { pl: 'Ładowanie danych wielorybów z BTC / ETH / ERC-20 / XRP / SOL / SUI…', en: 'Loading live whale data across BTC / ETH / ERC-20 / XRP / SOL / SUI…' },
+  news_bias:          { pl: 'Nastawienie wiadomości · Narracje',   en: 'News Bias · Narratives' },
+  catalyst_cal:       { pl: 'Kalendarz katalizatorów',             en: 'Catalyst Calendar' },
+  sentiment_flows:    { pl: 'Sentyment i przepływy',               en: 'Sentiment & Flows' },
+  fear_greed:         { pl: 'Strach & Chciwość',                   en: 'Fear & Greed' },
+  btc_dominance:      { pl: 'Dominacja BTC',                       en: 'BTC Dominance' },
+  alt_season:         { pl: 'Alt-season',                          en: 'Alt-season' },
+  paper_capital:      { pl: 'Kapitał paper',                       en: 'Paper capital' },
+  signal_breakdown:   { pl: 'Rozkład sygnałów · Per Token',        en: 'Signal Breakdown · Per Token' },
+  // ─── COMMAND CENTER ───
+  cmd_center:         { pl: '🎯 CENTRUM DECYZJI — Co robić TERAZ', en: '🎯 COMMAND CENTER — What to do NOW' },
+  cmd_actions:        { pl: 'akcji',                               en: 'actions' },
+  cmd_action:         { pl: 'akcja',                               en: 'action' },
+  cmd_ranked:         { pl: 'ranking wg pilności',                 en: 'ranked by urgency' },
+  cmd_zero:           { pl: 'Zero do zrobienia. Wszystkie pozycje w stanie HOLD, żadne alerty aktywne.', en: 'Zero actionable items. All positions in HOLD state, no active alerts.' },
+  cmd_scan:           { pl: 'Widget skanuje 10×/sec — kolejny action pojawi się gdy jakiś ticker zmieni stan.', en: 'Widget scanning 10×/sec — next action will appear when any ticker changes state.' },
+  // ─── PERFORMANCE ───
+  perf_title:         { pl: '🔬 Co działa · Analityka skuteczności', en: '🔬 What Works · Performance Analytics' },
+  perf_closed:        { pl: 'zamkniętych',                         en: 'closed' },
+  perf_by_score:      { pl: 'Wg fusion score',                     en: 'By fusion score' },
+  perf_by_regime:     { pl: 'Wg regime',                           en: 'By regime' },
+  perf_by_dir:        { pl: 'Wg kierunku',                         en: 'By direction' },
+  perf_by_exit:       { pl: 'Wg typu wyjścia',                    en: 'By exit type' },
+  perf_by_ticker:     { pl: 'Wg tokena',                           en: 'By token' },
+  perf_by_version:    { pl: 'Wg wersji bota',                      en: 'By bot version' },
+  perf_hint_score:    { pl: 'Score w momencie wejścia. Bramki v0.3: LONG ≥65 (RANGING ≥70), SHORT ≤40 — wynika wprost z tej tabeli.', en: 'Score at entry. v0.3 gates: LONG ≥65 (RANGING ≥70), SHORT ≤40 — derived from this table.' },
+  perf_hint_regime:   { pl: 'Regime BTC w momencie wejścia (RANGING = rynek boczny, TRENDING_UP/DOWN = trend).', en: 'BTC regime at entry (RANGING = sideways, TRENDING_UP/DOWN = trending).' },
+  perf_hint_exit:     { pl: 'Flip CHoCH = zamknięcie przez odwrócenie struktury (w v0.3 mocno ograniczone). Trailing SL = zysk zabezpieczony stopem.', en: 'Flip CHoCH = closed by structure reversal (heavily restricted in v0.3). Trailing SL = profit protected by stop.' },
+  perf_hint_version:  { pl: 'v0.3 (bramki jakości) wdrożone 2 września. Tu zobaczysz, czy bramki faktycznie podniosły skuteczność.', en: 'v0.3 (quality gates) deployed Sep 2. Here you\'ll see if gates actually improved performance.' },
+  perf_hint_pf:       { pl: 'Profit factor = suma zysków / suma strat. >1.5 dobrze, <1 = strategia traci.', en: 'Profit factor = gross wins / gross losses. >1.5 good, <1 = strategy losing.' },
+  perf_small_sample:  { pl: 'Mała próba — traktuj ostrożnie',     en: 'Small sample — treat cautiously' },
+  perf_degradation:   { pl: '⚠️ DEGRADACJA',                       en: '⚠️ DEGRADATION' },
+  perf_improvement:   { pl: '📈 POPRAWA',                          en: '📈 IMPROVEMENT' },
+  perf_stable:        { pl: '➖ STABILNIE',                         en: '➖ STABLE' },
+  perf_prev7d:        { pl: 'vs poprzednie 7d',                    en: 'vs previous 7d' },
+  perf_not_enough:    { pl: 'za mało danych na porównanie okres-do-okresu', en: 'not enough data for period comparison' },
+  perf_footer:        { pl: '★ = najlepszy segment (PnL, min. 3 trade\'y) · * = mała próba (<5), nie wyciągaj wniosków · liczone przez bota co cykl z pełnej historii', en: '★ = best segment (PnL, min. 3 trades) · * = small sample (<5), don\'t draw conclusions · computed by bot each cycle from full history' },
+  // ─── P&L HISTORY ───
+  pnl_history:        { pl: '📊 Historia P&L · Krzywa equity',     en: '📊 P&L History · Equity Curve' },
+  pnl_snapshots:      { pl: 'snapshotów',                          en: 'snapshots' },
+  pnl_closed_trades:  { pl: 'zamkniętych transakcji',              en: 'closed trades' },
+  pnl_no_data:        { pl: 'Brak danych historycznych jeszcze.',   en: 'No historical data yet.' },
+  pnl_total_return:   { pl: 'Zwrot całk.',                         en: 'Total Return' },
+  pnl_max_dd:         { pl: 'Max spadek',                           en: 'Max Drawdown' },
+  pnl_streak:         { pl: 'Aktualna seria',                      en: 'Current Streak' },
+  pnl_equity_now:     { pl: 'Equity teraz',                        en: 'Equity Now' },
+  pnl_start:          { pl: 'start',                               en: 'start' },
+  pnl_equity_curve:   { pl: '📈 Krzywa equity',                    en: '📈 Equity Curve' },
+  pnl_eq_fill:        { pl: 'Krzywa equity wypełni się po kilku snapshotach', en: 'Equity curve will fill after a few snapshots' },
+  pnl_how_closed:     { pl: '🎯 Jak zamknięto transakcje',         en: '🎯 How trades closed' },
+  pnl_avg_win:        { pl: 'Śr. zysk',                            en: 'Avg Win' },
+  pnl_avg_loss:       { pl: 'Śr. strata',                          en: 'Avg Loss' },
+  pnl_best_worst:     { pl: 'Najlepsza/Najgorsza',                 en: 'Best/Worst' },
+  profit_factor:      { pl: 'Profit Factor',                        en: 'Profit Factor' },
+  // ─── JOURNAL ───
+  journal_title:      { pl: '📓 Dziennik decyzji',                 en: '📓 Decision Journal' },
+  journal_auto:       { pl: 'auto-log alertów · localStorage',     en: 'auto-log alerts · localStorage' },
+  journal_manual:     { pl: '➕ Notatka',                           en: '➕ Manual note' },
+  journal_export:     { pl: '📥 Eksportuj CSV',                    en: '📥 Export CSV' },
+  journal_clear:      { pl: '🗑 Wyczyść',                           en: '🗑 Clear' },
+  journal_empty:      { pl: 'Brak wpisów. Dziennik auto-loguje każdy Setup Alert.', en: 'No entries. Journal auto-logs every Setup Alert.' },
+  journal_click_add:  { pl: 'Kliknij ➕ Notatka aby dodać własną obserwację.', en: 'Click ➕ Manual note to add your own observation.' },
+  journal_no_filter:  { pl: 'Brak wpisów dla',                     en: 'No entries for' },
+  journal_change:     { pl: 'Zmień filtr.',                         en: 'Change filter.' },
+  // ─── CHART ───
+  zoom_hint:          { pl: 'scroll · zoom Y · shift+scroll · zoom X · ciągnij · pan X+Y · ciągnij oś Y (prawa krawędź) · skaluj Y jak TradingView · EMA21 blue / EMA50 purple', en: 'wheel · zoom Y · shift+wheel · zoom X · drag · pan X+Y · drag on Y-axis (right edge) · scale Y like TradingView · EMA21 blue / EMA50 purple' },
+  vol_label:          { pl: 'Wolumen spot · Agresywne Buy vs Sell (dane Binance taker)', en: 'Spot volume · Aggressive Buy vs Sell (from Binance taker data)' },
+  live_news:          { pl: '📰 Na żywo —',                        en: '📰 Live News —' },
+  live_onchain:       { pl: '⛓ On-Chain na żywo —',                en: '⛓ Live On-Chain —' },
+  loading_news:       { pl: 'Ładowanie newsów…',                    en: 'Loading news…' },
+  loading_onchain:    { pl: 'Ładowanie danych on-chain…',           en: 'Loading on-chain data…' },
+  // ─── LEGEND ───
+  leg_sr:             { pl: 'Klaster minimum 2 pivotów w tolerancji 1.5%. Zielone = support, czerwone = resistance.', en: 'Cluster of at least 2 pivots within 1.5% tolerance. Green = support, red = resistance.' },
+  leg_ob:             { pl: 'Ostatnia świeca z odwrotnej strony przed silnym impulsem — zwykle instytucjonalne zlecenia w tym rangu.', en: 'Last candle from the opposite side before a strong impulse — typically institutional orders in this range.' },
+  leg_sfp:            { pl: '<strong style="color:var(--green)">SFP↑ Bull</strong> = knot przebił dołek 8 świec + close wrócił do środka (fake breakdown → reversal up). <strong style="color:var(--red)">SFP↓ Bear</strong> = knot przebił szczyt + close spadł (fake breakout → reversal down).', en: '<strong style="color:var(--green)">SFP↑ Bull</strong> = wick broke 8-candle low + close returned to middle (fake breakdown → reversal up). <strong style="color:var(--red)">SFP↓ Bear</strong> = wick broke high + close dropped (fake breakout → reversal down).' },
+  leg_liq:            { pl: 'Poziomy z ≥3 dotknięciami w tolerancji 1% — magnesy na stop loss\'y, prawdopodobne targety.', en: 'Levels with ≥3 touches within 1% tolerance — stop loss magnets, probable targets.' },
+  leg_pressure:       { pl: 'Badge w prawym górnym rogu chartu. Pokazuje % gdzie ostatnie 20 świec zamknęło się w range low-high (recency-weighted). <strong>>55% = bulls dominate</strong>, <strong>&lt;45% = bears dominate</strong>.', en: 'Badge in top-right corner. Shows % where last 20 candles closed in low-high range (recency-weighted). <strong>>55% = bulls dominate</strong>, <strong>&lt;45% = bears dominate</strong>.' },
+  leg_breakout:       { pl: 'Pomarańczowy trójkąt na świecy która close powyżej (bull ↑) lub poniżej (bear ↓) 12-świec extremum, min 0.8% od poziomu. Kreskowana linia oznacza broken level (potencjalny retest zone).', en: 'Orange triangle on candle that closed above (bull ↑) or below (bear ↓) 12-candle extremum, min 0.8% from level. Dashed line marks broken level (potential retest zone).' },
+  leg_entry:          { pl: 'Poziomy z fusion decision — złota = entry mid, czerwona = stop, zielone = take profit.', en: 'Fusion decision levels — gold = entry mid, red = stop, green = take profit.' },
+  // ─── CALENDAR ───
+  cal_this_week:      { pl: 'Ten tydzień',                             en: 'This Week' },
+  cal_next_week:      { pl: 'Następny tydzień',                        en: 'Next Week' },
+  cal_last_week:      { pl: 'Poprzedni tydzień',                       en: 'Last Week' },
+  cal_prev:           { pl: '← Wstecz',                                en: '← Prev' },
+  cal_next:           { pl: 'Dalej →',                                  en: 'Next →' },
+  cal_today:          { pl: 'Dziś',                                     en: 'Today' },
+  cal_today_tag:      { pl: ' · DZIŚ',                                  en: ' · TODAY' },
+  cal_show_past:      { pl: '👁 Pokaż',                                 en: '👁 Show' },
+  cal_hide_past:      { pl: '👁 Ukryj',                                 en: '👁 Hide' },
+  cal_past_events:    { pl: 'minione',                                  en: 'past event' },
+  cal_past_events_pl: { pl: 'minionych',                                en: 'past events' },
+  // ─── FOOTER ───
+  footer_auto:        { pl: 'Auto-refresh 60s ceny · 5min dane fusion · Kliknij wiersz tokena aby rozwinąć wykres + strefy', en: 'Auto-refresh 60s prices · 5min fusion data · Click any token row to expand chart + zones' },
+  // ─── MISC ───
+  winning:            { pl: '🔥 seria wygranych',                   en: '🔥 winning' },
+  losing:             { pl: '⚠️ seria strat',                       en: '⚠️ losing' },
+  neutral:            { pl: 'neutralna',                            en: 'neutral' },
+};
+
+function t(key) { return (I18N[key] && I18N[key][_lang]) || (I18N[key] && I18N[key].pl) || key; }
+function setLang(lang) {
+  _lang = lang;
+  try { localStorage.setItem('tvc_lang', lang); } catch(e){}
+  document.documentElement.lang = lang;
+  // Update static hero elements
+  const regimeK = document.querySelector('.metric-cell .k');
+  if (regimeK && regimeK.textContent.match(/^(Regime|Reżim)$/)) regimeK.textContent = t('regime');
+  const riskK = document.querySelectorAll('.metric-cell .k');
+  riskK.forEach(el => { if (el.textContent.match(/^(Long risk|Ryzyko long)$/)) el.textContent = t('long_risk'); });
+  const shortSub = document.querySelector('.metric-cell .sub');
+  if (shortSub) shortSub.innerHTML = `${t('short_lbl')}: <span id="risk-short">${document.getElementById('risk-short')?.textContent || '—'}</span>`;
+  const refreshBtn = document.getElementById('refresh-btn');
+  if (refreshBtn) refreshBtn.textContent = t('refresh');
+  // Toggle button state
+  document.querySelectorAll('.lang-toggle').forEach(b => b.classList.toggle('active', b.dataset.lang === lang));
+  // Update static text elements
+  const footerEl = document.getElementById('footer-text');
+  if (footerEl) footerEl.textContent = t('footer_auto');
+  const loadEl = document.getElementById('loading-msg');
+  if (loadEl && loadEl.parentElement.querySelector('.loading')) loadEl.textContent = t('loading_data');
+  // Re-render dynamic panels
+  updateStatusBadge();
+  if (lastFusion) render();
+}
+
 /* ============================================================
    CONFIG
    ============================================================ */
@@ -987,9 +1187,9 @@ async function fetchFusion() {
     openAllOrderbookStreams();
   } catch (e) {
     badge.className = 'status-badge error';
-    badge.textContent = `● Fetch failed`;
+    badge.textContent = t('fetch_failed');
     if (!lastFusion) {
-      document.getElementById('content').innerHTML = `<div class="error-panel"><strong>Nie mogę pobrać fusion data (${e.message})</strong><br>URL: <code>${FUSION_JSON_URL}</code></div>`;
+      document.getElementById('content').innerHTML = `<div class="error-panel"><strong>${t('fetch_error')} (${e.message})</strong><br>URL: <code>${FUSION_JSON_URL}</code></div>`;
     }
   }
 }
@@ -1007,10 +1207,10 @@ function healthAgeMin() {
   return (Date.now() - new Date(iso).getTime()) / 60000;
 }
 function fmtAge(min) {
-  if (min < 1) return 'przed chwilą';
-  if (min < 60) return `${Math.round(min)} min temu`;
-  if (min < 48 * 60) return `${(min / 60).toFixed(1)}h temu`;
-  return `${Math.floor(min / 1440)}d temu`;
+  if (min < 1) return t('ago_just_now');
+  if (min < 60) return `${Math.round(min)} ${t('ago_min')}`;
+  if (min < 48 * 60) return `${(min / 60).toFixed(1)}${t('ago_h')}`;
+  return `${Math.floor(min / 1440)}${t('ago_d')}`;
 }
 function updateStatusBadge() {
   const badge = document.getElementById('status-badge');
@@ -1019,19 +1219,20 @@ function updateStatusBadge() {
   const h = lastFusion?.state?.health || {};
   const tg = !h.telegram_enabled ? '' : h.telegram_last_error ? ' · 📵' : ' · 📲';
   let level;
-  if (min == null) { level = 'stale'; badge.className = 'status-badge stale'; badge.textContent = '● Brak heartbeat'; }
+  if (min == null) { level = 'stale'; badge.className = 'status-badge stale'; badge.textContent = t('no_heartbeat'); }
   else if (min < HEALTH_WARN_MIN) { level = 'ok'; badge.className = 'status-badge live'; badge.textContent = `● Autopilot ✓ ${fmtAge(min)}${tg}`; }
-  else if (min < HEALTH_CRIT_MIN) { level = 'warn'; badge.className = 'status-badge stale'; badge.textContent = `● Autopilot opóźniony ${fmtAge(min)}`; }
-  else { level = 'crit'; badge.className = 'status-badge error'; badge.textContent = `● AUTOPILOT MILCZY ${fmtAge(min)}`; }
-  badge.title = `Ostatni cykl bota: ${h.autopilot_last_cycle || lastFusion?.state?.generated_at || '?'}`
+  else if (min < HEALTH_CRIT_MIN) { level = 'warn'; badge.className = 'status-badge stale'; badge.textContent = `${_lang==='pl'?'● Autopilot opóźniony':'● Autopilot delayed'} ${fmtAge(min)}`; }
+  else { level = 'crit'; badge.className = 'status-badge error'; badge.textContent = `${_lang==='pl'?'● AUTOPILOT MILCZY':'● AUTOPILOT SILENT'} ${fmtAge(min)}`; }
+  const loc = _lang === 'en' ? 'en-US' : 'pl-PL';
+  badge.title = `${t('last_cycle')}: ${h.autopilot_last_cycle || lastFusion?.state?.generated_at || '?'}`
     + (h.bot_version ? ` · bot v${h.bot_version}` : '')
-    + (h.gates ? ` · gates: LONG≥${h.gates.min_long_score} (RANGING≥${h.gates.min_long_score_ranging}), SHORT≤${h.gates.max_short_score}, hold ${h.gates.min_hold_min}min, cooldown ${h.gates.reopen_cooldown_min}min, max ${h.gates.max_trades_per_day}/dzień` : '')
-    + (!h.telegram_enabled ? ' · Telegram: brak (dodaj sekrety)'
-       : h.telegram_last_error ? ` · Telegram: BŁĄD → ${h.telegram_last_error} (chat …${h.telegram_chat_id_tail || '?'})`
-       : ` · Telegram: OK${h.telegram_last_ok ? ' (ost. wysyłka ' + new Date(h.telegram_last_ok).toLocaleTimeString('pl-PL', {hour:'2-digit',minute:'2-digit'}) + ')' : ''}`)
+    + (h.gates ? ` · gates: LONG≥${h.gates.min_long_score} (RANGING≥${h.gates.min_long_score_ranging}), SHORT≤${h.gates.max_short_score}, hold ${h.gates.min_hold_min}min, cooldown ${h.gates.reopen_cooldown_min}min, max ${h.gates.max_trades_per_day}${t('per_day')}` : '')
+    + (!h.telegram_enabled ? ` · ${t('tg_missing')}`
+       : h.telegram_last_error ? ` · ${t('tg_error')} → ${h.telegram_last_error} (chat …${h.telegram_chat_id_tail || '?'})`
+       : ` · ${t('tg_ok')}${h.telegram_last_ok ? ' (' + t('tg_last_send') + ' ' + new Date(h.telegram_last_ok).toLocaleTimeString(loc, {hour:'2-digit',minute:'2-digit'}) + ')' : ''}`)
     + (h.telegram_test_result ? ` · test: ${h.telegram_test_result}` : '')
-    + (h.digest_last_date ? ` · raport dzienny: ${h.digest_last_date}` : ' · raport dzienny: jeszcze nie wysłany')
-    + (h.digest_last_error ? ` · błąd raportu: ${h.digest_last_error}` : '');
+    + (h.digest_last_date ? ` · ${t('digest_label')}: ${h.digest_last_date}` : ` · ${t('digest_label')}: ${t('digest_not_yet')}`)
+    + (h.digest_last_error ? ` · ${t('digest_error')}: ${h.digest_last_error}` : '');
   renderHealthBanner(level, min);
 }
 function renderHealthBanner(level, min) {
@@ -1044,8 +1245,8 @@ function renderHealthBanner(level, min) {
     const cc = document.getElementById('command-center-slot');
     if (cc && cc.parentNode) cc.parentNode.insertBefore(el, cc); else document.body.prepend(el);
   }
-  el.innerHTML = `🚨 AUTOPILOT NIE ODPOWIADA od ${fmtAge(min)} — pozycje NIE są sprawdzane (SL/TP nie zadziałają), sygnały są nieaktualne.
-    <span style="font-weight:600;color:var(--text-muted)">Sprawdź: GitHub → Actions (czy workflow się wywala) lub cron-job.org (czy trigger działa).</span>`;
+  el.innerHTML = `${t('health_banner')} ${fmtAge(min)} ${t('health_banner2')}
+    <span style="font-weight:600;color:var(--text-muted)">${t('health_check')}</span>`;
 }
 setInterval(updateStatusBadge, 60 * 1000);
 
@@ -1573,8 +1774,8 @@ function render() {
       <!-- SECTION 1: NOW · real-time monitoring (this minute)              -->
       <!-- ═══════════════════════════════════════════════════════════════ -->
       <div class="section-header hide-eod hide-morning" style="grid-column: span 12; display:flex;align-items:center;gap:10px;margin:2px 0 4px;padding:6px 10px;background:linear-gradient(90deg,rgba(52,211,153,0.15),transparent);border-left:4px solid var(--green);border-radius:4px">
-        <span style="font-size:14px;font-weight:900;color:var(--green);letter-spacing:0.03em">▸ NOW</span>
-        <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:600">real-time monitoring · this minute · portfolio live state</span>
+        <span style="font-size:14px;font-weight:900;color:var(--green);letter-spacing:0.03em">${t('sec_now')}</span>
+        <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:600">${t('sec_now_sub')}</span>
       </div>
 
       <!-- PORTFOLIO HEALTH — live status wszystkich tokenów -->
@@ -1586,38 +1787,38 @@ function render() {
       <!-- SECTION 2: CONTEXT · market awareness (this hour/day)            -->
       <!-- ═══════════════════════════════════════════════════════════════ -->
       <div class="section-header" style="grid-column: span 12; display:flex;align-items:center;gap:10px;margin:10px 0 4px;padding:6px 10px;background:linear-gradient(90deg,rgba(96,165,250,0.15),transparent);border-left:4px solid var(--blue);border-radius:4px">
-        <span style="font-size:14px;font-weight:900;color:var(--blue);letter-spacing:0.03em">▸ CONTEXT</span>
-        <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:600">market awareness · fusion strategy · news · whale flow · click token to expand analysis</span>
+        <span style="font-size:14px;font-weight:900;color:var(--blue);letter-spacing:0.03em">${t('sec_context')}</span>
+        <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:600">${t('sec_context_sub')}</span>
       </div>
 
       <section class="panel p-8 hide-eod">
         <div class="panel-head">
-          <h3>Fusion Decisions · ${data.date || 'today'}</h3>
-          <span class="meta">${decisions.filter(d => ['STRONG_BUY','BUY','SELL','STRONG_SELL'].includes(d.action)).length} actionable · <strong>${decisions.length}</strong> total · 🔬 click token for ANALYSIS deep-dive</span>
+          <h3>${t('fusion_decisions')} · ${data.date || 'today'}</h3>
+          <span class="meta">${decisions.filter(d => ['STRONG_BUY','BUY','SELL','STRONG_SELL'].includes(d.action)).length} ${t('actionable')} · <strong>${decisions.length}</strong> ${t('total')} · ${t('click_analysis')}</span>
         </div>
         <div class="decisions">${decisions.map(renderDecision).join('')}</div>
       </section>
 
       <section class="panel p-4">
         <div class="panel-head">
-          <h3>Open Paper Positions</h3>
-          <span class="meta">${openPositions.length} open · Cum PnL <strong>${fmtUsdSigned(totalPnl)}</strong></span>
+          <h3>${t('open_positions')}</h3>
+          <span class="meta">${openPositions.length} ${t('open_lbl')} · ${t('cum_pnl')} <strong>${fmtUsdSigned(totalPnl)}</strong></span>
         </div>
         ${openPositions.length ? `
           <div class="positions">${openPositions.map(renderPosition).join('')}</div>
           <div style="margin-top:10px;padding:8px 10px;background:var(--bg-elev-2);border-radius:6px;font-size:10px;color:var(--text-muted);display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:center">
-            <div><div style="font-size:8.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700">Closed</div><div style="font-family:var(--mono);font-size:13px;font-weight:800;color:var(--text);margin-top:2px">${cumClosed}</div></div>
-            <div><div style="font-size:8.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700">Win rate</div><div style="font-family:var(--mono);font-size:13px;font-weight:800;color:${cumWr >= 50 ? 'var(--green)' : cumWr > 0 ? 'var(--amber)' : 'var(--text-dim)'};margin-top:2px">${cumClosed ? cumWr.toFixed(0) + '%' : '—'}</div></div>
-            <div><div style="font-size:8.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700">Total PnL</div><div style="font-family:var(--mono);font-size:13px;font-weight:800;color:${totalPnl > 0 ? 'var(--green)' : totalPnl < 0 ? 'var(--red)' : 'var(--text-dim)'};margin-top:2px">${fmtUsdSigned(totalPnl)}</div></div>
+            <div><div style="font-size:8.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700">${t('closed')}</div><div style="font-family:var(--mono);font-size:13px;font-weight:800;color:var(--text);margin-top:2px">${cumClosed}</div></div>
+            <div><div style="font-size:8.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700">${t('win_rate')}</div><div style="font-family:var(--mono);font-size:13px;font-weight:800;color:${cumWr >= 50 ? 'var(--green)' : cumWr > 0 ? 'var(--amber)' : 'var(--text-dim)'};margin-top:2px">${cumClosed ? cumWr.toFixed(0) + '%' : '—'}</div></div>
+            <div><div style="font-size:8.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700">${t('total_pnl')}</div><div style="font-family:var(--mono);font-size:13px;font-weight:800;color:${totalPnl > 0 ? 'var(--green)' : totalPnl < 0 ? 'var(--red)' : 'var(--text-dim)'};margin-top:2px">${fmtUsdSigned(totalPnl)}</div></div>
           </div>
-        ` : `<div class="no-positions">Brak otwartych pozycji.</div>`}
+        ` : `<div class="no-positions">${t('no_positions')}</div>`}
 
         <!-- TRANSACTION HISTORY — closed positions expandable -->
         ${(state.recent_closed || []).length > 0 ? `
         <details style="margin-top:12px;background:var(--bg-elev-2);border-radius:6px;border:1px solid var(--border)">
           <summary style="padding:8px 12px;cursor:pointer;font-size:11px;font-weight:700;color:var(--gold);letter-spacing:0.04em;text-transform:uppercase;user-select:none;list-style:none;display:flex;justify-content:space-between;align-items:center">
-            <span>📜 Transaction History (${(state.recent_closed || []).length} closed)</span>
-            <span style="color:var(--text-dim);font-family:var(--mono);font-size:10px">click to expand ▾</span>
+            <span>${t('tx_history')} (${(state.recent_closed || []).length} ${t('closed').toLowerCase()})</span>
+            <span style="color:var(--text-dim);font-family:var(--mono);font-size:10px">${t('click_expand')}</span>
           </summary>
           <div style="max-height:350px;overflow-y:auto;padding:8px">
             <table style="width:100%;border-collapse:collapse;font-size:10.5px;font-family:var(--mono)">
@@ -1643,7 +1844,7 @@ function render() {
                                      c.hit_or_miss === 'hit_sl' ? '🛑' :
                                      c.hit_or_miss === 'hit_trailing_sl' ? '📈🛑' :
                                      c.hit_or_miss === 'manual_close' ? '✋' : '—';
-                  const closedDate = c.closed_at ? new Date(c.closed_at).toLocaleDateString('pl-PL', {day:'2-digit', month:'2-digit'}) : '—';
+                  const closedDate = c.closed_at ? new Date(c.closed_at).toLocaleDateString(_lang === 'en' ? 'en-US' : 'pl-PL', {day:'2-digit', month:'2-digit'}) : '—';
                   return `<tr style="border-bottom:1px solid var(--border-soft)">
                     <td style="padding:5px 4px;color:var(--text-muted)">${closedDate}</td>
                     <td style="padding:5px 4px;color:var(--gold);font-weight:700">${c.ticker}</td>
@@ -1665,7 +1866,7 @@ function render() {
 
         <!-- MARKET NEWS — general crypto news bez ticker filter -->
         <div class="panel-head" style="margin-top:14px">
-          <h3>📰 Market News</h3>
+          <h3>${t('market_news')}</h3>
           <span class="meta">${(state.news?._market || []).length} items · RSS feeds</span>
         </div>
         <div id="market-news-slot" style="max-height:300px;overflow-y:auto;padding-right:4px">
@@ -1674,16 +1875,16 @@ function render() {
 
         <!-- LIVE WHALES — real-time whale detection (browser fetch, auto-refresh 30s) -->
         <div class="panel-head" style="margin-top:14px">
-          <h3>🐋 Live Whales — real-time</h3>
+          <h3>${t('live_whales')}</h3>
           <span class="meta" id="whales-refresh-meta">initializing…</span>
         </div>
         <div id="whales-live-slot" style="max-height:400px;overflow-y:auto;padding-right:4px">
-          <div style="padding:12px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">Loading live whale data across BTC / ETH / ERC-20 / XRP / SOL / SUI…</div>
+          <div style="padding:12px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">${t('loading_whales')}</div>
         </div>
       </section>
 
       <section class="panel p-6 hide-trading hide-eod">
-        <div class="panel-head"><h3>News Bias · Narratives</h3><span class="meta">Market bias · Neutral</span></div>
+        <div class="panel-head"><h3>${t('news_bias')}</h3><span class="meta">Market bias · Neutral</span></div>
         <div class="narratives">${renderNarratives(data)}</div>
       </section>
 
@@ -1691,40 +1892,40 @@ function render() {
       <!-- SECTION 3: PLANNING · strategy, calendar, past learnings         -->
       <!-- ═══════════════════════════════════════════════════════════════ -->
       <div class="section-header hide-trading" style="grid-column: span 12; display:flex;align-items:center;gap:10px;margin:10px 0 4px;padding:6px 10px;background:linear-gradient(90deg,rgba(167,139,250,0.15),transparent);border-left:4px solid var(--purple);border-radius:4px">
-        <span style="font-size:14px;font-weight:900;color:var(--purple);letter-spacing:0.03em">▸ PLANNING</span>
-        <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:600">strategy · catalyst calendar · sub-scores · decision journal · past learnings</span>
+        <span style="font-size:14px;font-weight:900;color:var(--purple);letter-spacing:0.03em">${t('sec_planning')}</span>
+        <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:600">${t('sec_planning_sub')}</span>
       </div>
 
       <section class="panel p-8 hide-trading hide-eod">
-        <div class="panel-head"><h3>Catalyst Calendar</h3><span class="meta">Auto-updates daily · nav ↔</span></div>
+        <div class="panel-head"><h3>${t('catalyst_cal')}</h3><span class="meta">Auto-updates daily · nav ↔</span></div>
         <div id="catalyst-cal-slot">${renderCalendar(data.catalyst_calendar_this_week)}</div>
       </section>
 
       <section class="panel p-4 hide-trading">
-        <div class="panel-head"><h3>Sentiment & Flows</h3><span class="meta">Live · F&G alt.me</span></div>
+        <div class="panel-head"><h3>${t('sentiment_flows')}</h3><span class="meta">Live · F&G alt.me</span></div>
         <div class="gauges">
           <div class="gauge" id="fng-gauge">
-            <div class="gauge-label">Fear & Greed</div>
+            <div class="gauge-label">${t('fear_greed')}</div>
             <div class="gauge-value">—</div><div class="gauge-sub">Loading</div>
             <div class="gauge-bar"><div class="g-fill" style="width:0%"></div></div>
           </div>
           <div class="gauge">
-            <div class="gauge-label">BTC Dominance</div>
+            <div class="gauge-label">${t('btc_dominance')}</div>
             <div class="gauge-value" style="color:var(--gold)" id="dom-value">—</div>
-            <div class="gauge-sub">Alt-season</div>
+            <div class="gauge-sub">${t('alt_season')}</div>
             <div class="gauge-bar"><div class="g-fill" style="background:var(--gold);width:0%" id="dom-bar"></div></div>
           </div>
         </div>
         <div class="btc-dom-strip" style="margin-top:10px">
           <div>
-            <div class="k">Paper capital</div>
+            <div class="k">${t('paper_capital')}</div>
             <div style="font-size:11px;color:var(--text-muted);margin-top:3px">${state.paper_capital ? `<strong style="color:var(--text);font-family:var(--mono)">$${state.paper_capital.toLocaleString()}</strong>` : '—'}</div>
           </div>
         </div>
       </section>
 
       <section class="panel p-12 hide-morning hide-trading">
-        <div class="panel-head"><h3>Signal Breakdown · Per Token</h3><span class="meta">OC · TA · News · Sent</span></div>
+        <div class="panel-head"><h3>${t('signal_breakdown')}</h3><span class="meta">OC · TA · News · Sent</span></div>
         <div class="chart-container"><canvas id="breakdown-chart"></canvas></div>
       </section>
 
@@ -2323,8 +2524,8 @@ function renderJournalPanel() {
   slot.innerHTML = `
     <section class="panel">
       <div class="panel-head">
-        <h3>📓 Decision Journal <span style="font-family:var(--mono);color:var(--text-dim);font-weight:500;text-transform:none;letter-spacing:0">· ${entries.length} total</span></h3>
-        <span class="meta">auto-log alerts · localStorage</span>
+        <h3>${t('journal_title')} <span style="font-family:var(--mono);color:var(--text-dim);font-weight:500;text-transform:none;letter-spacing:0">· ${entries.length} ${t('total')}</span></h3>
+        <span class="meta">${t('journal_auto')}</span>
       </div>
       <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:6px;padding:8px;background:var(--bg-elev-2);border-radius:6px;margin-bottom:8px;text-align:center">
         <div><div style="font-family:var(--mono);font-size:16px;font-weight:800;color:var(--green)">${wins}</div><div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em">wins</div></div>
@@ -2336,17 +2537,17 @@ function renderJournalPanel() {
         <select onchange="setJournalFilter(this.value)" style="background:var(--bg-elev-2);color:var(--text);border:1px solid var(--border);padding:4px 8px;border-radius:4px;font-size:11px;font-family:var(--mono);cursor:pointer">
           ${tickers.map(t => `<option value="${t}" ${t === _journalFilter ? 'selected' : ''}>${t}</option>`).join('')}
         </select>
-        <button onclick="addManualJournalEntry()" style="background:var(--bg-elev-2);color:var(--gold);border:1px solid var(--gold);padding:4px 10px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;transition:all .12s">➕ Manual note</button>
-        <button onclick="exportJournalCSV()" style="background:var(--bg-elev-2);color:var(--green);border:1px solid var(--green);padding:4px 10px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;transition:all .12s">📥 Export CSV</button>
-        <button onclick="clearJournal()" style="background:var(--bg-elev-2);color:var(--text-dim);border:1px solid var(--border);padding:4px 10px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;margin-left:auto">🗑 Clear</button>
+        <button onclick="addManualJournalEntry()" style="background:var(--bg-elev-2);color:var(--gold);border:1px solid var(--gold);padding:4px 10px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;transition:all .12s">${t('journal_manual')}</button>
+        <button onclick="exportJournalCSV()" style="background:var(--bg-elev-2);color:var(--green);border:1px solid var(--green);padding:4px 10px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;transition:all .12s">${t('journal_export')}</button>
+        <button onclick="clearJournal()" style="background:var(--bg-elev-2);color:var(--text-dim);border:1px solid var(--border);padding:4px 10px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;margin-left:auto">${t('journal_clear')}</button>
       </div>
       ${entries.length === 0 ? `
         <div style="padding:20px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">
-          Brak entries. Journal auto-loguje każdy Setup Alert.<br>
-          Kliknij ➕ Manual note aby dodać własną obserwację.
+          ${t('journal_empty')}<br>
+          ${t('journal_click_add')}
         </div>
       ` : displayed.length === 0 ? `
-        <div style="padding:15px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">Brak entries dla ${_journalFilter}. Zmień filtr.</div>
+        <div style="padding:15px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">${t('journal_no_filter')} ${_journalFilter}. ${t('journal_change')}</div>
       ` : `
         <div style="max-height:500px;overflow-y:auto;padding-right:4px">
           ${displayed.map(e => {
@@ -3002,13 +3203,13 @@ function renderCommandCenter() {
   slot.innerHTML = `
     <section class="panel" style="background:linear-gradient(135deg,var(--bg-elev),var(--bg-elev-2));border:2px solid ${actions.length > 0 && actions[0].urgency === 'URGENT' ? 'var(--red)' : 'var(--gold)'};${pulseClass}">
       <div class="panel-head">
-        <h3 style="font-size:12px;color:var(--gold)">🎯 COMMAND CENTER — What to do NOW</h3>
-        <span class="meta">${actions.length} action${actions.length !== 1 ? 's' : ''} · ranked by urgency</span>
+        <h3 style="font-size:12px;color:var(--gold)">${t('cmd_center')}</h3>
+        <span class="meta">${actions.length} ${actions.length !== 1 ? t('cmd_actions') : t('cmd_action')} · ${t('cmd_ranked')}</span>
       </div>
       ${actions.length === 0 ? `
         <div style="padding:16px;text-align:center;color:var(--text-dim);font-size:12px;font-style:italic">
-          Zero actionable items. Wszystkie pozycje w stanie HOLD, żadne alerty aktywne.<br>
-          Widget skanuje 10×/sec — kolejny action pojawi się gdy jakiś ticker zmieni stan.
+          ${t('cmd_zero')}<br>
+          ${t('cmd_scan')}
         </div>
       ` : actions.map((a, i) => `
         <div style="padding:10px 12px;background:${urgencyBg[a.urgency]};border-left:4px solid ${a.color};border-radius:5px;margin-bottom:5px">
@@ -3228,12 +3429,12 @@ function renderPerformancePanel() {
             <th style="text-align:right;padding:2px 4px;font-weight:700">N</th>
             <th style="text-align:right;padding:2px 4px;font-weight:700">WR</th>
             <th style="text-align:right;padding:2px 4px;font-weight:700">PnL</th>
-            <th style="text-align:right;padding:2px 0;font-weight:700" title="Profit factor = suma zysków / suma strat. >1.5 dobrze, <1 = strategia traci.">PF</th>
+            <th style="text-align:right;padding:2px 0;font-weight:700" title="${t('perf_hint_pf')}">PF</th>
           </tr></thead>
           <tbody>${rows.map(r => `
             <tr style="${best && r === best ? 'background:rgba(52,211,153,0.08);' : ''}border-top:1px solid var(--border)">
               <td style="padding:3px 0;color:var(--text);font-weight:${best && r === best ? 800 : 600}">${best && r === best ? '★ ' : ''}${esc(r.label)}</td>
-              <td style="text-align:right;padding:3px 4px;color:${r.n < 5 ? 'var(--text-dim)' : 'var(--text-muted)'}" title="${r.n < 5 ? 'Mała próba — traktuj ostrożnie' : ''}">${r.n}${r.n < 5 ? '*' : ''}</td>
+              <td style="text-align:right;padding:3px 4px;color:${r.n < 5 ? 'var(--text-dim)' : 'var(--text-muted)'}" title="${r.n < 5 ? t('perf_small_sample') : ''}">${r.n}${r.n < 5 ? '*' : ''}</td>
               <td style="text-align:right;padding:3px 4px;font-weight:800;color:${wrColor(r.wr)}">${r.wr.toFixed(0)}%</td>
               <td style="text-align:right;padding:3px 4px;font-weight:700;color:${pnlColor(r.pnl)}">${r.pnl >= 0 ? '+' : ''}$${r.pnl.toFixed(2)}</td>
               <td style="text-align:right;padding:3px 0;color:${r.pf == null ? 'var(--text-dim)' : r.pf >= 1.5 ? 'var(--green)' : r.pf >= 1 ? 'var(--amber)' : 'var(--red)'}">${pfTxt(r.pf)}</td>
@@ -3244,36 +3445,36 @@ function renderPerformancePanel() {
   };
 
   // Wskaźnik trendu jakości: ostatnie 7 dni vs poprzednie 7
-  const t = perf.trend || {};
+  const tr = perf.trend || {};
   let trendHtml = '';
-  if (t.last7 && t.prev7 && t.prev7.n >= 5 && t.last7.n >= 5) {
-    const dWr = t.last7.wr - t.prev7.wr;
-    const worse = dWr <= -15 || (t.last7.pnl < 0 && t.prev7.pnl > 0);
-    const better = dWr >= 15 || (t.last7.pnl > 0 && t.prev7.pnl < 0);
+  if (tr.last7 && tr.prev7 && tr.prev7.n >= 5 && tr.last7.n >= 5) {
+    const dWr = tr.last7.wr - tr.prev7.wr;
+    const worse = dWr <= -15 || (tr.last7.pnl < 0 && tr.prev7.pnl > 0);
+    const better = dWr >= 15 || (tr.last7.pnl > 0 && tr.prev7.pnl < 0);
     const col = worse ? 'var(--red)' : better ? 'var(--green)' : 'var(--text-muted)';
-    trendHtml = `<span style="color:${col};font-weight:700">${worse ? '⚠️ DEGRADACJA' : better ? '📈 POPRAWA' : '➖ STABILNIE'}</span>
-      <span style="color:var(--text-dim)">· 7d: WR ${t.last7.wr.toFixed(0)}% / $${t.last7.pnl.toFixed(2)} (${t.last7.n}) vs poprzednie 7d: WR ${t.prev7.wr.toFixed(0)}% / $${t.prev7.pnl.toFixed(2)} (${t.prev7.n})</span>`;
-  } else if (t.last7) {
-    trendHtml = `<span style="color:var(--text-dim)">Ostatnie 7d: WR ${t.last7.wr.toFixed(0)}% · $${t.last7.pnl.toFixed(2)} (${t.last7.n} trade'ów) — za mało danych na porównanie okres-do-okresu</span>`;
+    trendHtml = `<span style="color:${col};font-weight:700">${worse ? t('perf_degradation') : better ? t('perf_improvement') : t('perf_stable')}</span>
+      <span style="color:var(--text-dim)">· 7d: WR ${tr.last7.wr.toFixed(0)}% / $${tr.last7.pnl.toFixed(2)} (${tr.last7.n}) ${t('perf_prev7d')}: WR ${tr.prev7.wr.toFixed(0)}% / $${tr.prev7.pnl.toFixed(2)} (${tr.prev7.n})</span>`;
+  } else if (tr.last7) {
+    trendHtml = `<span style="color:var(--text-dim)">7d: WR ${tr.last7.wr.toFixed(0)}% · $${tr.last7.pnl.toFixed(2)} (${tr.last7.n}) — ${t('perf_not_enough')}</span>`;
   }
 
   const a = perf.all;
   slot.innerHTML = `
     <section class="panel" style="grid-column: span 12">
       <div class="panel-head">
-        <h3>🔬 Co działa · Analityka skuteczności</h3>
-        <span class="meta">${a.n} zamkniętych · WR <strong style="color:${wrColor(a.wr)}">${a.wr.toFixed(0)}%</strong> · PnL <strong style="color:${pnlColor(a.pnl)}">${a.pnl >= 0 ? '+' : ''}$${a.pnl.toFixed(2)}</strong> · PF <strong>${pfTxt(a.pf)}</strong></span>
+        <h3>${t('perf_title')}</h3>
+        <span class="meta">${a.n} ${t('perf_closed')} · WR <strong style="color:${wrColor(a.wr)}">${a.wr.toFixed(0)}%</strong> · PnL <strong style="color:${pnlColor(a.pnl)}">${a.pnl >= 0 ? '+' : ''}$${a.pnl.toFixed(2)}</strong> · PF <strong>${pfTxt(a.pf)}</strong></span>
       </div>
       <div style="font-size:10.5px;margin:0 0 8px;padding:6px 10px;background:var(--bg-elev-2);border-radius:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">${trendHtml}</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px">
-        ${table('Wg fusion score', perf.by_score, 'Score w momencie wejścia. Bramki v0.3: LONG ≥65 (RANGING ≥70), SHORT ≤40 — wynika wprost z tej tabeli.')}
-        ${table('Wg regime', perf.by_regime, 'Regime BTC w momencie wejścia (RANGING = rynek boczny, TRENDING_UP/DOWN = trend).')}
-        ${table('Wg kierunku', perf.by_direction)}
-        ${table('Wg typu wyjścia', perf.by_exit, 'Flip CHoCH = zamknięcie przez odwrócenie struktury (w v0.3 mocno ograniczone). Trailing SL = zysk zabezpieczony stopem.')}
-        ${table('Wg tokena', perf.by_ticker)}
-        ${table('Wg wersji bota', perf.by_version, 'v0.3 (bramki jakości) wdrożone 2 września. Tu zobaczysz, czy bramki faktycznie podniosły skuteczność.')}
+        ${table(t('perf_by_score'), perf.by_score, t('perf_hint_score'))}
+        ${table(t('perf_by_regime'), perf.by_regime, t('perf_hint_regime'))}
+        ${table(t('perf_by_dir'), perf.by_direction)}
+        ${table(t('perf_by_exit'), perf.by_exit, t('perf_hint_exit'))}
+        ${table(t('perf_by_ticker'), perf.by_ticker)}
+        ${table(t('perf_by_version'), perf.by_version, t('perf_hint_version'))}
       </div>
-      <div style="font-size:9.5px;color:var(--text-dim);margin-top:8px">★ = najlepszy segment (PnL, min. 3 trade'y) · * = mała próba (&lt;5), nie wyciągaj wniosków · liczone przez bota co cykl z pełnej historii</div>
+      <div style="font-size:9.5px;color:var(--text-dim);margin-top:8px">${t('perf_footer')}</div>
     </section>`;
 }
 
@@ -3289,10 +3490,9 @@ function renderPnLHistory() {
   if (history.length === 0 && !stats.total_closed) {
     slot.innerHTML = `
       <section class="panel" style="grid-column: span 12">
-        <div class="panel-head"><h3>📊 P&L History</h3><span class="meta">tracking starts after first check</span></div>
+        <div class="panel-head"><h3>${t('pnl_history')}</h3><span class="meta">tracking starts after first check</span></div>
         <div style="padding:16px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">
-          Brak danych historycznych jeszcze. Uruchom <code style="color:var(--gold)">python3 ~/Claude/TVCFusion/paper_bot.py check</code> — zapisze snapshot.<br>
-          Po kilku snapshotach zobaczysz equity curve + statystyki.
+          ${t('pnl_no_data')}
         </div>
       </section>`;
     return;
@@ -3309,14 +3509,14 @@ function renderPnLHistory() {
   slot.innerHTML = `
     <section class="panel" style="grid-column: span 12">
       <div class="panel-head">
-        <h3>📊 P&L History · Equity Curve</h3>
-        <span class="meta">${history.length} snapshots · ${stats.total_closed || 0} closed trades</span>
+        <h3>${t('pnl_history')}</h3>
+        <span class="meta">${history.length} ${t('pnl_snapshots')} · ${stats.total_closed || 0} ${t('pnl_closed_trades')}</span>
       </div>
 
       <!-- Stats grid -->
       <div style="display:grid;grid-template-columns:repeat(6, 1fr);gap:8px;margin-bottom:12px">
         <div style="padding:10px;background:var(--bg-elev-2);border-radius:6px;text-align:center;border-left:3px solid ${totalReturn >= 0 ? 'var(--green)' : 'var(--red)'}">
-          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em;font-weight:700">Total Return</div>
+          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em;font-weight:700">${t('pnl_total_return')}</div>
           <div style="font-family:var(--mono);font-size:17px;font-weight:800;color:${totalReturn >= 0 ? 'var(--green)' : 'var(--red)'};margin-top:2px">${fmtPct(totalReturn)}</div>
           <div style="font-size:9.5px;color:var(--text-muted);margin-top:1px">${fmtUsd(stats.total_pnl_usd || 0)}</div>
         </div>
@@ -3331,38 +3531,38 @@ function renderPnLHistory() {
           <div style="font-size:9.5px;color:var(--text-muted);margin-top:1px">gross wins / losses</div>
         </div>
         <div style="padding:10px;background:var(--bg-elev-2);border-radius:6px;text-align:center;border-left:3px solid var(--red)">
-          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em;font-weight:700">Max Drawdown</div>
+          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em;font-weight:700">${t('pnl_max_dd')}</div>
           <div style="font-family:var(--mono);font-size:17px;font-weight:800;color:var(--red);margin-top:2px">-${(stats.max_drawdown_pct || 0).toFixed(1)}%</div>
           <div style="font-size:9.5px;color:var(--text-muted);margin-top:1px">${fmtUsd(-(stats.max_drawdown_usd || 0))}</div>
         </div>
         <div style="padding:10px;background:var(--bg-elev-2);border-radius:6px;text-align:center;border-left:3px solid var(--gold)">
-          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em;font-weight:700">Current Streak</div>
+          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em;font-weight:700">${t('pnl_streak')}</div>
           <div style="font-family:var(--mono);font-size:17px;font-weight:800;color:${stats.current_streak_type === 'win' ? 'var(--green)' : stats.current_streak_type === 'loss' ? 'var(--red)' : 'var(--text-dim)'};margin-top:2px">${stats.current_streak || 0}${stats.current_streak_type === 'win' ? 'W' : stats.current_streak_type === 'loss' ? 'L' : ''}</div>
-          <div style="font-size:9.5px;color:var(--text-muted);margin-top:1px">${stats.current_streak_type === 'win' ? '🔥 winning' : stats.current_streak_type === 'loss' ? '⚠️ losing' : 'neutral'}</div>
+          <div style="font-size:9.5px;color:var(--text-muted);margin-top:1px">${stats.current_streak_type === 'win' ? t('winning') : stats.current_streak_type === 'loss' ? t('losing') : t('neutral')}</div>
         </div>
         <div style="padding:10px;background:var(--bg-elev-2);border-radius:6px;text-align:center;border-left:3px solid var(--blue)">
-          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em;font-weight:700">Equity Now</div>
+          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em;font-weight:700">${t('pnl_equity_now')}</div>
           <div style="font-family:var(--mono);font-size:17px;font-weight:800;color:var(--text);margin-top:2px">$${currentEquity.toFixed(0)}</div>
-          <div style="font-size:9.5px;color:var(--text-muted);margin-top:1px">start $${paperCapital}</div>
+          <div style="font-size:9.5px;color:var(--text-muted);margin-top:1px">${t('pnl_start')} $${paperCapital}</div>
         </div>
       </div>
 
       <!-- Equity curve chart -->
       ${history.length >= 2 ? `
         <div style="background:var(--bg-elev-2);border-radius:6px;padding:12px;margin-bottom:10px">
-          <div style="font-size:10px;color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">📈 Equity Curve (last ${history.length} snapshots)</div>
+          <div style="font-size:10px;color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">${t('pnl_equity_curve')} (${history.length})</div>
           <canvas id="equity-curve-canvas" style="width:100%;max-height:220px"></canvas>
         </div>
       ` : `
         <div style="padding:10px;background:var(--bg-elev-2);border-radius:6px;font-size:11px;color:var(--text-dim);text-align:center;font-style:italic">
-          Equity curve wypełni się po kilku snapshotach (${history.length}/2 min).
+          ${t('pnl_eq_fill')} (${history.length}/2 min).
         </div>
       `}
 
       <!-- Result breakdown -->
       ${stats.total_closed > 0 ? `
         <div style="background:var(--bg-elev-2);border-radius:6px;padding:12px">
-          <div style="font-size:10px;color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">🎯 How trades closed</div>
+          <div style="font-size:10px;color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px">${t('pnl_how_closed')}</div>
           <div style="display:grid;grid-template-columns:repeat(5, 1fr);gap:8px;text-align:center">
             <div><div style="font-family:var(--mono);font-size:16px;font-weight:800;color:var(--green)">${breakdown.tp2_hits || 0}</div><div style="font-size:9px;color:var(--text-dim)">🎯🎯 TP2</div></div>
             <div><div style="font-family:var(--mono);font-size:16px;font-weight:800;color:var(--green)">${breakdown.tp1_hits || 0}</div><div style="font-size:9px;color:var(--text-dim)">🎯 TP1</div></div>
@@ -3371,9 +3571,9 @@ function renderPnLHistory() {
             <div><div style="font-family:var(--mono);font-size:16px;font-weight:800;color:var(--text-muted)">${breakdown.manual_closes || 0}</div><div style="font-size:9px;color:var(--text-dim)">✋ Manual</div></div>
           </div>
           <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:11px">
-            <div><span style="color:var(--text-muted)">Avg Win:</span> <span style="color:var(--green);font-weight:700;font-family:var(--mono)">${fmtUsd(stats.avg_win_usd)}</span></div>
-            <div><span style="color:var(--text-muted)">Avg Loss:</span> <span style="color:var(--red);font-weight:700;font-family:var(--mono)">${fmtUsd(stats.avg_loss_usd)}</span></div>
-            <div><span style="color:var(--text-muted)">Best/Worst:</span> <span style="color:var(--green);font-weight:700;font-family:var(--mono)">${fmtUsd(stats.best_trade_usd)}</span> / <span style="color:var(--red);font-weight:700;font-family:var(--mono)">${fmtUsd(stats.worst_trade_usd)}</span></div>
+            <div><span style="color:var(--text-muted)">${t('pnl_avg_win')}:</span> <span style="color:var(--green);font-weight:700;font-family:var(--mono)">${fmtUsd(stats.avg_win_usd)}</span></div>
+            <div><span style="color:var(--text-muted)">${t('pnl_avg_loss')}:</span> <span style="color:var(--red);font-weight:700;font-family:var(--mono)">${fmtUsd(stats.avg_loss_usd)}</span></div>
+            <div><span style="color:var(--text-muted)">${t('pnl_best_worst')}:</span> <span style="color:var(--green);font-weight:700;font-family:var(--mono)">${fmtUsd(stats.best_trade_usd)}</span> / <span style="color:var(--red);font-weight:700;font-family:var(--mono)">${fmtUsd(stats.worst_trade_usd)}</span></div>
           </div>
         </div>
       ` : ''}
@@ -3388,7 +3588,7 @@ function renderPnLHistory() {
       // Destroy existing chart if any
       if (window._equityChart) { try { window._equityChart.destroy(); } catch (e) {} }
       const ctx = canvas.getContext('2d');
-      const labels = history.map(h => new Date(h.ts).toLocaleDateString('pl-PL', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}));
+      const labels = history.map(h => new Date(h.ts).toLocaleDateString(_lang === 'en' ? 'en-US' : 'pl-PL', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}));
       const equity = history.map(h => h.equity);
       const baseline = history.map(() => paperCapital);
       window._equityChart = new Chart(ctx, {
@@ -4558,7 +4758,7 @@ async function refreshBrowserNews() {
     const metaEls = document.querySelectorAll('.panel-head .meta');
     for (const el of metaEls) {
       if (el.textContent.includes('RSS feeds') || el.textContent.includes('items')) {
-        el.textContent = `${allItems.length} items · fresh ${new Date().toLocaleTimeString('pl-PL', {hour:'2-digit', minute:'2-digit'})}`;
+        el.textContent = `${allItems.length} items · fresh ${new Date().toLocaleTimeString(_lang === 'en' ? 'en-US' : 'pl-PL', {hour:'2-digit', minute:'2-digit'})}`;
         break;
       }
     }
@@ -4956,12 +5156,12 @@ function renderTokenDetailShell(ticker) {
 
     <div class="td-chart-wrap" id="chart-wrap-${ticker}">
       <div class="ohlc-readout" id="ohlc-readout-${ticker}"></div>
-      <div class="zoom-hint">wheel · zoom Y &nbsp;·&nbsp; shift+wheel · zoom X &nbsp;·&nbsp; drag · pan X+Y &nbsp;·&nbsp; drag on Y-axis (prawa krawędź) · scale Y like TradingView &nbsp;·&nbsp; EMA21 blue / EMA50 purple</div>
+      <div class="zoom-hint">${t('zoom_hint')}</div>
       <button class="zoom-reset-btn" onclick="resetZoom('${ticker}')">Reset ⟲</button>
       <canvas id="td-chart-${ticker}"></canvas>
     </div>
     <div class="td-volume-wrap" id="vol-wrap-${ticker}">
-      <div class="vol-label">Spot volume · Aggressive Buy vs Sell (from Binance taker data)</div>
+      <div class="vol-label">${t('vol_label')}</div>
       <div class="vol-stats" id="vol-stats-${ticker}"></div>
       <canvas id="td-vol-${ticker}"></canvas>
     </div>
@@ -5083,13 +5283,13 @@ function renderInfoCards(ticker, dec, openPos) {
 function renderLegend() {
   return `
     <div class="td-legend">
-      <div class="legend-item"><div class="legend-swatch" style="background:var(--amber)"></div><div class="body"><div class="l-title">S/R Zones</div><div class="l-desc">Klaster minimum 2 pivotów w tolerancji 1.5%. Zielone = support, czerwone = resistance.</div></div></div>
-      <div class="legend-item"><div class="legend-swatch" style="background:var(--cyan)"></div><div class="body"><div class="l-title">Order Blocks</div><div class="l-desc">Ostatnia świeca z odwrotnej strony przed silnym impulsem — zwykle instytucjonalne zlecenia w tym rangu.</div></div></div>
-      <div class="legend-item"><div class="legend-swatch" style="background:linear-gradient(90deg,var(--green),var(--red))"></div><div class="body"><div class="l-title">SFP</div><div class="l-desc"><strong style="color:var(--green)">SFP↑ Bull</strong> = knot przebił dołek 8 świec + close wrócił do środka (fake breakdown → reversal up). <strong style="color:var(--red)">SFP↓ Bear</strong> = knot przebił szczyt + close spadł (fake breakout → reversal down).</div></div></div>
-      <div class="legend-item"><div class="legend-swatch" style="background:var(--purple)"></div><div class="body"><div class="l-title">Liquidity Zones</div><div class="l-desc">Poziomy z ≥3 dotknięciami w tolerancji 1% — magnesy na stop loss'y, prawdopodobne targety.</div></div></div>
-      <div class="legend-item"><div class="legend-swatch" style="background:linear-gradient(90deg,var(--red),var(--green))"></div><div class="body"><div class="l-title">Buy/Sell Pressure</div><div class="l-desc">Badge w prawym górnym rogu chartu. Pokazuje % gdzie ostatnie 20 świec zamknęło się w range low-high (recency-weighted). <strong>>55% = bulls dominate</strong>, <strong>&lt;45% = bears dominate</strong>. Aktualizuje się przy każdym re-fetch OHLC.</div></div></div>
-      <div class="legend-item"><div class="legend-swatch" style="background:#FB923C"></div><div class="body"><div class="l-title">Breakout</div><div class="l-desc">Pomarańczowy trójkąt na świecy która close powyżej (bull ↑) lub poniżej (bear ↓) 12-świec extremum, min 0.8% od poziomu. Kreskowana linia oznacza broken level (potencjalny retest zone).</div></div></div>
-      <div class="legend-item"><div class="legend-swatch" style="background:var(--gold)"></div><div class="body"><div class="l-title">Entry/SL/TP</div><div class="l-desc">Poziomy z fusion decision — złota = entry mid, czerwona = stop, zielone = take profit.</div></div></div>
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--amber)"></div><div class="body"><div class="l-title">S/R Zones</div><div class="l-desc">${t('leg_sr')}</div></div></div>
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--cyan)"></div><div class="body"><div class="l-title">Order Blocks</div><div class="l-desc">${t('leg_ob')}</div></div></div>
+      <div class="legend-item"><div class="legend-swatch" style="background:linear-gradient(90deg,var(--green),var(--red))"></div><div class="body"><div class="l-title">SFP</div><div class="l-desc">${t('leg_sfp')}</div></div></div>
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--purple)"></div><div class="body"><div class="l-title">Liquidity Zones</div><div class="l-desc">${t('leg_liq')}</div></div></div>
+      <div class="legend-item"><div class="legend-swatch" style="background:linear-gradient(90deg,var(--red),var(--green))"></div><div class="body"><div class="l-title">Buy/Sell Pressure</div><div class="l-desc">${t('leg_pressure')}</div></div></div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#FB923C"></div><div class="body"><div class="l-title">Breakout</div><div class="l-desc">${t('leg_breakout')}</div></div></div>
+      <div class="legend-item"><div class="legend-swatch" style="background:var(--gold)"></div><div class="body"><div class="l-title">Entry/SL/TP</div><div class="l-desc">${t('leg_entry')}</div></div></div>
     </div>
   `;
 }
@@ -5139,8 +5339,8 @@ function renderTokenChart(ticker, ohlc) {
   const labels = ohlc.map(c => {
     const d = new Date(c[0]);
     return currentDays <= 1
-      ? d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })
-      : d.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' });
+      ? d.toLocaleTimeString(_lang === 'en' ? 'en-US' : 'pl-PL', { hour: '2-digit', minute: '2-digit' })
+      : d.toLocaleDateString(_lang === 'en' ? 'en-US' : 'pl-PL', { day: '2-digit', month: '2-digit' });
   });
   const closes = ohlc.map(c => c[4]);
   // Candlestick data: floating-bar dataset for wicks
@@ -6281,14 +6481,15 @@ function renderCalendar(events) {
     else unbucketed.push(p);
   });
 
-  const weekLabel = _calendarWeekOffset === 0 ? 'This Week'
-                  : _calendarWeekOffset === 1 ? 'Next Week'
-                  : _calendarWeekOffset === -1 ? 'Last Week'
+  const weekLabel = _calendarWeekOffset === 0 ? t('cal_this_week')
+                  : _calendarWeekOffset === 1 ? t('cal_next_week')
+                  : _calendarWeekOffset === -1 ? t('cal_last_week')
                   : _calendarWeekOffset > 0 ? `+${_calendarWeekOffset}w` : `${_calendarWeekOffset}w`;
 
-  const weekRange = `${monday.toLocaleDateString('pl-PL', {day:'2-digit', month:'short'})} – ${(function() {
+  const _loc = _lang === 'en' ? 'en-US' : 'pl-PL';
+  const weekRange = `${monday.toLocaleDateString(_loc, {day:'2-digit', month:'short'})} – ${(function() {
     const end = new Date(monday); end.setDate(end.getDate() + 6);
-    return end.toLocaleDateString('pl-PL', {day:'2-digit', month:'short'});
+    return end.toLocaleDateString(_loc, {day:'2-digit', month:'short'});
   })()}`;
 
   // Filter past events (unless _calendarShowPast)
@@ -6297,20 +6498,20 @@ function renderCalendar(events) {
 
   const nav = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding:6px 8px;background:var(--bg-elev-2);border-radius:5px">
-      <button onclick="shiftCalendarWeek(-1)" style="background:transparent;color:var(--gold);border:1px solid var(--border);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;font-weight:700">← Prev</button>
+      <button onclick="shiftCalendarWeek(-1)" style="background:transparent;color:var(--gold);border:1px solid var(--border);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;font-weight:700">${t('cal_prev')}</button>
       <div style="text-align:center">
         <div style="font-size:11px;font-weight:800;color:var(--gold);letter-spacing:0.04em">${weekLabel.toUpperCase()}</div>
         <div style="font-size:10px;color:var(--text-muted);font-family:var(--mono)">${weekRange}</div>
       </div>
       <div style="display:flex;gap:4px">
-        ${_calendarWeekOffset !== 0 ? `<button onclick="shiftCalendarWeek(-${_calendarWeekOffset})" style="background:var(--gold-soft);color:var(--gold);border:1px solid var(--gold);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;font-weight:700">Today</button>` : ''}
-        <button onclick="shiftCalendarWeek(1)" style="background:transparent;color:var(--gold);border:1px solid var(--border);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;font-weight:700">Next →</button>
+        ${_calendarWeekOffset !== 0 ? `<button onclick="shiftCalendarWeek(-${_calendarWeekOffset})" style="background:var(--gold-soft);color:var(--gold);border:1px solid var(--gold);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;font-weight:700">${t('cal_today')}</button>` : ''}
+        <button onclick="shiftCalendarWeek(1)" style="background:transparent;color:var(--gold);border:1px solid var(--border);padding:4px 10px;border-radius:4px;font-size:11px;cursor:pointer;font-weight:700">${t('cal_next')}</button>
       </div>
     </div>
     ${pastCount > 0 && _calendarWeekOffset === 0 ? `
       <div style="display:flex;justify-content:flex-end;margin-bottom:6px">
         <button onclick="toggleCalendarShowPast()" style="background:transparent;color:var(--text-dim);border:1px solid var(--border);padding:3px 8px;border-radius:3px;font-size:10px;cursor:pointer">
-          ${_calendarShowPast ? '👁 Hide' : '👁 Show'} ${pastCount} past event${pastCount !== 1 ? 's' : ''}
+          ${_calendarShowPast ? t('cal_hide_past') : t('cal_show_past')} ${pastCount} ${pastCount !== 1 ? t('cal_past_events_pl') : t('cal_past_events')}
         </button>
       </div>
     ` : ''}`;
@@ -6323,7 +6524,7 @@ function renderCalendar(events) {
     const cellEvents = buckets[i].filter(ev => _calendarShowPast || !isPast);
     const cellStyle = isPast && !_calendarShowPast ? 'opacity:0.4;' : '';
     return `<div class="cal-cell ${isToday ? 'today' : ''}" style="${cellStyle}${isToday ? 'border:2px solid var(--gold);box-shadow:0 0 0 3px rgba(212,164,78,0.2);' : ''}">
-      <div class="dow" style="${isToday ? 'color:var(--gold);' : ''}">${dow}${isToday ? ' · TODAY' : ''}</div>
+      <div class="dow" style="${isToday ? 'color:var(--gold);' : ''}">${dow}${isToday ? t('cal_today_tag') : ''}</div>
       <div class="date" style="${isToday ? 'color:var(--gold);font-weight:900;' : ''}">${d.getDate()}</div>
       <div class="events">${cellEvents.length === 0 ? '<div class="ev" style="opacity:0.4">—</div>' : cellEvents.map(ev => {
         const crit = ev.critical ? 'crit' : ev.catalyst ? 'cat' : '';
@@ -6516,10 +6717,15 @@ function fmtUsdSigned(v) {
   return `${n > 0 ? '+' : n < 0 ? '-' : ''}$${Math.abs(n).toFixed(2)}`;
 }
 
-function tickClock() { document.getElementById('clock').textContent = new Date().toLocaleTimeString('pl-PL', { hour12: false }); }
+function tickClock() { document.getElementById('clock').textContent = new Date().toLocaleTimeString(_lang === 'en' ? 'en-US' : 'pl-PL', { hour12: false }); }
 setInterval(tickClock, 1000); tickClock();
 
 document.getElementById('refresh-btn').addEventListener('click', () => { fetchFusion(); fetchPrices(); });
+
+// Init lang toggle active state + static text from saved preference
+document.querySelectorAll('.lang-toggle').forEach(b => b.classList.toggle('active', b.dataset.lang === _lang));
+document.documentElement.lang = _lang;
+{ const ft = document.getElementById('footer-text'); if (ft) ft.textContent = t('footer_auto'); }
 
 (async () => {
   await fetchFusion();
