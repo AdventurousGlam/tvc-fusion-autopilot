@@ -305,6 +305,14 @@ def cmd_telegram_test(args):
     print(f"[telegram-test] token: {'OK (' + str(len(tok)) + ' znaków)' if tok else 'BRAK'} · chat_id: {cid or 'BRAK'}")
     ok = _telegram_send("🧪 <b>TVC Alerts — test z bota</b>\nJeśli to widzisz, powiadomienia działają.")
     print(f"[telegram-test] {'WYSŁANO ✓' if ok else 'BŁĄD: ' + str(_TELEGRAM_LAST_ERROR)}")
+    try:
+        db_init()
+        conn = db()
+        _meta_set(conn, "telegram_test_result",
+                  f"{datetime.now(timezone.utc).strftime('%H:%M')}Z {'OK' if ok else 'FAIL ' + str(_TELEGRAM_LAST_ERROR)}")
+        conn.close()
+    except Exception as e:
+        print(f"[telegram-test] meta write failed: {e}")
 
 
 def _fmt_px(v) -> str:
@@ -351,6 +359,17 @@ DAILY_DIGEST_HOUR_UTC = 6   # 08:00 CEST / 07:00 CET
 
 def _maybe_daily_digest(conn):
     """Raz dziennie (po 06:00 UTC) wysyła podsumowanie ostatnich 24h na Telegram."""
+    try:
+        _maybe_daily_digest_inner(conn)
+    except Exception as e:
+        print(f"[digest] failed: {type(e).__name__}: {e}")
+        try:
+            _meta_set(conn, "digest_last_error", f"{type(e).__name__}: {e}")
+        except Exception:
+            pass
+
+
+def _maybe_daily_digest_inner(conn):
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
     if now.hour < DAILY_DIGEST_HOUR_UTC or _meta_get(conn, "last_digest_date") == today:
@@ -377,8 +396,15 @@ def _maybe_daily_digest(conn):
                      f"· WR {wr_all:.0f}% ({stats['total_closed']} trade'ów)"
                      f"{' · PF ' + format(pf, '.2f') if pf else ''}"
                      f" · maxDD {stats.get('max_drawdown_pct', 0) or 0:.1f}%")
-    if _telegram_send("\n".join(lines)):
-        _meta_set(conn, "last_digest_date", today)
+    try:
+        if _telegram_send("\n".join(lines)):
+            _meta_set(conn, "last_digest_date", today)
+            _meta_set(conn, "digest_last_error", "")
+        else:
+            _meta_set(conn, "digest_last_error", f"send failed: {_TELEGRAM_LAST_ERROR}")
+    except Exception as e:
+        _meta_set(conn, "digest_last_error", f"{type(e).__name__}: {e}")
+        raise
 
 
 def cmd_open(args):
@@ -1519,6 +1545,7 @@ def cmd_upload(args):
     performance = _compute_performance_breakdown(conn)
     last_open_row = conn.execute("SELECT MAX(opened_at) FROM positions").fetchone()[0]
     last_close_row = conn.execute("SELECT MAX(closed_at) FROM positions").fetchone()[0]
+    tg_meta = {k: _meta_get(conn, k) for k in ("telegram_test_result", "last_digest_date", "digest_last_error")}
     conn.close()
 
     # v0.3 — health block: terminal pokazuje "Autopilot: X min temu" i ostrzega gdy
@@ -1531,6 +1558,9 @@ def cmd_upload(args):
         "telegram_chat_id_tail": (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()[-4:] or None,
         "telegram_last_error": _TELEGRAM_LAST_ERROR,
         "telegram_last_ok": _TELEGRAM_LAST_OK,
+        "telegram_test_result": tg_meta.get("telegram_test_result"),
+        "digest_last_date": tg_meta.get("last_digest_date"),
+        "digest_last_error": tg_meta.get("digest_last_error"),
         "last_position_opened": last_open_row,
         "last_position_closed": last_close_row,
         "open_count": len(open_positions),

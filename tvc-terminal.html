@@ -1028,7 +1028,10 @@ function updateStatusBadge() {
     + (h.gates ? ` · gates: LONG≥${h.gates.min_long_score} (RANGING≥${h.gates.min_long_score_ranging}), SHORT≤${h.gates.max_short_score}, hold ${h.gates.min_hold_min}min, cooldown ${h.gates.reopen_cooldown_min}min, max ${h.gates.max_trades_per_day}/dzień` : '')
     + (!h.telegram_enabled ? ' · Telegram: brak (dodaj sekrety)'
        : h.telegram_last_error ? ` · Telegram: BŁĄD → ${h.telegram_last_error} (chat …${h.telegram_chat_id_tail || '?'})`
-       : ` · Telegram: OK${h.telegram_last_ok ? ' (ost. wysyłka ' + new Date(h.telegram_last_ok).toLocaleTimeString('pl-PL', {hour:'2-digit',minute:'2-digit'}) + ')' : ''}`);
+       : ` · Telegram: OK${h.telegram_last_ok ? ' (ost. wysyłka ' + new Date(h.telegram_last_ok).toLocaleTimeString('pl-PL', {hour:'2-digit',minute:'2-digit'}) + ')' : ''}`)
+    + (h.telegram_test_result ? ` · test: ${h.telegram_test_result}` : '')
+    + (h.digest_last_date ? ` · raport dzienny: ${h.digest_last_date}` : ' · raport dzienny: jeszcze nie wysłany')
+    + (h.digest_last_error ? ` · błąd raportu: ${h.digest_last_error}` : '');
   renderHealthBanner(level, min);
 }
 function renderHealthBanner(level, min) {
