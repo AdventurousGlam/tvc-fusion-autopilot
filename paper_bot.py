@@ -298,49 +298,62 @@ def _telegram_send(text: str) -> bool:
     return False
 
 
+def _telegram_api(method: str, params: dict | None = None):
+    """Wywołanie Bot API bez wysyłania wiadomości (getMe / getChat). Zwraca (ok, info)."""
+    token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+    if not token:
+        return False, "brak TELEGRAM_BOT_TOKEN"
+    import urllib.request as ur
+    import urllib.parse as up
+    import urllib.error as ue
+    import ssl
+    try:
+        import certifi
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        ssl_ctx = ssl.create_default_context()
+    try:
+        url = f"https://api.telegram.org/bot{token}/{method}"
+        if params:
+            url += "?" + up.urlencode(params)
+        with ur.urlopen(url, timeout=10, context=ssl_ctx) as resp:
+            data = json.loads(resp.read())
+            return bool(data.get("ok")), data.get("result")
+    except ue.HTTPError as e:
+        return False, f"HTTP {e.code}: {e.read().decode(errors='replace')[:200]}"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
 def cmd_telegram_test(args):
-    """Wyślij wiadomość testową i pokaż dokładny błąd, jeśli się nie uda."""
+    """Weryfikacja Telegrama. Domyślnie CICHA (getMe + getChat — nic nie wysyła);
+    z flagą --send wysyła wiadomość testową. Wynik trafia do meta → health → terminal."""
+    global _TELEGRAM_LAST_ERROR
     tok = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
     cid = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
     print(f"[telegram-test] token: {'OK (' + str(len(tok)) + ' znaków)' if tok else 'BRAK'} · chat_id: {cid or 'BRAK'}")
-    ok = _telegram_send("🧪 <b>TVC Alerts — test z bota</b>\nJeśli to widzisz, powiadomienia działają.")
-    print(f"[telegram-test] {'WYSŁANO ✓' if ok else 'BŁĄD: ' + str(_TELEGRAM_LAST_ERROR)}")
+    if getattr(args, "send", False):
+        ok = _telegram_send("🧪 <b>TVC Alerts — test z bota</b>\nJeśli to widzisz, powiadomienia działają.")
+        result = "OK (wysłano)" if ok else f"FAIL {_TELEGRAM_LAST_ERROR}"
+    else:
+        ok_me, me = _telegram_api("getMe")
+        if not ok_me:
+            ok, result = False, f"FAIL token: {me}"
+        else:
+            ok_chat, chat = _telegram_api("getChat", {"chat_id": cid})
+            if not ok_chat:
+                ok, result = False, f"FAIL chat: {chat}"
+            else:
+                who = (chat or {}).get("username") or (chat or {}).get("first_name") or cid
+                ok, result = True, f"OK (@{(me or {}).get('username')} → {who})"
+    print(f"[telegram-test] {result}")
     try:
         db_init()
         conn = db()
-        _meta_set(conn, "telegram_test_result",
-                  f"{datetime.now(timezone.utc).strftime('%H:%M')}Z {'OK' if ok else 'FAIL ' + str(_TELEGRAM_LAST_ERROR)}")
+        _meta_set(conn, "telegram_test_result", f"{datetime.now(timezone.utc).strftime('%H:%M')}Z {result}")
         conn.close()
     except Exception as e:
         print(f"[telegram-test] meta write failed: {e}")
-
-
-def _fmt_px(v) -> str:
-    try:
-        v = float(v)
-    except (TypeError, ValueError):
-        return "—"
-    return f"{v:,.0f}" if v >= 100 else f"{v:.2f}" if v >= 1 else f"{v:.4f}"
-
-
-def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime, override=False):
-    arrow = "🟢 LONG" if direction == "long" else "🔴 SHORT"
-    _telegram_send(
-        f"<b>{arrow} {ticker}</b> otwarty @ {_fmt_px(entry)}\n"
-        f"Size ${size_usd:.0f} · score {score} · {regime}{' · ⚡CHoCH' if override else ''}\n"
-        f"SL {_fmt_px(sl)} · TP1 {_fmt_px(tp1)} · TP2 {_fmt_px(tp2)}"
-    )
-
-
-def _notify_close(ticker, direction, entry, exit_price, pnl_pct, pnl_usd, reason):
-    icon = {"hit_tp1": "🎯 TP1", "hit_tp2": "🎯🎯 TP2", "hit_sl": "🛑 SL",
-            "hit_trailing_sl": "📈🛑 Trailing SL", "flip_choch": "🔁 Flip",
-            "manual_close": "✋ Manual"}.get(reason, reason)
-    res = "✅" if pnl_usd > 0 else "❌" if pnl_usd < 0 else "➖"
-    _telegram_send(
-        f"{res} <b>{ticker} {direction.upper()}</b> zamknięty — {icon}\n"
-        f"{_fmt_px(entry)} → {_fmt_px(exit_price)} · <b>{pnl_pct:+.2f}%</b> (${pnl_usd:+.2f})"
-    )
 
 
 def _meta_get(conn, key, default=None):
@@ -1797,7 +1810,8 @@ def main():
     sub.add_parser("week", help="dump last 7d as JSON")
     sub.add_parser("upload", help="push today's fusion JSON to GitHub Gist (for terminal widget)")
     sub.add_parser("refresh", help="check + upload (szybki manual refresh)")
-    sub.add_parser("telegram-test", help="wyślij testową wiadomość na Telegram i pokaż błąd")
+    tt = sub.add_parser("telegram-test", help="cicha weryfikacja Telegrama (getMe+getChat); --send wysyła wiadomość testową")
+    tt.add_argument("--send", action="store_true", help="wyślij wiadomość testową zamiast cichej weryfikacji")
     close_p = sub.add_parser("close", help="manual close specific ticker (auto-uploads after)")
     close_p.add_argument("ticker", help="Ticker to close (BTC/ETH/SOL/XRP/SUI)")
     loop_p = sub.add_parser("loop", help="background daemon — auto-refresh co N min")
