@@ -128,6 +128,7 @@
     border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px;
   }
   @media (max-width: 600px) { .hero { grid-template-columns: 1fr; gap: 8px; } }
+  @media (max-width: 700px) { .of-grid { grid-template-columns: 1fr !important; } }
   .brand-block { display: flex; align-items: center; gap: 10px; }
   .brand-mark {
     width: 30px; height: 30px;
@@ -1041,6 +1042,37 @@ const I18N = {
   cal_hide_past:      { pl: '👁 Ukryj',                                 en: '👁 Hide' },
   cal_past_events:    { pl: 'minione',                                  en: 'past event' },
   cal_past_events_pl: { pl: 'minionych',                                en: 'past events' },
+  // ─── ORDERFLOW PAPER BOOK ───
+  of_title:           { pl: '📓 Księga Orderflow vs 🧠 TA',              en: '📓 Orderflow Book vs 🧠 TA' },
+  of_desc:            { pl: 'Druga księga papierowa otwierana <strong>automatycznie</strong> z Decision Journal: STRONG confluence (🔥 heatmapa, nie range) → long/short. Wyjścia identyczne jak paper_bot (SL pod strefą, TP 1.5R/3R, breakeven +1.5%, trailing od +3%), sizing long 3% / short 0.5%. Działa tylko gdy terminal jest otwarty.', en: 'Second paper book opened <strong>automatically</strong> from Decision Journal: STRONG confluence (🔥 heatmap, not range) → long/short. Exits identical to paper_bot (SL below zone, TP 1.5R/3R, breakeven +1.5%, trailing from +3%), sizing long 3% / short 0.5%. Runs only while the terminal is open.' },
+  of_auto_on:         { pl: 'auto-trading aktywny',                     en: 'auto-trading on' },
+  of_auto_off:        { pl: 'auto-trading wstrzymany',                  en: 'auto-trading paused' },
+  of_pause:           { pl: '⏸ Wstrzymaj',                              en: '⏸ Pause' },
+  of_resume:          { pl: '▶ Wznów',                                  en: '▶ Resume' },
+  of_reset:           { pl: '🗑 Reset księgi',                           en: '🗑 Reset book' },
+  of_reset_confirm:   { pl: 'Wyczyścić CAŁĄ księgę orderflow (otwarte + zamknięte)? Nieodwracalne.', en: 'Clear the ENTIRE orderflow book (open + closed)? Irreversible.' },
+  of_close:           { pl: 'zamknij',                                   en: 'close' },
+  of_close_confirm:   { pl: 'Zamknąć ręcznie',                           en: 'Manually close' },
+  of_metric:          { pl: 'Metryka',                                   en: 'Metric' },
+  of_avg_trade:       { pl: 'Śr. trade',                                 en: 'Avg trade' },
+  of_ta_note:         { pl: 'TA = ostatnie zamknięte trade\'y paper_bot z Gist (okno recent_closed). ▲ = lepsza księga.', en: 'TA = paper_bot recent closed trades from Gist (recent_closed window). ▲ = better book.' },
+  of_agreement:       { pl: 'Zgodność z TA w momencie wejścia',          en: 'Agreement with TA at entry' },
+  of_same:            { pl: 'zgodne',                                    en: 'same' },
+  of_opposite:        { pl: 'przeciwne',                                 en: 'opposite' },
+  of_no_ta:           { pl: 'TA bez zdania',                             en: 'TA neutral' },
+  of_when:            { pl: 'Wynik orderflow gdy…',                      en: 'Orderflow result when…' },
+  of_ta_agreed:       { pl: 'TA się zgadzało',                           en: 'TA agreed' },
+  of_ta_disagreed:    { pl: 'TA przeciwne / brak',                       en: 'TA opposite / none' },
+  of_agreement_hint:  { pl: 'Jeśli WR przy zgodzie TA jest wyraźnie wyższy → confluence obu systemów to filtr do wdrożenia w paper_bot.', en: 'If WR when TA agrees is clearly higher → dual-system confluence is a filter worth adding to paper_bot.' },
+  of_open_positions:  { pl: 'Otwarte pozycje orderflow',                 en: 'Open orderflow positions' },
+  of_no_open:         { pl: 'Brak otwartych pozycji — czekam na STRONG confluence (🔥) z live orderbooku.', en: 'No open positions — waiting for STRONG confluence (🔥) from the live orderbook.' },
+  of_sync_off:        { pl: 'sync Gist wyłączony (brak tokenu)',         en: 'Gist sync off (no token)' },
+  of_sync_ok:         { pl: 'Gist ✓',                                    en: 'Gist ✓' },
+  of_sync_err:        { pl: 'Gist błąd',                                 en: 'Gist error' },
+  of_sync_pending:    { pl: 'Gist oczekuje',                             en: 'Gist pending' },
+  of_token_set:       { pl: 'Token Gist',                                en: 'Gist token' },
+  of_token_change:    { pl: 'Zmień token',                               en: 'Change token' },
+  of_token_prompt:    { pl: 'GitHub token z uprawnieniem "gist" (zapisany TYLKO w tej przeglądarce, nigdy w kodzie). Pusty = usuń:', en: 'GitHub token with "gist" scope (stored ONLY in this browser, never in code). Empty = remove:' },
   // ─── FOOTER ───
   footer_auto:        { pl: 'Auto-refresh 60s ceny · 5min dane fusion · Kliknij wiersz tokena aby rozwinąć wykres + strefy', en: 'Auto-refresh 60s prices · 5min fusion data · Click any token row to expand chart + zones' },
   // ─── MISC ───
@@ -1935,6 +1967,9 @@ function render() {
       <!-- CO DZIAŁA — analityka skuteczności po score/regime/kierunku/wyjściu (v0.3) -->
       <div id="performance-slot" style="grid-column: span 12; width: 100%;"></div>
 
+      <!-- ORDERFLOW PAPER BOOK — auto-trading z sygnałów journalu vs księga TA -->
+      <div id="orderflow-slot" style="grid-column: span 12; width: 100%;"></div>
+
       <!-- DECISION JOURNAL — auto-log alerts, manual notes, CSV export
            ALWAYS visible (no hide-* classes) — potrzebne w każdym preset dla outcomes -->
       <div id="journal-slot" style="grid-column: span 12; width: 100%;"></div>
@@ -2256,6 +2291,7 @@ function detectSetupAlerts(ticker, walls, now) {
           type: 'CONFLUENCE_SELL',
           severity: 'high',
           heatmapConfirmed: heatmapMatch,
+          level: wall.price, zoneLow: zone.priceLow, zoneHigh: zone.priceHigh, touches: zone.touches, wallNotional: wall.notional,
           msg: `${heatmapMatch ? '🔥⚠️ STRONG SELL confluence' : '⚠️ SELL confluence'} @ ${fmt(wall.price)} — historical rejection (${zone.touches}× touch) + live wall $${(wall.notional/1e6).toFixed(2)}M standing ${(wall.ageMs/1000).toFixed(0)}s${heatmapMatch ? ' + trwała płynność w heatmapie (5 min)' : ''}`,
         });
       }
@@ -2275,6 +2311,7 @@ function detectSetupAlerts(ticker, walls, now) {
           type: 'CONFLUENCE_BUY',
           severity: 'high',
           heatmapConfirmed: heatmapMatch,
+          level: wall.price, zoneLow: zone.priceLow, zoneHigh: zone.priceHigh, touches: zone.touches, wallNotional: wall.notional,
           msg: `${heatmapMatch ? '🔥✅ STRONG BUY confluence' : '✅ BUY confluence'} @ ${fmt(wall.price)} — historical support (${zone.touches}× touch) + live wall $${(wall.notional/1e6).toFixed(2)}M standing ${(wall.ageMs/1000).toFixed(0)}s${heatmapMatch ? ' + trwała płynność w heatmapie (5 min)' : ''}`,
         });
       }
@@ -2345,7 +2382,11 @@ function detectSetupAlerts(ticker, walls, now) {
         pressure_at_alert: window[`__pressure_${ticker}`] || null,
         confluence: (a.type === 'CONFLUENCE_BUY' || a.type === 'CONFLUENCE_SELL'),
         range_bound: !!displayA.rangeBound,
+        heatmap_confirmed: !!a.heatmapConfirmed,
       });
+      // ORDERFLOW PAPER BOOK — automatyczne wejście z sygnału journalu
+      // (tylko STRONG confluence: heatmapa ✓ + nie range-bound)
+      try { orderflowOnSignal(ticker, a, displayA, mid, now); } catch (e) { console.warn('[orderflow] signal error', e); }
       // SOUND ALERT — TYLKO mocne sygnały kupna/sprzedaży (CONFLUENCE), i tylko gdy
       // NIE jest to już oznaczone jako range (żeby nie dzwonić na przemian buy/sell
       // co kilka minut na tym samym tickerze w konsolidacji)
@@ -2488,6 +2529,428 @@ function exportJournalCSV() {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ORDERFLOW PAPER BOOK — druga księga papierowa, karmiona sygnałami z Decision
+// Journal (live L2 orderbook), równolegle do księgi fusion/TA z paper_bot.py.
+// Cel: sprawdzić, czy wejścia z orderflow (STRONG confluence) biją wejścia z TA.
+//
+// Zasady (celowo 1:1 z paper_bot, żeby różniło się TYLKO wejście):
+//   • wejście: CONFLUENCE_BUY → long, CONFLUENCE_SELL → short
+//              wymagane: heatmapConfirmed (🔥) + NIE range-bound
+//   • sizing: long 3% / short 0.5% kapitału (LONG_SIZE_CAP / SHORT_SIZE_CAP v0.2)
+//   • SL: pod/nad strefą confluence (zoneLow×0.995 / zoneHigh×1.005), min 0.6%, max 3%
+//   • TP1 = 1.5R, TP2 = 3R (R = odległość entry→SL)
+//   • breakeven+ po +1.5%, trailing 1.5% od +3% (jak paper_bot)
+//   • max 1 pozycja per ticker; przeciwny STRONG sygnał = flip dopiero po MIN_HOLD 4h
+//   • cooldown 2h po zamknięciu tickera (jak REOPEN_COOLDOWN_MINUTES)
+//   • storage: localStorage tvc_orderflow_book + opcjonalny sync do Gist
+// ═══════════════════════════════════════════════════════════════════════════
+const OF_STORAGE_KEY = 'tvc_orderflow_book';
+const OF_CAPITAL = 10000;
+const OF_LONG_SIZE_PCT = 3.0, OF_SHORT_SIZE_PCT = 0.5;
+const OF_MIN_SL_PCT = 0.6, OF_MAX_SL_PCT = 3.0;
+const OF_TP1_R = 1.5, OF_TP2_R = 3.0;
+const OF_BREAKEVEN_TRIGGER = 1.5, OF_TRAILING_TRIGGER = 3.0, OF_TRAILING_DISTANCE = 1.5;
+const OF_MIN_HOLD_MS = 240 * 60_000, OF_COOLDOWN_MS = 120 * 60_000;
+const OF_MAX_CLOSED = 400;
+
+function ofLoad() {
+  try {
+    const b = JSON.parse(localStorage.getItem(OF_STORAGE_KEY) || 'null');
+    if (b && Array.isArray(b.open) && Array.isArray(b.closed)) return b;
+  } catch (e) {}
+  return { version: 1, capital: OF_CAPITAL, open: [], closed: [], updated_at: 0, enabled: true };
+}
+function ofSave(book, syncGist = true) {
+  book.updated_at = Date.now();
+  try { localStorage.setItem(OF_STORAGE_KEY, JSON.stringify(book)); } catch (e) { console.warn('[orderflow] save failed', e); }
+  if (syncGist) ofScheduleGistSync();
+}
+function ofCurrentPrice(ticker) {
+  const ob = liveOrderbook[ticker];
+  if (ob && ob.mid > 0 && Date.now() - (ob.ts || 0) < 30_000) return ob.mid;
+  return livePrices[ticker]?.price || 0;
+}
+function ofPnlPct(p, price) {
+  return p.direction === 'long' ? (price - p.entry_price) / p.entry_price * 100
+                                : (p.entry_price - price) / p.entry_price * 100;
+}
+
+// Wejście — wołane z detectSetupAlerts dla każdego nowego alertu
+function orderflowOnSignal(ticker, a, displayA, mid, now) {
+  if (a.type !== 'CONFLUENCE_BUY' && a.type !== 'CONFLUENCE_SELL') return;
+  if (!a.heatmapConfirmed || displayA.rangeBound) return;          // tylko STRONG, nie range
+  if (!mid || mid <= 0) return;
+  const book = ofLoad();
+  if (book.enabled === false) return;
+  const direction = a.type === 'CONFLUENCE_BUY' ? 'long' : 'short';
+
+  // cooldown po ostatnim zamknięciu tego tickera
+  const lastClosed = book.closed.filter(c => c.ticker === ticker).sort((x, y) => y.closed_at - x.closed_at)[0];
+  if (lastClosed && now - lastClosed.closed_at < OF_COOLDOWN_MS) return;
+
+  const existing = book.open.find(p => p.ticker === ticker);
+  if (existing) {
+    if (existing.direction === direction) return;                  // ta sama strona już otwarta
+    if (now - existing.opened_at < OF_MIN_HOLD_MS) return;          // anty ping-pong
+    ofClosePosition(book, existing, mid, 'flip_confluence', now);   // FLIP na przeciwny STRONG sygnał
+  }
+
+  // SL pod/nad strefą confluence, ograniczony do [0.6%, 3%]
+  let slPct;
+  if (direction === 'long') {
+    const raw = a.zoneLow ? (mid - a.zoneLow * 0.995) / mid * 100 : 1.5;
+    slPct = Math.min(OF_MAX_SL_PCT, Math.max(OF_MIN_SL_PCT, raw));
+  } else {
+    const raw = a.zoneHigh ? (a.zoneHigh * 1.005 - mid) / mid * 100 : 1.5;
+    slPct = Math.min(OF_MAX_SL_PCT, Math.max(OF_MIN_SL_PCT, raw));
+  }
+  const sign = direction === 'long' ? 1 : -1;
+  const sl  = mid * (1 - sign * slPct / 100);
+  const tp1 = mid * (1 + sign * slPct * OF_TP1_R / 100);
+  const tp2 = mid * (1 + sign * slPct * OF_TP2_R / 100);
+  const sizePct = direction === 'long' ? OF_LONG_SIZE_PCT : OF_SHORT_SIZE_PCT;
+
+  book.open.push({
+    id: `${now}_${ticker}_${direction}`,
+    ticker, direction,
+    signal: a.type,
+    level: a.level || mid,
+    touches: a.touches || null,
+    wall_notional: a.wallNotional || null,
+    pressure: window[`__pressure_${ticker}`] ?? null,
+    entry_price: mid,
+    size_pct: sizePct,
+    size_usd: OF_CAPITAL * sizePct / 100,
+    sl_price: sl, sl_initial: sl, tp1_price: tp1, tp2_price: tp2,
+    opened_at: now,
+    fusion_agree: ofFusionAgreement(ticker, direction),
+  });
+  ofSave(book);
+  console.log(`[orderflow] OPEN ${direction.toUpperCase()} ${ticker} @ ${mid} SL ${sl.toFixed(4)} TP1 ${tp1.toFixed(4)}`);
+  renderOrderflowPanel();
+}
+
+// Czy księga TA (paper_bot) ma w tym momencie tę samą stronę na tym tickerze?
+function ofFusionAgreement(ticker, direction) {
+  const st = lastFusion?.state || {};
+  const pos = (st.open_positions || []).find(p => p.ticker === ticker);
+  if (pos) return (pos.direction || 'long').toLowerCase() === direction ? 'same' : 'opposite';
+  const dec = (lastFusion?.decisions || []).find(d => d.ticker === ticker);
+  if (dec) {
+    const bull = ['STRONG_BUY', 'BUY'].includes(dec.action), bear = ['STRONG_SELL', 'SELL'].includes(dec.action);
+    if ((bull && direction === 'long') || (bear && direction === 'short')) return 'same_signal';
+    if ((bull && direction === 'short') || (bear && direction === 'long')) return 'opposite_signal';
+  }
+  return 'none';
+}
+
+function ofClosePosition(book, p, price, reason, now) {
+  const pnl_pct = ofPnlPct(p, price);
+  book.open = book.open.filter(x => x.id !== p.id);
+  book.closed.push({ ...p, exit_price: price, pnl_pct, pnl_usd: p.size_usd * pnl_pct / 100, hit_or_miss: reason, closed_at: now });
+  if (book.closed.length > OF_MAX_CLOSED) book.closed.splice(0, book.closed.length - OF_MAX_CLOSED);
+  console.log(`[orderflow] CLOSE ${p.direction.toUpperCase()} ${p.ticker} @ ${price} ${reason} PnL ${pnl_pct.toFixed(2)}%`);
+}
+
+// Pętla wyjść — co 2s sprawdza SL/TP/breakeven/trailing na aktualnej cenie
+function orderflowTick() {
+  const book = ofLoad();
+  if (!book.open.length) return;
+  const now = Date.now();
+  let changed = false;
+  for (const p of book.open.slice()) {
+    const price = ofCurrentPrice(p.ticker);
+    if (!price) continue;
+    const isLong = p.direction === 'long';
+    const profit = ofPnlPct(p, price);
+    // Trailing / breakeven (zanim sprawdzimy SL, tak jak paper_bot)
+    if (profit >= OF_BREAKEVEN_TRIGGER) {
+      const be = isLong ? p.entry_price * 1.001 : p.entry_price * 0.999;
+      if ((isLong && p.sl_price < be) || (!isLong && p.sl_price > be)) { p.sl_price = be; p.sl_stage = 'breakeven'; changed = true; }
+    }
+    if (profit >= OF_TRAILING_TRIGGER) {
+      const tr = isLong ? price * (1 - OF_TRAILING_DISTANCE / 100) : price * (1 + OF_TRAILING_DISTANCE / 100);
+      if ((isLong && tr > p.sl_price) || (!isLong && tr < p.sl_price)) { p.sl_price = tr; p.sl_stage = 'trailing'; changed = true; }
+    }
+    // SL najpierw (konserwatywnie), potem TP2, TP1
+    let reason = null, exitPx = null;
+    if (isLong) {
+      if (price <= p.sl_price) { reason = p.sl_stage === 'trailing' ? 'hit_trailing_sl' : 'hit_sl'; exitPx = p.sl_price; }
+      else if (price >= p.tp2_price) { reason = 'hit_tp2'; exitPx = p.tp2_price; }
+      else if (price >= p.tp1_price) { reason = 'hit_tp1'; exitPx = p.tp1_price; }
+    } else {
+      if (price >= p.sl_price) { reason = p.sl_stage === 'trailing' ? 'hit_trailing_sl' : 'hit_sl'; exitPx = p.sl_price; }
+      else if (price <= p.tp2_price) { reason = 'hit_tp2'; exitPx = p.tp2_price; }
+      else if (price <= p.tp1_price) { reason = 'hit_tp1'; exitPx = p.tp1_price; }
+    }
+    if (reason) { ofClosePosition(book, p, exitPx, reason, now); changed = true; }
+  }
+  if (changed) { ofSave(book); renderOrderflowPanel(); }
+}
+function ofManualClose(id) {
+  const book = ofLoad();
+  const p = book.open.find(x => x.id === id);
+  if (!p) return;
+  const price = ofCurrentPrice(p.ticker);
+  if (!price) return alert('Brak ceny — spróbuj za chwilę');
+  if (!confirm(`${t('of_close_confirm')} ${p.direction.toUpperCase()} ${p.ticker} @ ${fmt(price)}?`)) return;
+  ofClosePosition(book, p, price, 'manual_close', Date.now());
+  ofSave(book); renderOrderflowPanel();
+}
+function ofToggleEnabled() {
+  const book = ofLoad();
+  book.enabled = book.enabled === false;
+  ofSave(book, false); renderOrderflowPanel();
+}
+function ofReset() {
+  if (!confirm(t('of_reset_confirm'))) return;
+  ofSave({ version: 1, capital: OF_CAPITAL, open: [], closed: [], updated_at: 0, enabled: true });
+  renderOrderflowPanel();
+}
+function ofExportCSV() {
+  const book = ofLoad();
+  const rows = [['Opened','Closed','Ticker','Dir','Signal','Level','Entry','Exit','SL init','TP1','TP2','Size $','PnL %','PnL $','Exit reason','Fusion agree']];
+  for (const c of book.closed) rows.push([
+    new Date(c.opened_at).toISOString(), new Date(c.closed_at).toISOString(), c.ticker, c.direction, c.signal,
+    c.level, c.entry_price, c.exit_price, c.sl_initial, c.tp1_price, c.tp2_price, c.size_usd.toFixed(2),
+    c.pnl_pct.toFixed(3), c.pnl_usd.toFixed(2), c.hit_or_miss, c.fusion_agree || '']);
+  const csv = rows.map(r => r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `tvc-orderflow-book-${new Date().toISOString().substring(0, 10)}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+// ─── Statystyki księgi (wspólne dla obu ksiąg → uczciwe porównanie) ───
+function ofStats(closed) {
+  const n = closed.length;
+  const wins = closed.filter(c => c.pnl_usd > 0), losses = closed.filter(c => c.pnl_usd < 0);
+  const gross_w = wins.reduce((s, c) => s + c.pnl_usd, 0), gross_l = Math.abs(losses.reduce((s, c) => s + c.pnl_usd, 0));
+  const pnl = closed.reduce((s, c) => s + c.pnl_usd, 0);
+  const longs = closed.filter(c => c.direction === 'long'), shorts = closed.filter(c => c.direction !== 'long');
+  const wr = arr => arr.length ? arr.filter(c => c.pnl_usd > 0).length / arr.length * 100 : null;
+  return {
+    n, wr: wr(closed), pnl, pf: gross_l > 0 ? gross_w / gross_l : (gross_w > 0 ? Infinity : null),
+    avg: n ? pnl / n : null,
+    avg_pct: n ? closed.reduce((s, c) => s + c.pnl_pct, 0) / n : null,
+    long_n: longs.length, long_wr: wr(longs), short_n: shorts.length, short_wr: wr(shorts),
+  };
+}
+// Księga TA = recent_closed z Gist (paper_bot) — normalizujemy do tych samych pól
+function ofFusionClosed() {
+  const st = lastFusion?.state || {};
+  return (st.recent_closed || []).map(c => ({
+    ticker: c.ticker, direction: (c.direction || 'long').toLowerCase(),
+    pnl_pct: parseFloat(c.pnl_pct || 0), pnl_usd: parseFloat(c.pnl_usd || 0),
+    hit_or_miss: c.hit_or_miss, closed_at: c.closed_at ? Date.parse(c.closed_at) : 0,
+  }));
+}
+
+// ─── Gist sync (token wpisany raz w terminalu → localStorage, NIGDY w kodzie) ───
+const OF_GIST_ID = 'e88c461a964ed22d2cf14326c65b4438';
+const OF_GIST_FILE = 'orderflow_book.json';
+let _ofSyncTimer = null, _ofLastSync = 0, _ofSyncStatus = '';
+function ofGistToken() { try { return localStorage.getItem('tvc_gist_token') || ''; } catch (e) { return ''; } }
+function ofSetGistToken() {
+  const tok = prompt(t('of_token_prompt'), ofGistToken() ? '••••••••' : '');
+  if (tok === null) return;
+  if (tok === '') { try { localStorage.removeItem('tvc_gist_token'); } catch (e) {} }
+  else if (!tok.startsWith('•')) { try { localStorage.setItem('tvc_gist_token', tok.trim()); } catch (e) {} ofScheduleGistSync(0); }
+  renderOrderflowPanel();
+}
+function ofScheduleGistSync(delay = 4000) {
+  if (!ofGistToken()) return;
+  clearTimeout(_ofSyncTimer);
+  _ofSyncTimer = setTimeout(ofPushGist, delay);
+}
+async function ofPushGist() {
+  const tok = ofGistToken();
+  if (!tok) return;
+  const book = ofLoad();
+  try {
+    const r = await fetch(`https://api.github.com/gists/${OF_GIST_ID}`, {
+      method: 'PATCH',
+      headers: { 'Authorization': `Bearer ${tok}`, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: { [OF_GIST_FILE]: { content: JSON.stringify(book, null, 1) } } }),
+    });
+    _ofSyncStatus = r.ok ? 'ok' : `HTTP ${r.status}`;
+    if (r.ok) _ofLastSync = Date.now();
+  } catch (e) { _ofSyncStatus = 'error'; }
+  renderOrderflowPanel();
+}
+// Przy starcie: jeśli Gist ma nowszą wersję księgi (inne urządzenie) — weź ją
+async function ofPullGist() {
+  try {
+    const r = await fetch(`https://gist.githubusercontent.com/AdventurousGlam/${OF_GIST_ID}/raw/${OF_GIST_FILE}?t=${Date.now()}`, { cache: 'no-store' });
+    if (!r.ok) return;
+    const remote = await r.json();
+    const local = ofLoad();
+    if (remote && Array.isArray(remote.open) && (remote.updated_at || 0) > (local.updated_at || 0)) {
+      ofSave(remote, false);
+      console.log('[orderflow] pulled newer book from Gist');
+      renderOrderflowPanel();
+    }
+  } catch (e) {}
+}
+
+// ─── PANEL: Orderflow vs TA ───
+function renderOrderflowPanel() {
+  const slot = document.getElementById('orderflow-slot');
+  if (!slot) return;
+  const book = ofLoad();
+  const now = Date.now();
+  const ofS = ofStats(book.closed);
+  const taClosed = ofFusionClosed();
+  const taS = ofStats(taClosed);
+  const taOpen = lastFusion?.state?.open_positions || [];
+  const enabled = book.enabled !== false;
+  const hasTok = !!ofGistToken();
+
+  const fmtPct = v => v == null ? '—' : `${v.toFixed(0)}%`;
+  const fmtPf = v => v == null ? '—' : v === Infinity ? '∞' : v.toFixed(2);
+  const col = v => v == null ? 'var(--text-dim)' : v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--text-muted)';
+  const wrCol = v => v == null ? 'var(--text-dim)' : v >= 50 ? 'var(--green)' : 'var(--amber)';
+  const better = (a, b, higher = true) => (a == null || b == null) ? '' : (higher ? a > b : a < b) ? '▲' : a === b ? '' : '▼';
+
+  const row = (label, a, b, fmtF, colF, higher = true) => `
+    <tr style="border-bottom:1px solid var(--border-soft)">
+      <td style="padding:5px 6px;color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:0.05em">${label}</td>
+      <td style="padding:5px 6px;text-align:right;font-family:var(--mono);font-weight:800;color:${colF(a)}">${fmtF(a)} <span style="font-size:9px;color:var(--gold)">${better(a, b, higher)}</span></td>
+      <td style="padding:5px 6px;text-align:right;font-family:var(--mono);font-weight:800;color:${colF(b)}">${fmtF(b)} <span style="font-size:9px;color:var(--gold)">${better(b, a, higher)}</span></td>
+    </tr>`;
+
+  const agreeCounts = { same: 0, same_signal: 0, opposite: 0, opposite_signal: 0, none: 0 };
+  for (const c of [...book.closed, ...book.open]) agreeCounts[c.fusion_agree || 'none'] = (agreeCounts[c.fusion_agree || 'none'] || 0) + 1;
+  const agreeTotal = book.closed.length + book.open.length;
+  const agreeSame = agreeCounts.same + agreeCounts.same_signal, agreeOpp = agreeCounts.opposite + agreeCounts.opposite_signal;
+  // Wynik orderflow gdy TA się zgadzało vs nie
+  const closedAgree = book.closed.filter(c => c.fusion_agree === 'same' || c.fusion_agree === 'same_signal');
+  const closedDisagree = book.closed.filter(c => !(c.fusion_agree === 'same' || c.fusion_agree === 'same_signal'));
+  const sA = ofStats(closedAgree), sD = ofStats(closedDisagree);
+
+  const reasonIcon = r => ({ hit_tp2: '🎯🎯', hit_tp1: '🎯', hit_sl: '🛑', hit_trailing_sl: '📈🛑', manual_close: '✋', flip_confluence: '🔁' })[r] || '—';
+  const ago = ms => ms < 3600000 ? `${Math.floor(ms / 60000)}min` : ms < 86400000 ? `${Math.floor(ms / 3600000)}h` : `${Math.floor(ms / 86400000)}d`;
+
+  const openRows = book.open.map(p => {
+    const px = ofCurrentPrice(p.ticker);
+    const pnl = px ? ofPnlPct(p, px) : null;
+    const taPos = taOpen.find(x => x.ticker === p.ticker);
+    const taTag = taPos ? ((taPos.direction || 'long').toLowerCase() === p.direction
+      ? `<span style="color:var(--green)">TA ✓ ${t('of_same')}</span>` : `<span style="color:var(--red)">TA ✗ ${t('of_opposite')}</span>`)
+      : `<span style="color:var(--text-dim)">TA —</span>`;
+    return `<div style="padding:7px 10px;background:var(--bg-elev-2);border-radius:5px;border-left:3px solid ${p.direction === 'long' ? 'var(--green)' : 'var(--red)'};margin-bottom:5px;font-size:11px;line-height:1.5">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;flex-wrap:wrap">
+        <span style="font-weight:700"><span style="color:${p.direction === 'long' ? 'var(--green)' : 'var(--red)'}">${p.direction === 'long' ? '▲ LONG' : '▼ SHORT'}</span> <span style="color:var(--blue);font-family:var(--mono)">${p.ticker}</span> · <span style="font-family:var(--mono);color:var(--text-muted)">@ ${fmt(p.entry_price)}</span> · ${taTag}</span>
+        <span style="font-family:var(--mono);font-weight:800;color:${col(pnl)}">${pnl == null ? '—' : (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '%'} <span style="color:var(--text-dim);font-weight:500;font-size:10px">· ${ago(now - p.opened_at)}</span></span>
+      </div>
+      <div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);display:flex;gap:10px;flex-wrap:wrap;margin-top:2px">
+        <span>SL <span style="color:var(--red)">${fmt(p.sl_price)}</span>${p.sl_stage ? ` <span style="color:var(--gold)">(${p.sl_stage})</span>` : ''}</span>
+        <span>TP1 <span style="color:var(--green)">${fmt(p.tp1_price)}</span></span>
+        <span>TP2 <span style="color:var(--green)">${fmt(p.tp2_price)}</span></span>
+        <span>$${p.size_usd.toFixed(0)}</span>
+        <span title="${p.signal}">🔥 ${p.touches || '?'}× · $${((p.wall_notional || 0) / 1e6).toFixed(1)}M</span>
+        <button onclick="ofManualClose('${p.id}')" style="margin-left:auto;background:transparent;color:var(--text-dim);border:1px solid var(--border);padding:1px 7px;border-radius:3px;font-size:10px;cursor:pointer">✋ ${t('of_close')}</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  const closedRows = book.closed.slice().reverse().slice(0, 12).map(c => `
+    <tr style="border-bottom:1px solid var(--border-soft)">
+      <td style="padding:4px;color:var(--text-muted)">${new Date(c.closed_at).toLocaleDateString(_lang === 'en' ? 'en-US' : 'pl-PL', { day: '2-digit', month: '2-digit' })}</td>
+      <td style="padding:4px;color:${c.direction === 'long' ? 'var(--green)' : 'var(--red)'};font-weight:700">${c.direction === 'long' ? '▲' : '▼'} ${c.ticker}</td>
+      <td style="padding:4px;text-align:right">${fmt(c.entry_price)}</td>
+      <td style="padding:4px;text-align:right">${fmt(c.exit_price)}</td>
+      <td style="padding:4px;text-align:right;font-weight:800;color:${col(c.pnl_usd)}">${c.pnl_pct >= 0 ? '+' : ''}${c.pnl_pct.toFixed(2)}%</td>
+      <td style="padding:4px;text-align:right;font-weight:800;color:${col(c.pnl_usd)}">${c.pnl_usd >= 0 ? '+' : ''}$${c.pnl_usd.toFixed(2)}</td>
+      <td style="padding:4px;text-align:center" title="${c.hit_or_miss}">${reasonIcon(c.hit_or_miss)}</td>
+      <td style="padding:4px;text-align:center;font-size:10px">${c.fusion_agree === 'same' || c.fusion_agree === 'same_signal' ? '<span style="color:var(--green)">✓</span>' : c.fusion_agree === 'opposite' || c.fusion_agree === 'opposite_signal' ? '<span style="color:var(--red)">✗</span>' : '<span style="color:var(--text-dim)">—</span>'}</td>
+    </tr>`).join('');
+
+  const syncTxt = !hasTok ? `<span style="color:var(--text-dim)">${t('of_sync_off')}</span>`
+    : _ofSyncStatus === 'ok' ? `<span style="color:var(--green)">${t('of_sync_ok')} ${_ofLastSync ? ago(now - _ofLastSync) : ''}</span>`
+    : _ofSyncStatus ? `<span style="color:var(--red)">${t('of_sync_err')} ${_ofSyncStatus}</span>`
+    : `<span style="color:var(--text-dim)">${t('of_sync_pending')}</span>`;
+
+  slot.innerHTML = `
+    <section class="panel">
+      <div class="panel-head">
+        <h3>${t('of_title')} <span style="font-family:var(--mono);color:var(--text-dim);font-weight:500;text-transform:none;letter-spacing:0">· ${book.open.length} ${t('open_lbl')} · ${book.closed.length} ${t('closed').toLowerCase()}</span></h3>
+        <span class="meta">${enabled ? `<span style="color:var(--green)">● ${t('of_auto_on')}</span>` : `<span style="color:var(--red)">● ${t('of_auto_off')}</span>`} · ${syncTxt}</span>
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;line-height:1.5">${t('of_desc')}</div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px" class="of-grid">
+        <div style="background:var(--bg-elev-2);border-radius:6px;padding:8px">
+          <table style="width:100%;border-collapse:collapse;font-size:11px">
+            <thead><tr style="border-bottom:1px solid var(--border)">
+              <th style="text-align:left;padding:4px 6px;font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em">${t('of_metric')}</th>
+              <th style="text-align:right;padding:4px 6px;font-size:9px;color:var(--gold);text-transform:uppercase;letter-spacing:0.06em">📓 Orderflow</th>
+              <th style="text-align:right;padding:4px 6px;font-size:9px;color:var(--blue);text-transform:uppercase;letter-spacing:0.06em">🧠 TA / Fusion</th>
+            </tr></thead>
+            <tbody>
+              ${row(t('closed'), ofS.n, taS.n, v => v, () => 'var(--text)')}
+              ${row(t('win_rate'), ofS.wr, taS.wr, fmtPct, wrCol)}
+              ${row('PnL $', ofS.pnl, taS.pnl, v => v == null ? '—' : fmtUsdSigned(v), col)}
+              ${row(t('of_avg_trade'), ofS.avg_pct, taS.avg_pct, v => v == null ? '—' : (v >= 0 ? '+' : '') + v.toFixed(2) + '%', col)}
+              ${row('Profit factor', ofS.pf, taS.pf, fmtPf, v => v == null ? 'var(--text-dim)' : v >= 1.5 ? 'var(--green)' : v >= 1 ? 'var(--amber)' : 'var(--red)')}
+              ${row(`WR long (n)`, ofS.long_wr, taS.long_wr, v => v == null ? '—' : v.toFixed(0) + '%', wrCol)}
+              ${row(`WR short`, ofS.short_wr, taS.short_wr, v => v == null ? '—' : v.toFixed(0) + '%', wrCol)}
+              ${row(t('open_lbl'), book.open.length, taOpen.length, v => v, () => 'var(--text)')}
+            </tbody>
+          </table>
+          <div style="font-size:9.5px;color:var(--text-dim);margin-top:6px;line-height:1.5">${t('of_ta_note')}</div>
+        </div>
+        <div style="background:var(--bg-elev-2);border-radius:6px;padding:8px">
+          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;font-weight:700">${t('of_agreement')}</div>
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;text-align:center;margin-bottom:8px">
+            <div><div style="font-family:var(--mono);font-size:16px;font-weight:800;color:var(--green)">${agreeSame}</div><div style="font-size:9px;color:var(--text-dim)">${t('of_same')}</div></div>
+            <div><div style="font-family:var(--mono);font-size:16px;font-weight:800;color:var(--red)">${agreeOpp}</div><div style="font-size:9px;color:var(--text-dim)">${t('of_opposite')}</div></div>
+            <div><div style="font-family:var(--mono);font-size:16px;font-weight:800;color:var(--text-muted)">${agreeCounts.none}</div><div style="font-size:9px;color:var(--text-dim)">${t('of_no_ta')}</div></div>
+          </div>
+          <table style="width:100%;border-collapse:collapse;font-size:11px">
+            <thead><tr style="border-bottom:1px solid var(--border)">
+              <th style="text-align:left;padding:4px 6px;font-size:9px;color:var(--text-dim);text-transform:uppercase">${t('of_when')}</th>
+              <th style="text-align:right;padding:4px 6px;font-size:9px;color:var(--text-dim);text-transform:uppercase">n</th>
+              <th style="text-align:right;padding:4px 6px;font-size:9px;color:var(--text-dim);text-transform:uppercase">WR</th>
+              <th style="text-align:right;padding:4px 6px;font-size:9px;color:var(--text-dim);text-transform:uppercase">PnL</th>
+            </tr></thead>
+            <tbody>
+              <tr style="border-bottom:1px solid var(--border-soft)"><td style="padding:4px 6px;color:var(--green)">${t('of_ta_agreed')}</td><td style="padding:4px 6px;text-align:right;font-family:var(--mono)">${sA.n}</td><td style="padding:4px 6px;text-align:right;font-family:var(--mono);color:${wrCol(sA.wr)}">${fmtPct(sA.wr)}</td><td style="padding:4px 6px;text-align:right;font-family:var(--mono);color:${col(sA.pnl)}">${sA.n ? fmtUsdSigned(sA.pnl) : '—'}</td></tr>
+              <tr><td style="padding:4px 6px;color:var(--text-muted)">${t('of_ta_disagreed')}</td><td style="padding:4px 6px;text-align:right;font-family:var(--mono)">${sD.n}</td><td style="padding:4px 6px;text-align:right;font-family:var(--mono);color:${wrCol(sD.wr)}">${fmtPct(sD.wr)}</td><td style="padding:4px 6px;text-align:right;font-family:var(--mono);color:${col(sD.pnl)}">${sD.n ? fmtUsdSigned(sD.pnl) : '—'}</td></tr>
+            </tbody>
+          </table>
+          <div style="font-size:9.5px;color:var(--text-dim);margin-top:6px;line-height:1.5">${t('of_agreement_hint')}</div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:4px;margin-bottom:8px;flex-wrap:wrap;align-items:center">
+        <button onclick="ofToggleEnabled()" style="background:var(--bg-elev-2);color:${enabled ? 'var(--red)' : 'var(--green)'};border:1px solid currentColor;padding:4px 10px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer">${enabled ? t('of_pause') : t('of_resume')}</button>
+        <button onclick="ofExportCSV()" style="background:var(--bg-elev-2);color:var(--green);border:1px solid var(--green);padding:4px 10px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer">📥 CSV</button>
+        <button onclick="ofSetGistToken()" style="background:var(--bg-elev-2);color:var(--gold);border:1px solid var(--gold);padding:4px 10px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer">🔑 ${hasTok ? t('of_token_change') : t('of_token_set')}</button>
+        <button onclick="ofReset()" style="background:var(--bg-elev-2);color:var(--text-dim);border:1px solid var(--border);padding:4px 10px;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;margin-left:auto">${t('of_reset')}</button>
+      </div>
+
+      <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;margin:6px 0 4px;font-weight:700">${t('of_open_positions')}</div>
+      ${book.open.length ? openRows : `<div style="padding:12px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">${t('of_no_open')}</div>`}
+
+      ${book.closed.length ? `
+      <details style="margin-top:10px;background:var(--bg-elev-2);border-radius:6px;border:1px solid var(--border)">
+        <summary style="padding:8px 12px;cursor:pointer;font-size:11px;font-weight:700;color:var(--gold);letter-spacing:0.04em;text-transform:uppercase;user-select:none;list-style:none;display:flex;justify-content:space-between">
+          <span>${t('tx_history')} (${book.closed.length})</span><span style="color:var(--text-dim);font-family:var(--mono);font-size:10px">${t('click_expand')}</span>
+        </summary>
+        <div style="max-height:300px;overflow-y:auto;padding:8px">
+          <table style="width:100%;border-collapse:collapse;font-size:10.5px;font-family:var(--mono)">
+            <thead><tr style="color:var(--text-muted);border-bottom:1px solid var(--border);font-size:9px;text-transform:uppercase">
+              <th style="text-align:left;padding:4px">Date</th><th style="text-align:left;padding:4px">Ticker</th><th style="text-align:right;padding:4px">Entry</th><th style="text-align:right;padding:4px">Exit</th><th style="text-align:right;padding:4px">PnL %</th><th style="text-align:right;padding:4px">PnL $</th><th style="padding:4px">Exit</th><th style="padding:4px" title="${t('of_agreement')}">TA</th>
+            </tr></thead>
+            <tbody>${closedRows}</tbody>
+          </table>
+        </div>
+      </details>` : ''}
+    </section>`;
 }
 
 let _journalFilter = 'ALL';
@@ -4681,6 +5144,10 @@ setTimeout(() => {
   setInterval(updateWhaleMeta, 1000);      // update "Xs ago" indicator every 1s
   renderJournalPanel();                    // initial journal panel render (shows even if empty)
   setInterval(renderJournalPanel, 5000);   // refresh journal every 5s (updates "X ago" times)
+  // ORDERFLOW PAPER BOOK — pull z Gist (inne urządzenie), pętla wyjść co 2s, panel co 5s
+  ofPullGist().then(renderOrderflowPanel);
+  setInterval(orderflowTick, 2000);
+  setInterval(renderOrderflowPanel, 5000);
   renderPortfolioHealth();                 // initial portfolio panel (populates as WS data arrives)
   setInterval(renderPortfolioHealth, 3000);// refresh portfolio health every 3s
   renderPnLHistory();                      // P&L history + equity curve
