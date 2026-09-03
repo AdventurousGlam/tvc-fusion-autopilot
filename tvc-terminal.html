@@ -1017,7 +1017,7 @@ function updateStatusBadge() {
   if (!lastFusion) return;
   const min = healthAgeMin();
   const h = lastFusion?.state?.health || {};
-  const tg = h.telegram_enabled ? ' · 📲' : '';
+  const tg = !h.telegram_enabled ? '' : h.telegram_last_error ? ' · 📵' : ' · 📲';
   let level;
   if (min == null) { level = 'stale'; badge.className = 'status-badge stale'; badge.textContent = '● Brak heartbeat'; }
   else if (min < HEALTH_WARN_MIN) { level = 'ok'; badge.className = 'status-badge live'; badge.textContent = `● Autopilot ✓ ${fmtAge(min)}${tg}`; }
@@ -1026,7 +1026,9 @@ function updateStatusBadge() {
   badge.title = `Ostatni cykl bota: ${h.autopilot_last_cycle || lastFusion?.state?.generated_at || '?'}`
     + (h.bot_version ? ` · bot v${h.bot_version}` : '')
     + (h.gates ? ` · gates: LONG≥${h.gates.min_long_score} (RANGING≥${h.gates.min_long_score_ranging}), SHORT≤${h.gates.max_short_score}, hold ${h.gates.min_hold_min}min, cooldown ${h.gates.reopen_cooldown_min}min, max ${h.gates.max_trades_per_day}/dzień` : '')
-    + (h.telegram_enabled ? ' · Telegram: aktywny' : ' · Telegram: brak (dodaj sekrety)');
+    + (!h.telegram_enabled ? ' · Telegram: brak (dodaj sekrety)'
+       : h.telegram_last_error ? ` · Telegram: BŁĄD → ${h.telegram_last_error} (chat …${h.telegram_chat_id_tail || '?'})`
+       : ` · Telegram: OK${h.telegram_last_ok ? ' (ost. wysyłka ' + new Date(h.telegram_last_ok).toLocaleTimeString('pl-PL', {hour:'2-digit',minute:'2-digit'}) + ')' : ''}`);
   renderHealthBanner(level, min);
 }
 function renderHealthBanner(level, min) {

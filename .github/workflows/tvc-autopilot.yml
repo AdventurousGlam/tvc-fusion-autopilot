@@ -45,6 +45,10 @@ jobs:
       - name: Install optional deps
         run: pip install certifi ccxt
 
+      - name: Diagnostyka Telegram (pokazuje dokładny błąd wysyłki w logu)
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
+        run: python3 paper_bot.py telegram-test || true
+
       - name: Run auto_fusion (fresh algorytmiczne sygnały)
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 auto_fusion.py

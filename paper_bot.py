@@ -260,13 +260,19 @@ def _mid_entry(entry_low, entry_high, ticker, ex) -> float:
 # Wymaga env: TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID (GitHub Secrets w workflow).
 # Bez nich funkcja jest no-op — bot działa jak dotąd, tylko bez powiadomień.
 
+_TELEGRAM_LAST_ERROR = None   # ostatni błąd wysyłki — trafia do health w gist (widoczny w terminalu)
+_TELEGRAM_LAST_OK = None      # ISO czasu ostatniej udanej wysyłki
+
+
 def _telegram_send(text: str) -> bool:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    global _TELEGRAM_LAST_ERROR, _TELEGRAM_LAST_OK
+    token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+    chat_id = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
     if not token or not chat_id:
         return False
     import urllib.request as ur
     import urllib.parse as up
+    import urllib.error as ue
     import ssl
     try:
         import certifi
@@ -278,10 +284,27 @@ def _telegram_send(text: str) -> bool:
                              "disable_web_page_preview": "true"}).encode()
         req = ur.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data)
         with ur.urlopen(req, timeout=10, context=ssl_ctx) as resp:
-            return resp.status == 200
+            ok = resp.status == 200
+            if ok:
+                _TELEGRAM_LAST_OK = datetime.now(timezone.utc).isoformat()
+                _TELEGRAM_LAST_ERROR = None
+            return ok
+    except ue.HTTPError as e:
+        body = e.read().decode(errors="replace")[:300]
+        _TELEGRAM_LAST_ERROR = f"HTTP {e.code}: {body}"
     except Exception as e:
-        print(f"[telegram] send failed: {e}")
-        return False
+        _TELEGRAM_LAST_ERROR = f"{type(e).__name__}: {e}"
+    print(f"[telegram] send failed: {_TELEGRAM_LAST_ERROR}")
+    return False
+
+
+def cmd_telegram_test(args):
+    """Wyślij wiadomość testową i pokaż dokładny błąd, jeśli się nie uda."""
+    tok = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+    cid = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+    print(f"[telegram-test] token: {'OK (' + str(len(tok)) + ' znaków)' if tok else 'BRAK'} · chat_id: {cid or 'BRAK'}")
+    ok = _telegram_send("🧪 <b>TVC Alerts — test z bota</b>\nJeśli to widzisz, powiadomienia działają.")
+    print(f"[telegram-test] {'WYSŁANO ✓' if ok else 'BŁĄD: ' + str(_TELEGRAM_LAST_ERROR)}")
 
 
 def _fmt_px(v) -> str:
@@ -1505,6 +1528,9 @@ def cmd_upload(args):
         "cycle_interval_min": 5,
         "bot_version": "0.3",
         "telegram_enabled": bool(os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID")),
+        "telegram_chat_id_tail": (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()[-4:] or None,
+        "telegram_last_error": _TELEGRAM_LAST_ERROR,
+        "telegram_last_ok": _TELEGRAM_LAST_OK,
         "last_position_opened": last_open_row,
         "last_position_closed": last_close_row,
         "open_count": len(open_positions),
@@ -1741,6 +1767,7 @@ def main():
     sub.add_parser("week", help="dump last 7d as JSON")
     sub.add_parser("upload", help="push today's fusion JSON to GitHub Gist (for terminal widget)")
     sub.add_parser("refresh", help="check + upload (szybki manual refresh)")
+    sub.add_parser("telegram-test", help="wyślij testową wiadomość na Telegram i pokaż błąd")
     close_p = sub.add_parser("close", help="manual close specific ticker (auto-uploads after)")
     close_p.add_argument("ticker", help="Ticker to close (BTC/ETH/SOL/XRP/SUI)")
     loop_p = sub.add_parser("loop", help="background daemon — auto-refresh co N min")
@@ -1749,7 +1776,8 @@ def main():
 
     handlers = {"init": lambda a: db_init(), "open": cmd_open,
                 "check": cmd_check, "eod": cmd_eod, "week": cmd_week,
-                "upload": cmd_upload, "close": cmd_close, "refresh": cmd_refresh, "loop": cmd_loop}
+                "upload": cmd_upload, "close": cmd_close, "refresh": cmd_refresh, "loop": cmd_loop,
+                "telegram-test": cmd_telegram_test}
     if not args.cmd:
         p.print_help()
         sys.exit(1)
