@@ -1093,7 +1093,9 @@ const I18N = {
   sm_loading:         { pl: 'ładowanie…',                               en: 'loading…' },
   sm_whales:          { pl: 'walletów',                                 en: 'wallets' },
   sm_whale_positions: { pl: 'Największe pozycje wielorybów (Hyperliquid, na żywo)', en: 'Largest whale positions (Hyperliquid, live)' },
-  sm_whale_note:      { pl: 'Kliknij wallet → explorer. Wallet = konto z top-30 wg tygodniowego PnL; pozycje ≥ $250k. Odświeżanie co 5 min.', en: 'Click wallet → explorer. Wallet = top-30 account by weekly PnL; positions ≥ $250k. Refreshes every 5 min.' },
+  sm_whale_note:      { pl: 'Kliknij wallet → explorer. Wallet = konto z top-30 wg tygodniowego PnL; pozycje ≥ $250k; tylko kierunkowe (bez market makerów i hedgerów). „Otwarte” z taśmy filli — „>24h” = pozycja starsza niż okno. Odświeżanie co 5 min.', en: 'Click wallet → explorer. Wallet = top-30 account by weekly PnL; positions ≥ $250k; directional only (no market makers or hedgers). "Opened" from the fill tape — ">24h" = older than the window. Refreshes every 5 min.' },
+  sm_opened:          { pl: 'Otwarte',                                   en: 'Opened' },
+  sm_hedge_note:      { pl: 'Pominięto jako hedge (≥3 pozycje, jedna strona, śr. uPnL < −4%, trzymane) — nie mówi o kierunku:', en: 'Excluded as hedge (≥3 positions, one side, avg uPnL < −4%, still held) — says nothing about direction:' },
   sm_cot_am_tip:      { pl: 'Asset Managers (fundusze, ETF-y, instytucje) — pozycja netto w kontraktach (zmiana tyg.)', en: 'Asset Managers (funds, ETFs, institutions) — net contracts (weekly change)' },
   sm_cot_lf_tip:      { pl: 'Leveraged Funds (hedge fundy, CTA) — pozycja netto; zwykle short jako basis trade', en: 'Leveraged Funds (hedge funds, CTAs) — net contracts; typically short via basis trade' },
   sm_cot_note:        { pl: 'CFTC publikuje w piątek dane z wtorku. Lev. Funds short ≠ bearish (basis trade vs ETF). Patrz na ZMIANĘ Asset Managers.', en: 'CFTC publishes Friday for Tuesday data. Lev. Funds short ≠ bearish (basis trade vs ETF). Watch the Asset Managers CHANGE.' },
@@ -3637,8 +3639,19 @@ async function smRefreshHyperliquid() {
   states.forEach((s, i) => {
     const w = smartMoney.hl.whales[i];
     const ps = s?.assetPositions || [];
-    w.mm = ps.length > SM_HL_MAX_POS;      // market maker / hedger — flaga używana też przez taśmę
-    if (w.mm) return;                       // nie jest kierunkowy — pomijamy w agregacie
+    w.mm = ps.length > SM_HL_MAX_POS;      // market maker — flaga używana też przez taśmę
+    // HEDGER: ≥3 pozycje, wszystkie po tej samej stronie, średnio głęboko pod wodą (< −4%)
+    // i nadal trzymane. Kierunkowy trader tnie −9% na 5x; hedger ma spot po drugiej stronie
+    // i nie obchodzi go uPnL perpa. Przykład 4.09: 0x5b5d… $221M, shorty ETH/BTC/SOL/XRP −$37M.
+    const sides = ps.map(p => Math.sign(parseFloat(p.position.szi)));
+    w.book = ps.reduce((s, p) => s + parseFloat(p.position.positionValue), 0);
+    w.bookPnl = ps.reduce((s, p) => s + parseFloat(p.position.unrealizedPnl), 0);
+    // uPnL ważony nominałem (zwykła średnia % dawała +38% dla walletu z −$37M, bo mikro-pozycje
+    // z +300% maskowały straty na dużych)
+    const avgPnl = w.book ? w.bookPnl / w.book * 100 : 0;
+    w.hedge = ps.length >= 3 && sides.every(s => s === sides[0]) && avgPnl < -4;
+    w.bookSide = sides.length && sides.every(s => s === sides[0]) ? (sides[0] > 0 ? 'long' : 'short') : 'mixed';
+    if (w.mm || w.hedge) return;            // nie jest kierunkowy — pomijamy w agregacie
     for (const p of ps) {
       const c = p.position.coin; if (!agg[c]) continue;
       const sz = parseFloat(p.position.szi), val = parseFloat(p.position.positionValue);
@@ -3666,7 +3679,7 @@ function smTapeToggleAll() { _smTapeAll = !_smTapeAll; renderSmartMoneyPanel(); 
 async function smRefreshHlTape() {
   if (!smartMoney.hl.whales.length) return;
   const since = Date.now() - SM_TAPE_WINDOW_MS;
-  const all = await Promise.all(smartMoney.hl.whales.map(w => w.mm ? Promise.resolve([]) :
+  const all = await Promise.all(smartMoney.hl.whales.map(w => (w.mm || w.hedge) ? Promise.resolve([]) :
     fetch('https://api.hyperliquid.xyz/info', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'userFillsByTime', user: w.a, startTime: since }) })
       .then(r => r.json()).then(f => Array.isArray(f) ? f.map(x => ({ ...x, _w: w })) : []).catch(() => [])));
   const events = [];
@@ -3843,13 +3856,18 @@ function renderSmartMoneyPanel() {
 
   // Największe pozycje wielorybów HL (wszystkie tokeny, top 8)
   const allTop = SM_TICKERS.flatMap(tk => (smartMoney.hl.agg[tk]?.top || []).map(p => ({ ...p, coin: tk }))).sort((a, b) => b.val - a.val).slice(0, 8);
+  // Kiedy otwarte: najwcześniejszy "Open" tego walletu/coina/strony w taśmie (24h); brak → starsze niż 24h
+  const openedAt = p => { const dir = p.side === 'long' ? 'Open Long' : 'Open Short'; const ev = smartMoney.tape.events.filter(e => e.addr === p.addr && e.coin === p.coin && e.dir === dir).sort((a, b) => a.start - b.start)[0]; return ev ? ddhhmm(ev.start) : (smartMoney.tape.ts ? '>24h' : '—'); };
   const whaleRows = allTop.map(p => `<tr style="border-bottom:1px solid var(--border-soft)">
       <td style="padding:4px 6px"><a href="https://app.hyperliquid.xyz/explorer/address/${p.addr}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-family:var(--mono)">${p.name || p.addr.slice(0, 6) + '…' + p.addr.slice(-4)}</a> <span style="font-size:9px;color:var(--text-dim)">$${(p.acct / 1e6).toFixed(0)}M</span></td>
       <td style="padding:4px 6px;font-weight:800;color:${p.side === 'long' ? 'var(--green)' : 'var(--red)'}">${p.side === 'long' ? '▲' : '▼'} ${p.coin}</td>
       <td style="padding:4px 6px;text-align:right;font-family:var(--mono);font-weight:700">${usdM(p.val)}</td>
       <td style="padding:4px 6px;text-align:right;font-family:var(--mono);color:var(--text-muted)">${fmt(p.entry)}${p.lev ? ` <span style="color:var(--text-dim)">${p.lev}x</span>` : ''}</td>
-      <td style="padding:4px 6px;text-align:right;font-family:var(--mono);color:${p.pnl >= 0 ? 'var(--green)' : 'var(--red)'}">${p.pnl >= 0 ? '+' : '-'}$${(Math.abs(p.pnl) / 1e3).toFixed(0)}k</td>
+      <td style="padding:4px 6px;text-align:right;font-family:var(--mono);color:var(--text-dim);white-space:nowrap">${openedAt(p)}</td>
+      <td style="padding:4px 6px;text-align:right;font-family:var(--mono);color:${p.pnl >= 0 ? 'var(--green)' : 'var(--red)'}">${p.pnl >= 0 ? '+' : '-'}$${(Math.abs(p.pnl) / 1e3).toFixed(0)}k <span style="font-size:9px;color:var(--text-dim)">${(p.pnl / p.val * 100).toFixed(1)}%</span></td>
     </tr>`).join('');
+  const hedgers = smartMoney.hl.whales.filter(w => w.hedge);
+  const hedgeNote = hedgers.length ? `<div style="font-size:9.5px;color:var(--amber);margin-top:6px;line-height:1.5">⚠ ${t('sm_hedge_note')} ${hedgers.map(w => `<a href="https://app.hyperliquid.xyz/explorer/address/${w.a}" target="_blank" rel="noopener" style="color:var(--amber);font-family:var(--mono)">${w.a.slice(0, 6)}…</a> (${w.bookSide} $${(w.book / 1e6).toFixed(0)}M, uPnL ${w.bookPnl >= 0 ? '+' : '-'}$${(Math.abs(w.bookPnl) / 1e6).toFixed(1)}M)`).join(' · ')}</div>` : '';
 
   // COT
   const cotRows = ['BTC', 'ETH', 'SOL', 'XRP'].filter(k => smartMoney.cot[k]).map(k => { const c = smartMoney.cot[k]; const sg = n => (n >= 0 ? '+' : '') + n.toLocaleString(); const col = n => n > 0 ? 'var(--green)' : n < 0 ? 'var(--red)' : 'var(--text-dim)';
@@ -3890,8 +3908,8 @@ function renderSmartMoneyPanel() {
       <div style="display:grid;grid-template-columns:3fr 2fr;gap:10px;margin-top:10px" class="of-grid">
         <div style="background:var(--bg-elev-2);border-radius:6px;padding:8px">
           <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700;margin-bottom:4px">🐋 ${t('sm_whale_positions')}</div>
-          ${allTop.length ? `<table style="width:100%;border-collapse:collapse;font-size:10.5px"><thead><tr style="color:var(--text-dim);font-size:9px;text-transform:uppercase;border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 6px">Wallet</th><th style="text-align:left;padding:3px 6px">Pos</th><th style="text-align:right;padding:3px 6px">Size</th><th style="text-align:right;padding:3px 6px">Entry</th><th style="text-align:right;padding:3px 6px">uPnL</th></tr></thead><tbody>${whaleRows}</tbody></table>` : `<div style="padding:10px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">${hlOk ? t('sm_hl_none') : t('sm_loading')}</div>`}
-          <div style="font-size:9.5px;color:var(--text-dim);margin-top:6px;line-height:1.5">${t('sm_whale_note')}</div>
+          ${allTop.length ? `<table style="width:100%;border-collapse:collapse;font-size:10.5px"><thead><tr style="color:var(--text-dim);font-size:9px;text-transform:uppercase;border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 6px">Wallet</th><th style="text-align:left;padding:3px 6px">Pos</th><th style="text-align:right;padding:3px 6px">Size</th><th style="text-align:right;padding:3px 6px">Entry</th><th style="text-align:right;padding:3px 6px">${t('sm_opened')}</th><th style="text-align:right;padding:3px 6px">uPnL</th></tr></thead><tbody>${whaleRows}</tbody></table>` : `<div style="padding:10px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">${hlOk ? t('sm_hl_none') : t('sm_loading')}</div>`}
+          <div style="font-size:9.5px;color:var(--text-dim);margin-top:6px;line-height:1.5">${t('sm_whale_note')}</div>${hedgeNote}
         </div>
         <div style="background:var(--bg-elev-2);border-radius:6px;padding:8px">
           <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700;margin-bottom:4px">🏛 CME COT ${cotDate ? `· ${cotDate}` : ''}</div>
