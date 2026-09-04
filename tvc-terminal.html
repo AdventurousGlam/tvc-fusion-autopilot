@@ -1144,6 +1144,29 @@ const I18N = {
   fr_top_flip:        { pl: 'Top traderzy Binance przeszli na short o',   en: 'Binance top traders flipped short at' },
   fr_range:           { pl: 'zakres',                                     en: 'range' },
   fr_oi_tip:          { pl: 'Zmiana Open Interest (Bybit perp). Spadek przy płaskiej cenie = dźwignia wychodzi = rynek traci paliwo.', en: 'Open Interest change (Bybit perp). Falling while price is flat = leverage leaving = market losing fuel.' },
+  // ─── OPCJE ───
+  opt_title:          { pl: 'Opcje · ile ruchu rynek wycenia',            en: 'Options · how much move the market prices' },
+  opt_desc:           { pl: '<strong>DVOL</strong> = implied vol 30d (jak VIX), z percentylem 30-dniowym. <strong>Oczekiwany ruch</strong> = 1σ z DVOL. <strong>Skew</strong> = IV put OTM − IV call OTM: > +6 strach, < −3 chciwość. <strong>Term</strong> = IV tydzień − miesiąc: dodatnia = rynek płaci za ochronę na najbliższe dni (event premium), ujemna przed tier-1 = complacency. Tylko BTC/ETH (Deribit); alty dziedziczą reżim BTC w Flush Risk.', en: '<strong>DVOL</strong> = 30d implied vol (like VIX), with 30-day percentile. <strong>Expected move</strong> = 1σ from DVOL. <strong>Skew</strong> = OTM put IV − OTM call IV: > +6 fear, < −3 greed. <strong>Term</strong> = weekly − monthly IV: positive = market pays for near-term protection (event premium), negative before tier-1 = complacency. BTC/ETH only (Deribit); alts inherit BTC regime in Flush Risk.' },
+  opt_move:           { pl: 'Oczekiwany ruch 1σ',                        en: 'Expected move 1σ' },
+  opt_move_tip:       { pl: 'Ruch 1 odchylenia standardowego wyceniany przez opcje (DVOL). Ruch większy niż 2σ = rynek był zaskoczony.', en: 'One-standard-deviation move priced by options (DVOL). A move > 2σ = market was surprised.' },
+  opt_week:           { pl: 'tydzień',                                    en: 'week' },
+  opt_month:          { pl: 'miesiąc',                                    en: 'month' },
+  opt_term:           { pl: 'Term (tydz. − mies.)',                       en: 'Term (week − month)' },
+  opt_term_tip:       { pl: 'IV tygodniowa minus miesięczna. Dodatnia = event premium. Ujemna gdy tier-1 event mieści się w tygodniowym wygasaniu = rynek go nie wycenia.', en: 'Weekly minus monthly IV. Positive = event premium. Negative while a tier-1 event falls inside the weekly expiry = market is not pricing it.' },
+  opt_pcr_tip:        { pl: 'Open interest putów / calli. > 1 = przewaga zabezpieczeń, < 0.6 = przewaga spekulacji na wzrost.', en: 'Put / call open interest. > 1 = hedging dominates, < 0.6 = upside speculation dominates.' },
+  opt_premium_short:  { pl: 'event premium',                              en: 'event premium' },
+  opt_no_premium:     { pl: 'bez premii',                                 en: 'no premium' },
+  opt_calm:           { pl: 'Opcje spokojne — bez strachu, bez premii za event.', en: 'Options calm — no fear, no event premium.' },
+  opt_fear:           { pl: 'Rynek płaci za puty',                        en: 'Market paying for puts' },
+  opt_greed:          { pl: 'Chciwość — płacą za calle',                  en: 'Greed — paying for calls' },
+  opt_complacent:     { pl: 'Complacency: opcje nie wyceniają',            en: 'Complacency: options not pricing' },
+  opt_premium:        { pl: 'Event premium w tygodniowych',                en: 'Event premium in weeklies' },
+  opt_volspike:       { pl: 'DVOL skoczył',                               en: 'DVOL spiked' },
+  opt_event_premium:  { pl: 'premia za event',                            en: 'event premium' },
+  opt_event_tip:      { pl: 'Forward IV okna między serią tuż PRZED eventem a serią tuż PO (wygasanie Deribit 08:00 UTC, dane USA 12:30 UTC). W nawiasie: o ile fwd IV jest wyżej od IV serii przed = premia za event. ≤ 1 pkt na <3 dni przed = complacency. ±% = ruch 1σ wyceniany na całe okno.', en: 'Forward IV of the window between the expiry right BEFORE the event and the one right AFTER (Deribit expiry 08:00 UTC, US data 12:30 UTC). In brackets: fwd IV minus front IV = event premium. ≤ 1 pt within 3 days = complacency. ±% = 1σ move priced for the whole window.' },
+  opt_implied:        { pl: 'implied',                                    en: 'implied' },
+  opt_after:          { pl: 'po',                                         en: 'after' },
+  opt_before:         { pl: 'przed',                                      en: 'before' },
   // ─── CRYPTO PICKS ───
   picks_title:        { pl: 'Crypto Picks · poranny shortlist',          en: 'Crypto Picks · morning shortlist' },
   picks_setups:       { pl: 'setupów',                                   en: 'setups' },
@@ -1901,6 +1924,9 @@ function render() {
       <!-- FLUSH RISK — kruchość rynku per token (OI dywergencja, kompresja, makro, SFP, funding, wieloryby) -->
       <div id="flush-risk-slot" style="grid-column: span 12; width: 100%;"></div>
 
+      <!-- OPCJE — Deribit DVOL, skew, term structure, oczekiwany ruch (BTC/ETH) -->
+      <div id="options-slot" class="hide-trading" style="grid-column: span 12; width: 100%;"></div>
+
       <!-- LIVE LIQUIDATIONS — Binance perp WS -->
 
       <!-- ═══════════════════════════════════════════════════════════════ -->
@@ -2071,7 +2097,7 @@ function render() {
   `;
 
   updatePriceCells();
-  try { renderSmartMoneyPanel(); updateSmartMoneyTags(); renderFlushRiskPanel(); } catch (e) {}
+  try { renderSmartMoneyPanel(); updateSmartMoneyTags(); renderFlushRiskPanel(); renderOptionsPanel(); } catch (e) {}
   renderBreakdownChart();
   updateFngGauge();
   if (btcDominance != null) {
@@ -3333,6 +3359,141 @@ async function refreshFngLive() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// OPCJE (Deribit, public API, CORS OK) — ile ruchu rynek WYCENIA, nie ile go było
+//   DVOL        = indeks implied vol 30d (jak VIX). Percentyl 30d mówi, czy tanio/drogo.
+//   Term struct = IV tygodniowa − miesięczna. Dodatnia = event premium (rynek płaci za
+//                 ochronę na najbliższy tydzień). Ujemna przed tier-1 = complacency.
+//   Skew        = IV put OTM − IV call OTM (tydzień ±5%, miesiąc ±10%). > +6 = strach,
+//                 < −3 = chciwość (płacą za calle).
+//   PCR OI      = open interest putów / calli.
+//   Exp. move   = DVOL/√365·√dni — oczekiwany ruch 1σ.
+// Tylko BTC i ETH (Deribit nie ma DVOL dla SOL/XRP/SUI).
+// ═══════════════════════════════════════════════════════════════════════════
+const optionsData = {};   // { BTC: {...}, ETH: {...} }
+const OPT_MONTHS = { JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 };
+
+async function computeOptions(cur) {
+  const now = Date.now();
+  const dv = (await smFetchJson(`https://www.deribit.com/api/v2/public/get_volatility_index_data?currency=${cur}&start_timestamp=${now - 30 * 86400000}&end_timestamp=${now}&resolution=3600`)).result.data;
+  const closes = dv.map(x => x[4]);
+  const dvol = closes[closes.length - 1];
+  const lo = Math.min(...closes), hi = Math.max(...closes);
+  const pct30 = hi > lo ? (dvol - lo) / (hi - lo) * 100 : 50;
+  const dvol24 = closes[Math.max(0, closes.length - 25)];
+  const opts = (await smFetchJson(`https://www.deribit.com/api/v2/public/get_book_summary_by_currency?currency=${cur}&kind=option`)).result;
+  const spot = (opts.find(o => o.estimated_delivery_price) || {}).estimated_delivery_price || 0;
+  const rows = opts.filter(o => o.mark_iv > 0).map(o => {
+    const [, e, k, t] = o.instrument_name.split('-');
+    const d = e.match(/(\d+)([A-Z]{3})(\d{2})/);
+    return { exp: Date.UTC(2000 + +d[3], OPT_MONTHS[d[2]], +d[1], 8), expStr: e, k: +k, t, iv: o.mark_iv, oi: o.open_interest || 0 };
+  });
+  const exps = [...new Set(rows.map(r => r.exp))].sort((a, b) => a - b).filter(e => e > now + 86400000);
+  if (!exps.length || !spot) throw new Error('brak łańcucha opcji');
+  const pick = days => exps.reduce((b, e) => Math.abs((e - now) / 86400000 - days) < Math.abs((b - now) / 86400000 - days) ? e : b, exps[0]);
+  const at = (exp, wing) => {
+    const rs = rows.filter(r => r.exp === exp);
+    const near = (k, t) => rs.filter(r => r.t === t).reduce((b, r) => !b || Math.abs(r.k - k) < Math.abs(b.k - k) ? r : b, null);
+    const atm = near(spot, 'C'), put = near(spot * (1 - wing), 'P'), call = near(spot * (1 + wing), 'C');
+    if (!atm || !put || !call) return null;
+    return { exp, expStr: atm.expStr, days: (exp - now) / 86400000, atmIv: atm.iv, putIv: put.iv, callIv: call.iv, skew: put.iv - call.iv, putK: put.k, callK: call.k,
+      oiP: rs.filter(r => r.t === 'P').reduce((s, r) => s + r.oi, 0), oiC: rs.filter(r => r.t === 'C').reduce((s, r) => s + r.oi, 0) };
+  };
+  const week = at(pick(7), 0.05), month = at(pick(30), 0.10);
+  // EVENT PREMIUM: IV serii wygasającej tuż PO najbliższym tier-1 minus IV serii tuż PRZED nim.
+  // Wygasanie Deribit = 08:00 UTC, NFP/CPI = 12:30 UTC → tygodniówka z tego samego dnia NIE obejmuje eventu.
+  // FORWARD IV okna z eventem: σ_fwd² = (σa²·Ta − σb²·Tb)/(Ta − Tb) między serią tuż PRZED
+  // najbliższym tier-1 a serią tuż PO nim. Premia = σ_fwd − IV serii przed (front). Okno może
+  // zawierać kilka eventów (np. CPI 11.09 + FOMC 16.09 w 11SEP→18SEP) — wypisujemy wszystkie.
+  let event = null;
+  const nm = (typeof nextMacroEvent === 'function') ? nextMacroEvent(1) : null;
+  if (nm && nm.ms < 10 * 86400000) {
+    const evTs = Date.parse(nm.ev.ts_utc);
+    const after = exps.find(e => e > evTs), before = [...exps].reverse().find(e => e < evTs);
+    const a = after ? at(after, 0.05) : null, b = before ? at(before, 0.05) : null;
+    if (a && b && a.days > b.days) {
+      const Ta = a.days / 365, Tb = b.days / 365;
+      const fwdVar = Math.max(0, ((a.atmIv / 100) ** 2 * Ta - (b.atmIv / 100) ** 2 * Tb) / (Ta - Tb));
+      const fwdIv = Math.sqrt(fwdVar) * 100;
+      const inWindow = (lastFusion?.macro_events || []).filter(e => e.tier === 1 && Date.parse(e.ts_utc) > before && Date.parse(e.ts_utc) < after).map(e => e.name.split(' — ')[0].replace(/^US /, ''));
+      event = { name: inWindow.join(' + ') || nm.ev.name.split(' — ')[0], ts: evTs, after: a, before: b, fwdIv,
+        premiumIv: fwdIv - b.atmIv, gapDays: a.days - b.days, impliedMove: fwdIv * Math.sqrt((a.days - b.days) / 365) };
+    }
+  }
+  const pc = rows.reduce((a, r) => { a[r.t] += r.oi; return a; }, { P: 0, C: 0 });
+  const expMove = d => dvol / Math.sqrt(365) * Math.sqrt(d);
+  return { cur, spot, dvol, dvol24chg: dvol - dvol24, pct30, lo30: lo, hi30: hi, week, month, event, pcr: pc.C ? pc.P / pc.C : null,
+    term: week && month ? week.atmIv - month.atmIv : null, move1d: expMove(1), move7d: expMove(7), ts: now };
+}
+async function refreshOptions() {
+  for (const cur of ['BTC', 'ETH']) {
+    try { optionsData[cur] = await computeOptions(cur); }
+    catch (e) { optionsData[cur] = { cur, error: String(e.message || e), ts: Date.now() }; }
+  }
+  renderOptionsPanel();
+}
+// Interpretacja jednym zdaniem — używana w panelu i w Flush Risk
+function optionsRead(o) {
+  if (!o || o.error) return null;
+  const flags = [];
+  if (o.week && o.week.skew > 6) flags.push({ key: 'fear', pts: 10, txt: `${t('opt_fear')} (skew ${t('opt_week')} +${o.week.skew.toFixed(1)})` });
+  if (o.week && o.week.skew < -3) flags.push({ key: 'greed', pts: 0, txt: `${t('opt_greed')} (skew ${o.week.skew.toFixed(1)})` });
+  if (o.event && o.event.premiumIv != null) {
+    const e = o.event;
+    if (e.premiumIv <= 1 && e.ts - Date.now() < 3 * 86400000) flags.push({ key: 'complacent', pts: 8, txt: `${t('opt_complacent')} ${e.name} (fwd IV ${e.fwdIv.toFixed(1)} vs front ${e.before.atmIv.toFixed(1)})` });
+    else if (e.premiumIv >= 5) flags.push({ key: 'premium', pts: 0, txt: `${t('opt_premium')} ${e.name}: fwd IV ${e.fwdIv.toFixed(1)} (+${e.premiumIv.toFixed(1)} vs front), ${t('opt_implied')} ±${e.impliedMove.toFixed(1)}% / ${e.gapDays.toFixed(0)}d` });
+  }
+  if (o.dvol24chg > 5) flags.push({ key: 'volspike', pts: 5, txt: `${t('opt_volspike')} +${o.dvol24chg.toFixed(1)}/24h` });
+  return { flags };
+}
+
+function renderOptionsPanel() {
+  const slot = document.getElementById('options-slot');
+  if (!slot) return;
+  const card = o => {
+    if (!o) return '';
+    if (o.error) return `<div style="padding:8px;background:var(--bg-elev-2);border-radius:6px;color:var(--text-dim);font-size:11px">${o.cur} · ${o.error}</div>`;
+    const read = optionsRead(o);
+    const pctCol = o.pct30 < 25 ? 'var(--green)' : o.pct30 > 75 ? 'var(--red)' : 'var(--amber)';
+    const skewCol = s => s > 6 ? 'var(--red)' : s < -3 ? 'var(--green)' : 'var(--text-muted)';
+    const termCol = v => v > 4 ? 'var(--amber)' : v < 0 ? 'var(--text-muted)' : 'var(--text)';
+    const mv = (m) => `±${m.toFixed(1)}% <span style="color:var(--text-dim)">(${fmt(o.spot * (1 - m / 100))}–${fmt(o.spot * (1 + m / 100))})</span>`;
+    return `
+      <div style="padding:8px 10px;background:var(--bg-elev-2);border-radius:6px;font-size:11px;line-height:1.5">
+        <div style="display:flex;justify-content:space-between;align-items:baseline">
+          <span style="font-family:var(--mono);font-weight:900;font-size:14px;color:var(--gold)">${o.cur} <span style="font-size:11px;color:var(--text-muted);font-weight:500">${fmt(o.spot)}</span></span>
+          <span style="font-family:var(--mono)">DVOL <b style="font-size:14px">${o.dvol.toFixed(1)}</b> <span style="color:${o.dvol24chg > 0 ? 'var(--red)' : 'var(--green)'};font-size:10px">${o.dvol24chg >= 0 ? '+' : ''}${o.dvol24chg.toFixed(1)}/24h</span></span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;margin:3px 0 6px;font-size:9.5px;color:var(--text-dim);font-family:var(--mono)">
+          <span>${o.lo30.toFixed(0)}</span>
+          <div style="flex:1;height:5px;background:var(--bg);border-radius:3px;position:relative"><div style="position:absolute;left:${o.pct30}%;top:-2px;width:3px;height:9px;background:${pctCol};border-radius:2px"></div></div>
+          <span>${o.hi30.toFixed(0)}</span>
+          <span style="color:${pctCol};font-weight:700">${o.pct30.toFixed(0)}. pct 30d</span>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-family:var(--mono);font-size:10.5px">
+          <tr><td style="color:var(--text-muted);padding:2px 0">${t('opt_move')} 1d / 7d</td><td style="text-align:right">${mv(o.move1d)}</td></tr>
+          <tr><td style="color:var(--text-muted);padding:2px 0"></td><td style="text-align:right">${mv(o.move7d)}</td></tr>
+          ${o.week ? `<tr><td style="color:var(--text-muted);padding:2px 0">${t('opt_week')} ${o.week.expStr} (${o.week.days.toFixed(0)}d) ATM IV</td><td style="text-align:right">${o.week.atmIv.toFixed(1)} · skew <b style="color:${skewCol(o.week.skew)}">${o.week.skew >= 0 ? '+' : ''}${o.week.skew.toFixed(1)}</b> <span style="color:var(--text-dim)">P${fmt(o.week.putK)}/C${fmt(o.week.callK)}</span></td></tr>` : ''}
+          ${o.month ? `<tr><td style="color:var(--text-muted);padding:2px 0">${t('opt_month')} ${o.month.expStr} (${o.month.days.toFixed(0)}d) ATM IV</td><td style="text-align:right">${o.month.atmIv.toFixed(1)} · skew <b style="color:${skewCol(o.month.skew)}">${o.month.skew >= 0 ? '+' : ''}${o.month.skew.toFixed(1)}</b></td></tr>` : ''}
+          ${o.term != null ? `<tr><td style="color:var(--text-muted);padding:2px 0" title="${t('opt_term_tip')}">${t('opt_term')}</td><td style="text-align:right;color:${termCol(o.term)};font-weight:700">${o.term >= 0 ? '+' : ''}${o.term.toFixed(1)} ${o.term > 4 ? '· ' + t('opt_premium_short') : o.term < 0 ? '· ' + t('opt_no_premium') : ''}</td></tr>` : ''}
+          ${o.event ? `<tr><td style="color:var(--text-muted);padding:2px 0" title="${t('opt_event_tip')}">⚠ ${o.event.name} · ${t('opt_event_premium')}</td><td style="text-align:right;color:${o.event.premiumIv == null ? 'var(--text-dim)' : o.event.premiumIv > 3 ? 'var(--amber)' : o.event.premiumIv <= 0.5 ? 'var(--red)' : 'var(--text)'};font-weight:700">fwd IV ${o.event.fwdIv.toFixed(1)} (${o.event.premiumIv >= 0 ? '+' : ''}${o.event.premiumIv.toFixed(1)}) · ±${o.event.impliedMove.toFixed(1)}%/${o.event.gapDays.toFixed(0)}d <span style="color:var(--text-dim);font-weight:400">(${o.event.before.expStr}→${o.event.after.expStr})</span></td></tr>` : ''}
+          ${o.pcr != null ? `<tr><td style="color:var(--text-muted);padding:2px 0" title="${t('opt_pcr_tip')}">Put/Call OI</td><td style="text-align:right;color:${o.pcr > 1 ? 'var(--red)' : o.pcr < 0.6 ? 'var(--green)' : 'var(--text)'}">${o.pcr.toFixed(2)}</td></tr>` : ''}
+        </table>
+        ${read && read.flags.length ? read.flags.map(f => `<div style="margin-top:4px;color:${f.key === 'fear' || f.key === 'complacent' || f.key === 'volspike' ? 'var(--amber)' : 'var(--text-muted)'}">• ${f.txt}</div>`).join('') : `<div style="margin-top:4px;color:var(--text-dim);font-style:italic">${t('opt_calm')}</div>`}
+      </div>`;
+  };
+  const any = Object.values(optionsData).some(o => o && !o.error);
+  slot.innerHTML = `
+    <section class="panel">
+      <div class="panel-head">
+        <h3>🎭 ${t('opt_title')}</h3>
+        <span class="meta">Deribit · ${any ? `<span style="color:var(--green)">✓</span> ${hhmm(Math.max(...Object.values(optionsData).map(o => o.ts || 0)))}` : t('sm_loading')} · 10 min</span>
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;line-height:1.5">${t('opt_desc')}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:8px">${card(optionsData.BTC)}${card(optionsData.ETH)}</div>
+    </section>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // FLUSH RISK — "czy warunki sprzyjają gwałtownemu zrzutowi?" per token, 0–100
 // Zbudowane na flushu BTC 4.09.2026 12:00 UTC (−2.5%/1h, 8× wolumen), który miał
 // wszystkie te cechy 2–10h wcześniej. Nie przewiduje świecy — mierzy kruchość.
@@ -3428,11 +3589,15 @@ async function computeFlushRisk(tkr) {
   if (wf.n && (wf.openShort - wf.closeShort) > 5e6) add('whales', 10, `${t('fr_whales')} $${((wf.openShort - wf.closeShort) / 1e6).toFixed(0)}M`);
   const b = smartMoney.binance[tkr];
   if (b?.flipTo === 'short' && b.flipAt && Date.now() - b.flipAt < 6 * 3600_000) add('whales', 5, `${t('fr_top_flip')} ${hhmm(b.flipAt)}`);
+  // opcje: własny łańcuch dla BTC/ETH; dla altów proxy z BTC (½ wagi) — alty dziedziczą reżim vol BTC
+  const optSrc = optionsData[tkr] ? tkr : 'BTC', optW = optionsData[tkr] ? 1 : 0.5;
+  const oread = optionsRead(optionsData[optSrc]);
+  if (oread) for (const f of oread.flags) if (f.pts) add('options', Math.round(f.pts * optW), `${optSrc !== tkr ? `[${optSrc} proxy] ` : ''}🎭 ${f.txt}`);
 
   const score = Math.min(100, parts.reduce((s, p) => s + p.pts, 0));
   const level = score >= 55 ? 'high' : score >= 30 ? 'elevated' : 'low';
   return { score, level, parts, ts: Date.now(),
-    m: { px, chg24, chg8, range24, range8, oiNow, oiChg8, oiChg24, vol6, volMax24, fundingNow, sfp } };
+    m: { px, chg24, chg8, range24, range8, oiNow, oiChg8, oiChg24, vol6, volMax24, fundingNow, sfp, move1d: optionsData[optSrc]?.move1d ?? null, optSrc } };
 }
 
 async function refreshFlushRisk() {
@@ -3488,6 +3653,7 @@ function renderFlushRiskPanel() {
           <span>${t('fr_range')} 8h <b>${m.range8.toFixed(1)}%</b> / 24h <b>${m.range24.toFixed(1)}%</b></span>
           <span>vol6h/peak <b>${m.volMax24 ? (m.vol6 / m.volMax24 * 100).toFixed(0) : '—'}%</b></span>
           <span>funding <b>${m.fundingNow.toFixed(3)}%</b></span>
+          ${m.move1d != null ? `<span title="${t('opt_move_tip')}">🎭 1σ 1d <b>±${m.move1d.toFixed(1)}%</b>${m.optSrc !== tk ? ` <span style="color:var(--text-dim)">(${m.optSrc})</span>` : ''}</span>` : ''}
         </div>
         ${f.parts.length ? f.parts.map(p => `<div style="display:flex;gap:6px;align-items:baseline"><span style="font-family:var(--mono);font-weight:800;color:${c};min-width:28px">+${p.pts}</span><span style="color:var(--text)">${p.txt}</span></div>`).join('') : `<div style="color:var(--text-dim);font-style:italic">${t('fr_none')}</div>`}
       </div>`;
@@ -5860,6 +6026,9 @@ setTimeout(() => {
   setTimeout(refreshSmartMoney, 1500);
   setInterval(refreshSmartMoney, 300_000);
   // FLUSH RISK — co 5 min (po smart money, żeby mieć taśmę wielorybów), pierwszy raz po 4s
+  renderOptionsPanel();
+  refreshOptions().then(() => { renderFlushRiskPanel(); });   // opcje PRZED Flush Risk (składnik)
+  setInterval(refreshOptions, 600_000);
   renderFlushRiskPanel();
   setTimeout(refreshFlushRisk, 4000);
   setInterval(refreshFlushRisk, 300_000);
