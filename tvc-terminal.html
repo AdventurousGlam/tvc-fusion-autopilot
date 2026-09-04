@@ -814,6 +814,7 @@
     <span style="color:var(--text-dim);font-size:10px;font-weight:600;letter-spacing:0.05em">P&L TODAY</span>
     <span id="cb-pnl-value" style="margin-left:6px">—</span>
     <span id="cb-pos-count" style="color:var(--text-muted);font-size:11px;font-weight:600;margin-left:10px">— open</span>
+    <span id="cb-flush"></span>
   </div>
   <div style="position:relative">
     <div id="cb-alerts" onclick="toggleAlertsDropdown()" style="font-family:var(--mono);font-weight:800;font-size:13px;cursor:pointer;padding:4px 8px;border-radius:4px;transition:background .12s;user-select:none" title="Click aby zobaczyć wszystkie active alerts">—</div>
@@ -1113,6 +1114,34 @@ const I18N = {
   sm_oppose:          { pl: 'smart money przeciwne',                    en: 'smart money opposes' },
   sm_mixed:           { pl: 'smart money mieszane',                     en: 'smart money mixed' },
   ago_suffix:         { pl: 'temu',                                     en: 'ago' },
+  // ─── FLUSH RISK ───
+  fr_title:           { pl: 'Flush Risk · kruchość rynku',               en: 'Flush Risk · market fragility' },
+  fr_desc:            { pl: 'Nie przewiduje świecy — mierzy, czy warunki sprzyjają gwałtownemu zrzutowi (jak BTC 4.09, −2.5%/1h na NFP). Składniki: makro-event za chwilę, dźwignia wychodzi przy stojącej cenie (OI ↓), kompresja zakresu, wysuszony wolumen, SFP na szczycie, crowded funding, wieloryby otwierają shorty. <strong>WYSOKI</strong> = nie otwieraj nowych longów, zacieśnij trailing, zmniejsz rozmiar.', en: 'Does not predict the candle — measures whether conditions favor a violent flush (like BTC Sep 4, −2.5%/1h on NFP). Components: imminent macro event, leverage leaving while price is flat (OI ↓), range compression, dried-up volume, SFP at highs, crowded funding, whales opening shorts. <strong>HIGH</strong> = no new longs, tighten trailing, reduce size.' },
+  fr_note:            { pl: 'Dane: Bybit perp (kline 1h, historia OI 1h, funding) + taśma wielorybów + kalendarz makro z fusion. Odświeżanie co 5 min. Przejście na WYSOKI trafia do Decision Journal. Kalibracja progów po 30 dniach na podstawie realnych flushy.', en: 'Data: Bybit perp (1h klines, 1h OI history, funding) + whale tape + macro calendar from fusion. Refreshes every 5 min. Transition to HIGH is logged to Decision Journal. Thresholds to be calibrated after 30 days against real flushes.' },
+  fr_low:             { pl: 'NISKI',                                     en: 'LOW' },
+  fr_elevated:        { pl: 'PODWYŻSZONY',                               en: 'ELEVATED' },
+  fr_high:            { pl: 'WYSOKI',                                    en: 'HIGH' },
+  fr_none:            { pl: 'brak sygnałów kruchości',                   en: 'no fragility signals' },
+  fr_next_macro:      { pl: 'Najbliższy tier-1',                          en: 'Next tier-1' },
+  fr_no_macro:        { pl: 'brak makro w kalendarzu — odśwież fusion',   en: 'no macro in calendar — refresh fusion' },
+  fr_in:              { pl: 'za',                                         en: 'in' },
+  fr_macro:           { pl: '⚠ Tier-1 makro:',                            en: '⚠ Tier-1 macro:' },
+  fr_macro2:          { pl: 'Tier-2 makro < 3h:',                         en: 'Tier-2 macro < 3h:' },
+  fr_oi_pump:         { pl: 'Pompa na dźwigni',                           en: 'Leverage-driven pump' },
+  fr_oi_bleed:        { pl: 'cena stoi, OI spada',                        en: 'price flat, OI falling' },
+  fr_price:           { pl: 'cena',                                       en: 'price' },
+  fr_compress:        { pl: 'Kompresja zakresu',                          en: 'Range compression' },
+  fr_after:           { pl: 'po',                                         en: 'after' },
+  fr_tight:           { pl: 'Ciasny zakres',                              en: 'Tight range' },
+  fr_vol:             { pl: 'Wysuszony wolumen',                          en: 'Dried-up volume' },
+  fr_avg:             { pl: 'śr.',                                        en: 'avg' },
+  fr_of_peak:         { pl: 'szczytu 24h',                                en: 'of 24h peak' },
+  fr_sfp:             { pl: 'SFP bear na szczycie',                       en: 'Bearish SFP at highs' },
+  fr_funding:         { pl: 'Crowded long — funding',                     en: 'Crowded long — funding' },
+  fr_whales:          { pl: 'Wieloryby HL otwierają shorty netto',        en: 'HL whales opening net shorts' },
+  fr_top_flip:        { pl: 'Top traderzy Binance przeszli na short o',   en: 'Binance top traders flipped short at' },
+  fr_range:           { pl: 'zakres',                                     en: 'range' },
+  fr_oi_tip:          { pl: 'Zmiana Open Interest (Bybit perp). Spadek przy płaskiej cenie = dźwignia wychodzi = rynek traci paliwo.', en: 'Open Interest change (Bybit perp). Falling while price is flat = leverage leaving = market losing fuel.' },
   // ─── CRYPTO PICKS ───
   picks_title:        { pl: 'Crypto Picks · poranny shortlist',          en: 'Crypto Picks · morning shortlist' },
   picks_setups:       { pl: 'setupów',                                   en: 'setups' },
@@ -1867,6 +1896,9 @@ function render() {
       <!-- PORTFOLIO HEALTH — live status wszystkich tokenów -->
       <div id="portfolio-health-slot" class="hide-morning" style="grid-column: span 12; width: 100%;"></div>
 
+      <!-- FLUSH RISK — kruchość rynku per token (OI dywergencja, kompresja, makro, SFP, funding, wieloryby) -->
+      <div id="flush-risk-slot" style="grid-column: span 12; width: 100%;"></div>
+
       <!-- LIVE LIQUIDATIONS — Binance perp WS -->
 
       <!-- ═══════════════════════════════════════════════════════════════ -->
@@ -2037,7 +2069,7 @@ function render() {
   `;
 
   updatePriceCells();
-  try { renderSmartMoneyPanel(); updateSmartMoneyTags(); } catch (e) {}
+  try { renderSmartMoneyPanel(); updateSmartMoneyTags(); renderFlushRiskPanel(); } catch (e) {}
   renderBreakdownChart();
   updateFngGauge();
   if (btcDominance != null) {
@@ -3037,6 +3069,7 @@ function renderJournalPanel() {
     AGGRESSIVE_BUY: '🚀', AGGRESSIVE_SELL: '📉',
     MANUAL: '📝',
     WHALE_OPEN_LONG: '🐋▲', WHALE_CLOSE_LONG: '🐋✕', WHALE_OPEN_SHORT: '🐋▼', WHALE_CLOSE_SHORT: '🐋✕',
+    FLUSH_RISK_HIGH: '🌊',
   };
   const outcomeColors = {
     win: 'var(--green)', loss: 'var(--red)', breakeven: 'var(--amber)',
@@ -3295,6 +3328,178 @@ async function refreshFngLive() {
       gaugeEl.className = 'gauge ' + (value < 25 ? 'extreme-fear' : value < 45 ? 'fear' : value < 55 ? 'neutral' : value < 75 ? 'greed' : 'extreme-greed');
     }
   } catch (e) { console.warn('F&G fetch failed:', e); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FLUSH RISK — "czy warunki sprzyjają gwałtownemu zrzutowi?" per token, 0–100
+// Zbudowane na flushu BTC 4.09.2026 12:00 UTC (−2.5%/1h, 8× wolumen), który miał
+// wszystkie te cechy 2–10h wcześniej. Nie przewiduje świecy — mierzy kruchość.
+// Składniki (punkty):
+//   makro     tier-1 event < 3h: 30 · < 12h: 15 · tier-2 < 3h: 8
+//   OI dyw.   pompa na OI (24h cena +3% & OI +5%) i potem cena płasko a OI spada (8h): 20
+//             samo "OI −3% w 8h przy cenie ±1%": 12
+//   kompresja zakres 8h < 1.5% po zakresie 24h > 4%: 15 · zakres 8h < 1% : 8
+//   wolumen   śr. wolumen 6h < 30% maks. godziny z 24h: 10
+//   SFP bear  knot > max 24h i close pod nim, w ostatnich 12h: 15
+//   funding   > 0.01%/8h (crowded long): 10 · > 0.02%: 15
+//   wieloryby taśma HL 24h: open short netto > $5M: 10 · top traderzy Binance flip na short < 6h: 5
+// Poziomy: < 30 NISKI · 30–54 PODWYŻSZONY · ≥ 55 WYSOKI
+// Dane: Bybit (kline 1h, OI hist 1h, tickers) — CORS OK, bez geoblokady.
+// ═══════════════════════════════════════════════════════════════════════════
+const flushRisk = {};   // { ticker: { score, level, parts:[{k,pts,txt}], oi:{...}, ts } }
+let _flushLastLevel = {};
+
+function nextMacroEvent(tierMax = 2) {
+  const evs = lastFusion?.macro_events || [];
+  const now = Date.now();
+  let best = null;
+  for (const ev of evs) {
+    if (ev.tier > tierMax) continue;
+    const ms = Date.parse(ev.ts_utc) - now;
+    if (ms > 0 && (!best || ms < best.ms)) best = { ev, ms };
+  }
+  return best;
+}
+function macroWithin(hours, tier) {
+  const now = Date.now();
+  return (lastFusion?.macro_events || []).find(ev => ev.tier === tier && (() => { const d = Date.parse(ev.ts_utc) - now; return d > -3600_000 && d < hours * 3600_000; })());
+}
+
+async function computeFlushRisk(tkr) {
+  const sym = `${tkr}USDT`;
+  const [kj, oj, tj] = await Promise.all([
+    smFetchJson(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${sym}&interval=60&limit=30`),
+    smFetchJson(`https://api.bybit.com/v5/market/open-interest?category=linear&symbol=${sym}&intervalTime=1h&limit=30`),
+    smFetchJson(`https://api.bybit.com/v5/market/tickers?category=linear&symbol=${sym}`),
+  ]);
+  // Bybit zwraca najnowsze pierwsze → odwracamy; ostatnia świeca może być niedomknięta
+  const k = (kj.result?.list || []).map(c => ({ t: +c[0], o: +c[1], h: +c[2], l: +c[3], c: +c[4], v: +c[5] })).reverse();
+  const oi = (oj.result?.list || []).map(x => ({ t: +x.timestamp, oi: +x.openInterest })).reverse();
+  const fundingNow = parseFloat(tj.result?.list?.[0]?.fundingRate || 0) * 100;
+  if (k.length < 26 || oi.length < 10) throw new Error('za mało danych');
+
+  const last = k[k.length - 1], px = last.c;
+  const win = (n) => k.slice(-n);
+  const hi = arr => Math.max(...arr.map(c => c.h)), lo = arr => Math.min(...arr.map(c => c.l));
+  const range24 = (hi(win(24)) - lo(win(24))) / px * 100;
+  const range8 = (hi(win(8)) - lo(win(8))) / px * 100;
+  const chg24 = (px - k[k.length - 25].c) / k[k.length - 25].c * 100;
+  const chg8 = (px - k[k.length - 9].c) / k[k.length - 9].c * 100;
+  const oiNow = oi[oi.length - 1].oi, oi8 = oi[Math.max(0, oi.length - 9)].oi, oi24 = oi[Math.max(0, oi.length - 25)].oi;
+  const oiChg8 = (oiNow - oi8) / oi8 * 100, oiChg24 = (oiNow - oi24) / oi24 * 100;
+  const vol6 = win(7).slice(0, 6).reduce((s, c) => s + c.v, 0) / 6;   // bez bieżącej niedomkniętej
+  const volMax24 = Math.max(...win(25).slice(0, 24).map(c => c.v));
+  // SFP bear: w ostatnich 12 świecach knot powyżej maksimum poprzednich 24h, a close poniżej
+  let sfp = null;
+  for (let i = k.length - 12; i < k.length; i++) {
+    const prior = k.slice(Math.max(0, i - 24), i); if (prior.length < 12) continue;
+    const ph = hi(prior);
+    if (k[i].h > ph && k[i].c < ph) sfp = { t: k[i].t, h: k[i].h, ph, idx: i };
+  }
+  // SFP jest ważny tylko dopóki rynek nie zamknął się powyżej jego knota (inaczej to był zwykły pullback w pompie)
+  if (sfp && k.slice(sfp.idx + 1).some(c => c.c > sfp.h)) sfp = null;
+
+  const parts = [];
+  const add = (key, pts, txt) => { if (pts > 0) parts.push({ key, pts, txt }); };
+  // makro
+  const m1 = macroWithin(3, 1), m1b = macroWithin(12, 1), m2 = macroWithin(3, 2);
+  if (m1) add('macro', 30, `${t('fr_macro')} ${m1.name.split(' — ')[0]} ${t('fr_in')} ${Math.max(0, Math.round((Date.parse(m1.ts_utc) - Date.now()) / 60000))} min`);
+  else if (m1b) add('macro', 15, `${t('fr_macro')} ${m1b.name.split(' — ')[0]} ${t('fr_in')} ${Math.round((Date.parse(m1b.ts_utc) - Date.now()) / 3600000)}h`);
+  else if (m2) add('macro', 8, `${t('fr_macro2')} ${m2.name}`);
+  // OI
+  const pumpOnOI = chg24 > 3 && oiChg24 > 5;
+  const flatBleed = Math.abs(chg8) < 1 && oiChg8 < -2;
+  if (pumpOnOI && flatBleed) add('oi', 20, `${t('fr_oi_pump')} (24h: ${chg24 >= 0 ? '+' : ''}${chg24.toFixed(1)}% / OI ${oiChg24 >= 0 ? '+' : ''}${oiChg24.toFixed(1)}%) → ${t('fr_oi_bleed')} (8h: ${chg8 >= 0 ? '+' : ''}${chg8.toFixed(1)}% / OI ${oiChg8.toFixed(1)}%)`);
+  else if (Math.abs(chg8) < 1 && oiChg8 < -3) add('oi', 12, `${t('fr_oi_bleed')} (8h: ${t('fr_price')} ${chg8 >= 0 ? '+' : ''}${chg8.toFixed(1)}% / OI ${oiChg8.toFixed(1)}%)`);
+  // kompresja
+  if (range8 < 1.5 && range24 > 4) add('compress', 15, `${t('fr_compress')} (8h ${range8.toFixed(1)}% ${t('fr_after')} 24h ${range24.toFixed(1)}%)`);
+  else if (range8 < 1.0) add('compress', 8, `${t('fr_tight')} (8h ${range8.toFixed(1)}%)`);
+  // wolumen
+  if (volMax24 > 0 && vol6 / volMax24 < 0.3) add('volume', 10, `${t('fr_vol')} (6h ${t('fr_avg')} = ${(vol6 / volMax24 * 100).toFixed(0)}% ${t('fr_of_peak')})`);
+  // SFP
+  if (sfp) add('sfp', 15, `${t('fr_sfp')} ${hhmm(sfp.t)} (${fmt(sfp.h)} > ${fmt(sfp.ph)})`);
+  // funding
+  if (fundingNow > 0.02) add('funding', 15, `${t('fr_funding')} ${fundingNow.toFixed(3)}%/8h`);
+  else if (fundingNow > 0.01) add('funding', 10, `${t('fr_funding')} ${fundingNow.toFixed(3)}%/8h`);
+  // wieloryby
+  const wf = smWhaleFlow24h(tkr);
+  if (wf.n && (wf.openShort - wf.closeShort) > 5e6) add('whales', 10, `${t('fr_whales')} $${((wf.openShort - wf.closeShort) / 1e6).toFixed(0)}M`);
+  const b = smartMoney.binance[tkr];
+  if (b?.flipTo === 'short' && b.flipAt && Date.now() - b.flipAt < 6 * 3600_000) add('whales', 5, `${t('fr_top_flip')} ${hhmm(b.flipAt)}`);
+
+  const score = Math.min(100, parts.reduce((s, p) => s + p.pts, 0));
+  const level = score >= 55 ? 'high' : score >= 30 ? 'elevated' : 'low';
+  return { score, level, parts, ts: Date.now(),
+    m: { px, chg24, chg8, range24, range8, oiNow, oiChg8, oiChg24, vol6, volMax24, fundingNow, sfp } };
+}
+
+async function refreshFlushRisk() {
+  for (const tkr of SM_TICKERS) {
+    try {
+      flushRisk[tkr] = await computeFlushRisk(tkr);
+      // wejście na WYSOKI → journal (raz na przejście)
+      if (flushRisk[tkr].level === 'high' && _flushLastLevel[tkr] !== 'high') {
+        try { addJournalEntry({ ts: Date.now(), ticker: tkr, type: 'FLUSH_RISK_HIGH', severity: 'high', msg: `🌊 Flush Risk ${flushRisk[tkr].score}/100 — ${flushRisk[tkr].parts.map(p => p.txt).join(' · ')}`, price_at_alert: flushRisk[tkr].m.px, imbalance_at_alert: null, pressure_at_alert: null, confluence: false }); } catch (e) {}
+      }
+      _flushLastLevel[tkr] = flushRisk[tkr].level;
+    } catch (e) { flushRisk[tkr] = { error: String(e.message || e), ts: Date.now() }; }
+  }
+  renderFlushRiskPanel();
+  updateFlushBadge();
+}
+
+function flushColor(level) { return level === 'high' ? 'var(--red)' : level === 'elevated' ? 'var(--amber)' : 'var(--green)'; }
+function flushLabel(level) { return level === 'high' ? t('fr_high') : level === 'elevated' ? t('fr_elevated') : t('fr_low'); }
+
+function updateFlushBadge() {
+  const el = document.getElementById('cb-flush');
+  if (!el) return;
+  const items = SM_TICKERS.map(tk => flushRisk[tk]).filter(f => f && !f.error);
+  if (!items.length) { el.innerHTML = ''; return; }
+  const worst = items.reduce((a, b) => b.score > a.score ? b : a);
+  const tkrs = SM_TICKERS.filter(tk => flushRisk[tk]?.level === 'high');
+  const elev = SM_TICKERS.filter(tk => flushRisk[tk]?.level === 'elevated');
+  el.innerHTML = `<span onclick="scrollToFlush()" style="cursor:pointer;color:${flushColor(worst.level)};font-size:11px;font-weight:800;margin-left:10px;padding:2px 7px;border:1px solid ${flushColor(worst.level)};border-radius:4px" title="${t('fr_title')}">🌊 ${tkrs.length ? tkrs.join('/') + ' ' + t('fr_high') : elev.length ? elev.join('/') + ' ' + t('fr_elevated') : t('fr_low')}</span>`;
+}
+function scrollToFlush() { const el = document.getElementById('flush-risk-slot'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+
+function renderFlushRiskPanel() {
+  const slot = document.getElementById('flush-risk-slot');
+  if (!slot) return;
+  const nm = nextMacroEvent(1);
+  const rows = SM_TICKERS.map(tk => {
+    const f = flushRisk[tk];
+    if (!f) return `<div style="padding:8px;background:var(--bg-elev-2);border-radius:6px;color:var(--text-dim);font-size:11px">${tk} · ${t('sm_loading')}</div>`;
+    if (f.error) return `<div style="padding:8px;background:var(--bg-elev-2);border-radius:6px;color:var(--text-dim);font-size:11px">${tk} · ${f.error}</div>`;
+    const c = flushColor(f.level); const m = f.m;
+    const sg = v => (v >= 0 ? '+' : '') + v.toFixed(1) + '%';
+    return `
+      <div style="padding:8px 10px;background:var(--bg-elev-2);border-radius:6px;border-left:4px solid ${c};font-size:11px;line-height:1.5">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <span><span style="font-family:var(--mono);font-weight:900;font-size:14px;color:var(--gold)">${tk}</span> <span style="font-family:var(--mono);color:var(--text-muted)">${fmt(m.px)}</span></span>
+          <span style="font-family:var(--mono);font-weight:900;color:${c};font-size:13px">${f.score}<span style="font-size:9px;color:var(--text-dim)">/100</span> ${flushLabel(f.level)}</span>
+        </div>
+        <div style="height:5px;background:var(--bg);border-radius:3px;margin:4px 0 6px;overflow:hidden"><div style="width:${f.score}%;height:100%;background:${c}"></div></div>
+        <div style="font-family:var(--mono);font-size:9.5px;color:var(--text-dim);display:flex;gap:8px;flex-wrap:wrap;margin-bottom:4px">
+          <span title="${t('fr_oi_tip')}">OI 8h <b style="color:${m.oiChg8 < -2 ? 'var(--red)' : m.oiChg8 > 2 ? 'var(--green)' : 'var(--text-muted)'}">${sg(m.oiChg8)}</b> · 24h <b style="color:${m.oiChg24 < -2 ? 'var(--red)' : m.oiChg24 > 2 ? 'var(--green)' : 'var(--text-muted)'}">${sg(m.oiChg24)}</b></span>
+          <span>${t('fr_price')} 8h <b>${sg(m.chg8)}</b> · 24h <b>${sg(m.chg24)}</b></span>
+          <span>${t('fr_range')} 8h <b>${m.range8.toFixed(1)}%</b> / 24h <b>${m.range24.toFixed(1)}%</b></span>
+          <span>vol6h/peak <b>${m.volMax24 ? (m.vol6 / m.volMax24 * 100).toFixed(0) : '—'}%</b></span>
+          <span>funding <b>${m.fundingNow.toFixed(3)}%</b></span>
+        </div>
+        ${f.parts.length ? f.parts.map(p => `<div style="display:flex;gap:6px;align-items:baseline"><span style="font-family:var(--mono);font-weight:800;color:${c};min-width:28px">+${p.pts}</span><span style="color:var(--text)">${p.txt}</span></div>`).join('') : `<div style="color:var(--text-dim);font-style:italic">${t('fr_none')}</div>`}
+      </div>`;
+  }).join('');
+  slot.innerHTML = `
+    <section class="panel">
+      <div class="panel-head">
+        <h3>🌊 ${t('fr_title')}</h3>
+        <span class="meta">${nm ? `${t('fr_next_macro')}: <span style="color:${nm.ms < 3 * 3600_000 ? 'var(--red)' : 'var(--gold)'};font-weight:700">${nm.ev.name.split(' — ')[0]}</span> ${t('fr_in')} ${nm.ms < 3600_000 ? Math.round(nm.ms / 60000) + ' min' : nm.ms < 86400_000 ? Math.round(nm.ms / 3600_000) + 'h' : Math.round(nm.ms / 86400_000) + 'd'} (${hhmm(Date.parse(nm.ev.ts_utc))} PL)` : `<span style="color:var(--text-dim)">${t('fr_no_macro')}</span>`}</span>
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;line-height:1.5">${t('fr_desc')}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px">${rows}</div>
+      <div style="font-size:9.5px;color:var(--text-dim);margin-top:8px;line-height:1.5">${t('fr_note')}</div>
+    </section>`;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -3956,34 +4161,19 @@ function updateCommandBar() {
   // Re-render dropdown na żywo jeśli otwarty
   if (_alertsDropdownOpen) renderAlertsDropdown();
 
-  // Countdown to next catalyst
-  const events = lastFusion.catalyst_calendar_this_week || [];
+  // Countdown to next catalyst — najpierw structured macro_events (dokładny UTC),
+  // potem fallback: parsowanie "Pt 04.09: ... 14:30 PL" z catalyst_calendar
   const now = new Date();
-  const yearMonth = { 'Sty':0,'Lut':1,'Mar':2,'Kwi':3,'Maj':4,'Cze':5,'Lip':6,'Sie':7,'Wrz':8,'Paź':9,'Lis':10,'Gru':11,
-                      'Jan':0,'Feb':1,'Mar':2,'Apr':3,'May':4,'Jun':5,'Jul':6,'Aug':7,'Sep':8,'Oct':9,'Nov':10,'Dec':11 };
   let nextEvent = null, nextTime = Infinity, nextLabel = '';
-  for (const ev of events) {
-    const dateMatch = ev.match(/(?:Sty|Lut|Mar|Kwi|Maj|Cze|Lip|Sie|Wrz|Paź|Lis|Gru|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})/);
-    const monthMatch = ev.match(/(Sty|Lut|Mar|Kwi|Maj|Cze|Lip|Sie|Wrz|Paź|Lis|Gru|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/);
-    if (!dateMatch || !monthMatch) continue;
-    const day = parseInt(dateMatch[1]);
-    const month = yearMonth[monthMatch[1]];
-    const timeMatch = ev.match(/(\d{1,2}):(\d{2})\s*(ET|CET)/);
-    let eventDate = new Date(now.getFullYear(), month, day, 10, 0);  // default 10:00
-    if (timeMatch) {
-      let h = parseInt(timeMatch[1]);
-      const m = parseInt(timeMatch[2]);
-      if (timeMatch[3] === 'ET') h += 6;  // convert ET → CET
-      eventDate = new Date(now.getFullYear(), month, day, h, m);
-    }
+  const nm = nextMacroEvent();
+  if (nm) { nextTime = nm.ms; nextEvent = nm.ev; nextLabel = (nm.ev.tier === 1 ? '⚠ ' : '') + nm.ev.name.split(' — ')[0].replace(/\s*\(.*?\)/, '').substring(0, 28); }
+  for (const ev of (lastFusion.catalyst_calendar_this_week || [])) {
+    const dm = ev.match(/^\w+ (\d{2})\.(\d{2}):\s*(.*)$/);
+    if (!dm) continue;
+    const tm = ev.match(/(\d{1,2}):(\d{2})\s*PL/);
+    const eventDate = new Date(now.getFullYear(), parseInt(dm[2]) - 1, parseInt(dm[1]), tm ? parseInt(tm[1]) : 10, tm ? parseInt(tm[2]) : 0);
     const diff = eventDate.getTime() - now.getTime();
-    if (diff > 0 && diff < nextTime) {
-      nextTime = diff;
-      nextEvent = ev;
-      // Extract event name (first meaningful phrase after date)
-      const nameMatch = ev.match(/(?:ET|CET|:)\s*([^—\-·]+)/);
-      nextLabel = nameMatch ? nameMatch[1].trim().substring(0, 30) : ev.substring(0, 30);
-    }
+    if (diff > 0 && diff < nextTime) { nextTime = diff; nextEvent = ev; nextLabel = dm[3].split(/[—·(]/)[0].trim().substring(0, 28); }
   }
   const countdownEl = document.getElementById('cb-countdown-value');
   if (countdownEl) {
@@ -5651,6 +5841,10 @@ setTimeout(() => {
   renderSmartMoneyPanel();
   setTimeout(refreshSmartMoney, 1500);
   setInterval(refreshSmartMoney, 300_000);
+  // FLUSH RISK — co 5 min (po smart money, żeby mieć taśmę wielorybów), pierwszy raz po 4s
+  renderFlushRiskPanel();
+  setTimeout(refreshFlushRisk, 4000);
+  setInterval(refreshFlushRisk, 300_000);
   // F&G INDEX LIVE — refresh every 15 min
   refreshFngLive();
   setInterval(refreshFngLive, 900_000);

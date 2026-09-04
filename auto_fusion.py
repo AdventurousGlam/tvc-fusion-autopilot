@@ -400,74 +400,105 @@ def compute_size(score, regime, ticker):
     return round(min(2.5, base * multiplier), 2)
 
 
+# ─── MAKRO: prawdziwy harmonogram 2026 (UTC) ───
+# Powód: 4.09.2026 flush BTC −2.5% w świecy 12:00 UTC = NFP o 12:30 UTC. Kalendarz nie miał NFP,
+# ani FOMC 15–16.09. Bez tego ani terminal (Flush Risk), ani paper_bot (blackout) nie wiedzą,
+# że za 2h jest event. Godziny: NFP/CPI/PCE 8:30 ET = 12:30 UTC (13:30 UTC gdy DST kończy się
+# w listopadzie — pomijamy tę subtelność, blackout ma 3h zapasu). FOMC decyzja 14:00 ET = 18:00 UTC.
+FOMC_2026 = ["2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17", "2026-07-29",
+             "2026-09-16", "2026-10-28", "2026-12-09"]   # dzień decyzji (2. dzień posiedzenia)
+# CPI — BLS publikuje zwykle między 10. a 15.; daty 2026 zweryfikuj na bls.gov/schedule — oznaczone approx
+CPI_2026_APPROX = {9: 11, 10: 14, 11: 12, 12: 10}
+
+
+def generate_macro_events(days_ahead=45):
+    """Zwraca listę structured eventów: {date, time_utc, ts_utc(ISO), name, tier, approx}."""
+    from datetime import date, timedelta
+    today = date.today()
+    out = []
+
+    def add(d, hh, mm, name, tier, approx=False):
+        if d < today - timedelta(days=1) or (d - today).days > days_ahead:
+            return
+        ts = datetime(d.year, d.month, d.day, hh, mm, tzinfo=timezone.utc)
+        out.append({"date": d.isoformat(), "time_utc": f"{hh:02d}:{mm:02d}", "ts_utc": ts.isoformat(),
+                    "name": name, "tier": tier, "approx": approx})
+
+    for m_ahead in range(3):
+        y, m = today.year, today.month + m_ahead
+        if m > 12:
+            m -= 12; y += 1
+        first = date(y, m, 1)
+        # NFP — pierwszy piątek miesiąca (wyjątek: święto → BLS przesuwa; approx)
+        nfp = first + timedelta(days=(4 - first.weekday()) % 7)
+        add(nfp, 12, 30, "US NFP (Non-Farm Payrolls) — jobs report", 1, approx=True)
+        # CPI
+        cpi_day = CPI_2026_APPROX.get(m) if y == 2026 else None
+        if cpi_day:
+            add(date(y, m, cpi_day), 12, 30, "US CPI (inflacja)", 1, approx=True)
+        # PCE — ostatni piątek miesiąca (approx)
+        last = (date(y + (m == 12), (m % 12) + 1, 1) - timedelta(days=1))
+        while last.weekday() != 4:
+            last -= timedelta(days=1)
+        add(last, 12, 30, "US PCE Core (ulubiona miara Fed)", 1, approx=True)
+    for s in FOMC_2026:
+        d = date.fromisoformat(s)
+        add(d, 18, 0, "FOMC decyzja o stopach + konferencja 14:30 ET", 1)
+    # Cotygodniowe jobless claims (czwartek) — tier 2, ruszają rynkiem gdy Fed patrzy na pracę
+    for w in range(7):
+        d = today + timedelta(days=(3 - today.weekday()) % 7 + 7 * w)
+        add(d, 12, 30, "US Initial Jobless Claims", 2)
+    out.sort(key=lambda e: e["ts_utc"])
+    return out
+
+
 def generate_catalyst_calendar():
     """
-    Generuje real catalyst calendar dla widget'a (parseable dates).
-    Kombinuje:
-    - Znane fixed events (Sep 15 CLARITY vote)
-    - Compute'owane recurring events (PCE = last Tue of month, CPI = 2nd Wed, FOMC dates)
-    - Weekly rhythm (Fed speeches, ETF flow updates)
+    Catalyst calendar dla terminala (parseable "Dzień DD.MM: ..." — terminal parsuje datę).
+    Makro (NFP/CPI/PCE/FOMC/claims) pochodzi z generate_macro_events() — jedno źródło prawdy
+    dla kalendarza, Flush Risk w terminalu i blackoutu w paper_bot. Plus znane eventy krypto.
     """
     from datetime import date, timedelta
     now = datetime.now()
     today = date.today()
     events = []
+    dow_pl = ["Pon", "Wt", "Śr", "Czw", "Pt", "Sob", "Nd"]
 
-    # ─── Fixed known events ───
+    # ─── Znane eventy krypto / regulacyjne (ręcznie, weryfikuj co miesiąc) ───
     fixed_events = [
-        (date(2026, 9, 15), "Pon 15.09: CLARITY Act Senate cloture vote — mid-term regulatory catalyst"),
-        (date(2026, 10, 28), "Wt 28.10: Next FOMC decision + press conf 14:30 ET"),
-        (date(2026, 12, 16), "Wt 16.12: FOMC year-end decision"),
+        (date(2026, 9, 9),  "Solana Transaction V1 mainnet (większy limit tx — ZK/cross-chain)"),
+        (date(2026, 9, 15), "CLARITY Act — Senat, cloture vote (regulacyjny katalizator)"),
+        (date(2026, 9, 24), "Phantom kończy wsparcie SUI — migracja walletów (presja on-chain SUI)"),
     ]
     for d, text in fixed_events:
         if d >= today and (d - today).days < 90:
-            events.append(text)
+            events.append(f"{dow_pl[d.weekday()]} {d.day:02d}.{d.month:02d}: {text}")
 
-    # ─── Compute next PCE (usually last Friday of month, historically ~28th) ───
-    # PCE typically released Friday of last full week; approximating as last Friday
-    for m_ahead in range(2):
-        target_month = now.month + m_ahead
-        target_year = now.year
-        if target_month > 12:
-            target_month -= 12
-            target_year += 1
-        # Last day of month
-        if target_month == 12:
-            last_day = date(target_year + 1, 1, 1) - timedelta(days=1)
-        else:
-            last_day = date(target_year, target_month + 1, 1) - timedelta(days=1)
-        # Find last Friday
-        while last_day.weekday() != 4:  # 4 = Friday
-            last_day -= timedelta(days=1)
-        if last_day >= today:
-            month_pl = {1:"sty",2:"lut",3:"mar",4:"kwi",5:"maj",6:"cze",7:"lip",8:"sie",9:"wrz",10:"paź",11:"lis",12:"gru"}[target_month]
-            events.append(f"Pt {last_day.day:02d}.{target_month:02d}: {month_pl.upper()} PCE Core release 8:30 ET (14:30 CET) — TIER-1 macro event")
+    # ─── Makro z jednego źródła ───
+    for ev in generate_macro_events(days_ahead=45):
+        d = date.fromisoformat(ev["date"])
+        if d < today:
+            continue
+        # 12:30 UTC = 14:30 CEST; 18:00 UTC = 20:00 CEST (do końca października)
+        hh, mm = ev["time_utc"].split(":")
+        local = f"{(int(hh) + 2) % 24:02d}:{mm}"
+        tier = "TIER-1 ⚠" if ev["tier"] == 1 else "tier-2"
+        events.append(f"{dow_pl[d.weekday()]} {d.day:02d}.{d.month:02d}: {ev['name']} {local} PL — {tier}{' (data approx)' if ev.get('approx') else ''}")
 
-    # ─── Compute next CPI (usually 2nd Wed of month) ───
-    for m_ahead in range(2):
-        target_month = now.month + m_ahead
-        target_year = now.year
-        if target_month > 12:
-            target_month -= 12
-            target_year += 1
-        first_day = date(target_year, target_month, 1)
-        # Find 2nd Wednesday
-        days_to_wed = (2 - first_day.weekday()) % 7
-        second_wed = first_day + timedelta(days=days_to_wed + 7)
-        if second_wed >= today:
-            events.append(f"Śr {second_wed.day:02d}.{target_month:02d}: US CPI release 8:30 ET (14:30 CET)")
-
-    # ─── This week: ETF flow watch (daily 4pm ET) ───
-    events.append(f"Codziennie: BTC + ETH ETF flow tape post-4pm ET (22:00 CET) — key institutional signal")
-
-    # ─── Weekly rhythm ───
-    weekday = now.weekday()  # 0=Mon
-    if weekday == 4:  # Friday
-        events.append("Dziś (Pt): weekly market close — rebalance przed weekend")
+    events.append("Codziennie: BTC + ETH ETF flow tape po 16:00 ET (22:00 PL) — sygnał instytucjonalny")
+    weekday = now.weekday()
+    if weekday == 4:
+        events.append("Dziś (Pt): weekly close — rebalans przed weekendem, płytsza płynność")
     elif weekday == 0:
-        events.append("Dziś (Pon): US market open po weekend — fresh signals")
+        events.append("Dziś (Pon): US open po weekendzie — świeże przepływy")
 
-    return events[:12]  # cap at 12 events
+    # sort: eventy z datą chronologicznie, reszta na końcu
+    import re as _re
+    def _key(s):
+        m = _re.match(r"^\w+ (\d{2})\.(\d{2}):", s)
+        return (0, int(m.group(2)), int(m.group(1))) if m else (1, 0, 0)
+    events.sort(key=_key)
+    return events[:20]
 
 
 def detect_regime(btc_price_data, fng, btc_dominance):
@@ -661,6 +692,7 @@ def generate_fusion():
         "short_blocked_by_regime": [] if regime in ("TRENDING_DOWN", "TRENDING_DOWN_VOLATILE", "CRASH") else [f"Regime {regime} — shorty bez CHoCH override dozwolone tylko w TRENDING_DOWN/CRASH. Token ze świeżym bearish CHoCH na 1h omija ten gate (patrz choch_override w decyzji)."],
         "catalyst_calendar_this_week": generate_catalyst_calendar(),
         "crypto_picks": load_crypto_picks(),
+        "macro_events": generate_macro_events(days_ahead=45),
         "conclusion": (
             f"Regime {regime}. Long risk {aggregate_risk:.1f}% · Short risk {aggregate_short_risk:.1f}% capital. "
             f"Top pick: {decisions[0]['ticker']} score {decisions[0]['score']} "

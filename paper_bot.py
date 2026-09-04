@@ -456,6 +456,28 @@ def _maybe_daily_digest_inner(conn):
         raise
 
 
+MACRO_BLACKOUT_BEFORE_H = 3.0
+MACRO_BLACKOUT_AFTER_H = 1.0
+
+
+def _macro_blackout(data, now_utc):
+    """Zwraca opis eventu jeśli jesteśmy w oknie blackoutu tier-1, inaczej None."""
+    for ev in data.get("macro_events") or []:
+        if int(ev.get("tier", 2)) != 1:
+            continue
+        try:
+            ts = datetime.fromisoformat(ev["ts_utc"])
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+        except (KeyError, ValueError, TypeError):
+            continue
+        delta_h = (ts - now_utc).total_seconds() / 3600
+        if -MACRO_BLACKOUT_AFTER_H <= delta_h <= MACRO_BLACKOUT_BEFORE_H:
+            when = f"za {delta_h * 60:.0f} min" if delta_h >= 0 else f"{-delta_h * 60:.0f} min temu"
+            return f"{ev.get('name', 'tier-1 event')} ({when})"
+    return None
+
+
 def cmd_open(args):
     db_init()
     path, fmt = find_fusion_input()
@@ -475,6 +497,16 @@ def cmd_open(args):
     opened = 0
     skipped = 0
     now_utc = datetime.now(timezone.utc)
+
+    # v0.4 — MAKRO BLACKOUT. 4.09.2026: bot otworzył BTC long na dźwigniowej pompie, dzień
+    # później NFP zrobił −2.5% w jednej świecy. Nowe wejścia (oba kierunki) zablokowane
+    # od 3h przed do 1h po tier-1 evencie (NFP/CPI/PCE/FOMC z macro_events w fusion).
+    # Otwarte pozycje żyją dalej — SL/TP/trailing robią swoje.
+    blackout = _macro_blackout(data, now_utc)
+    if blackout:
+        print(f"[skip] MAKRO BLACKOUT — {blackout} — brak nowych wejść w tym cyklu")
+        conn.close()
+        return
 
     # v0.3 — dzienny limit nowych wejść (bezpiecznik anty-overtrading)
     day_start = now_utc.strftime("%Y-%m-%dT00:00:00")
