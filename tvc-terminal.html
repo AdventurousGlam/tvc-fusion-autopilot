@@ -1096,6 +1096,19 @@ const I18N = {
   sm_cot_am_tip:      { pl: 'Asset Managers (fundusze, ETF-y, instytucje) — pozycja netto w kontraktach (zmiana tyg.)', en: 'Asset Managers (funds, ETFs, institutions) — net contracts (weekly change)' },
   sm_cot_lf_tip:      { pl: 'Leveraged Funds (hedge fundy, CTA) — pozycja netto; zwykle short jako basis trade', en: 'Leveraged Funds (hedge funds, CTAs) — net contracts; typically short via basis trade' },
   sm_cot_note:        { pl: 'CFTC publikuje w piątek dane z wtorku. Lev. Funds short ≠ bearish (basis trade vs ETF). Patrz na ZMIANĘ Asset Managers.', en: 'CFTC publishes Friday for Tuesday data. Lev. Funds short ≠ bearish (basis trade vs ETF). Watch the Asset Managers CHANGE.' },
+  sm_flip:            { pl: 'przeszli na',                              en: 'flipped' },
+  sm_since:           { pl: 'o',                                        en: 'at' },
+  sm_no_flip:         { pl: 'bez zmiany strony 24h',                    en: 'no side change 24h' },
+  sm_h_flow:          { pl: 'Wieloryby 24h',                            en: 'Whales 24h' },
+  sm_h_flow_tip:      { pl: 'Co wieloryby ROBIŁY w 24h: presja kupna (open long + close short) minus presja sprzedaży (open short + close long), liczba zleceń, ostatni ruch z godziną.', en: 'What whales DID in 24h: buy pressure (open long + close short) minus sell pressure (open short + close long), order count, last move with time.' },
+  sm_last:            { pl: 'ost.',                                     en: 'last' },
+  sm_tape_title:      { pl: 'Taśma wielorybów — kiedy otwierają i zamykają', en: 'Whale tape — when they open and close' },
+  sm_tape_when:       { pl: 'Kiedy',                                    en: 'When' },
+  sm_tape_action:     { pl: 'Akcja',                                    en: 'Action' },
+  sm_tape_all:        { pl: 'wszystkie coiny',                          en: 'all coins' },
+  sm_tape_ours:       { pl: 'tylko nasze 5',                            en: 'our 5 only' },
+  sm_tape_none:       { pl: 'Brak zleceń ≥ $250k w 24h',                en: 'No orders ≥ $250k in 24h' },
+  sm_tape_note:       { pl: 'Czas = koniec zlecenia (lokalny). Fille tego samego walletu/coina/kierunku w oknie 15 min sklejone w jedno zlecenie; nawias = czas budowania pozycji. Złote tło = ≥ $2M, trafia też do Decision Journal. rPnL = zrealizowany wynik przy zamknięciu.', en: 'Time = order end (local). Fills of same wallet/coin/direction within 15 min merged into one order; parentheses = build time. Gold background = ≥ $2M, also logged to Decision Journal. rPnL = realized result on close.' },
   sm_agree:           { pl: 'smart money zgodne',                       en: 'smart money agrees' },
   sm_oppose:          { pl: 'smart money przeciwne',                    en: 'smart money opposes' },
   sm_mixed:           { pl: 'smart money mieszane',                     en: 'smart money mixed' },
@@ -3023,6 +3036,7 @@ function renderJournalPanel() {
     CONFLUENCE_BUY: '✅', CONFLUENCE_SELL: '⚠️',
     AGGRESSIVE_BUY: '🚀', AGGRESSIVE_SELL: '📉',
     MANUAL: '📝',
+    WHALE_OPEN_LONG: '🐋▲', WHALE_CLOSE_LONG: '🐋✕', WHALE_OPEN_SHORT: '🐋▼', WHALE_CLOSE_SHORT: '🐋✕',
   };
   const outcomeColors = {
     win: 'var(--green)', loss: 'var(--red)', breakeven: 'var(--amber)',
@@ -3418,7 +3432,8 @@ async function smRefreshHyperliquid() {
   states.forEach((s, i) => {
     const w = smartMoney.hl.whales[i];
     const ps = s?.assetPositions || [];
-    if (ps.length > SM_HL_MAX_POS) return;  // market maker / hedger — pomijamy (nie jest kierunkowy)
+    w.mm = ps.length > SM_HL_MAX_POS;      // market maker / hedger — flaga używana też przez taśmę
+    if (w.mm) return;                       // nie jest kierunkowy — pomijamy w agregacie
     for (const p of ps) {
       const c = p.position.coin; if (!agg[c]) continue;
       const sz = parseFloat(p.position.szi), val = parseFloat(p.position.positionValue);
@@ -3430,6 +3445,88 @@ async function smRefreshHyperliquid() {
   });
   for (const t of SM_TICKERS) agg[t].top.sort((a, b) => b.val - a.val).splice(4);
   smartMoney.hl.agg = agg; smartMoney.hl.ts = Date.now();
+}
+
+// ─── WHALE TAPE — kiedy wieloryby otwierają / zamykają (Hyperliquid userFillsByTime) ───
+// Fille są rozdrobnione (setki małych wykonań, TWAP), więc sklejamy je w "zlecenia":
+// ten sam wallet + coin + kierunek w oknie 15 min = jedno zdarzenie. Pokazujemy ≥ $250k.
+// Okno 24h: API oddaje max 2000 filli per wallet, aktywni wieloryby wyczerpują to w ~1 dzień.
+// Market makerów wycinamy po liczbie otwartych pozycji (>12), NIE po liczbie filli —
+// prawdziwe wieloryby też robią setki filli budując pozycję TWAP-em.
+const SM_TAPE_WINDOW_MS = 24 * 3600_000, SM_TAPE_MERGE_MS = 15 * 60_000, SM_TAPE_MIN_USD = 250_000, SM_TAPE_JOURNAL_USD = 2_000_000;
+smartMoney.tape = { events: [], ts: 0 };
+let _smTapeAll = false;
+function smTapeToggleAll() { _smTapeAll = !_smTapeAll; renderSmartMoneyPanel(); }
+
+async function smRefreshHlTape() {
+  if (!smartMoney.hl.whales.length) return;
+  const since = Date.now() - SM_TAPE_WINDOW_MS;
+  const all = await Promise.all(smartMoney.hl.whales.map(w => w.mm ? Promise.resolve([]) :
+    fetch('https://api.hyperliquid.xyz/info', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'userFillsByTime', user: w.a, startTime: since }) })
+      .then(r => r.json()).then(f => Array.isArray(f) ? f.map(x => ({ ...x, _w: w })) : []).catch(() => [])));
+  const events = [];
+  for (const fills of all) {
+    if (!fills.length) continue;
+    fills.sort((a, b) => a.time - b.time);
+    const open = {};  // key coin|dir → bieżące sklejane zdarzenie
+    for (const f of fills) {
+      if (!f.dir || !/^(Open|Close) (Long|Short)$/.test(f.dir)) continue;
+      const px = parseFloat(f.px), sz = parseFloat(f.sz), usd = px * sz;
+      const key = `${f.coin}|${f.dir}`;
+      const cur = open[key];
+      if (cur && f.time - cur.end <= SM_TAPE_MERGE_MS) {
+        cur.usd += usd; cur.sz += sz; cur.pxSum += px * sz; cur.end = f.time; cur.pnl += parseFloat(f.closedPnl || 0); cur.n++;
+      } else {
+        if (cur) events.push(cur);
+        open[key] = { start: f.time, end: f.time, coin: f.coin, dir: f.dir, usd, sz, pxSum: px * sz, pnl: parseFloat(f.closedPnl || 0), n: 1, addr: f._w.a, name: f._w.name, acct: f._w.v, hash: f.hash };
+      }
+    }
+    for (const cur of Object.values(open)) events.push(cur);
+  }
+  const big = events.filter(e => e.usd >= SM_TAPE_MIN_USD).map(e => ({ ...e, px: e.pxSum / e.sz })).sort((a, b) => b.end - a.end);
+  smartMoney.tape = { events: big.slice(0, 300), ts: Date.now() };
+  // Największe ruchy (≥ $2M) na naszych tokenach → Decision Journal (informacyjnie, nie otwiera pozycji)
+  for (const e of big) {
+    if (e.usd < SM_TAPE_JOURNAL_USD || !SM_TICKERS.includes(e.coin)) continue;
+    try {
+      addJournalEntry({ ts: e.end, ticker: e.coin, type: `WHALE_${e.dir.toUpperCase().replace(' ', '_')}`, severity: 'info',
+        msg: `🐋 ${e.dir} $${(e.usd / 1e6).toFixed(1)}M @ ${fmt(e.px)} · wallet ${e.name || e.addr.slice(0, 6) + '…' + e.addr.slice(-4)} ($${(e.acct / 1e6).toFixed(0)}M)${e.dir.startsWith('Close') ? ` · realized ${e.pnl >= 0 ? '+' : '-'}$${(Math.abs(e.pnl) / 1e3).toFixed(0)}k` : ''}`,
+        price_at_alert: e.px, imbalance_at_alert: null, pressure_at_alert: null, confluence: false, whale: true });
+    } catch (err) {}
+  }
+}
+
+// Przepływ 24h per token: co wieloryby ROBIŁY (nie tylko co trzymają)
+function smWhaleFlow24h(tkr) {
+  const since = Date.now() - 24 * 3600_000;
+  const f = { openLong: 0, closeLong: 0, openShort: 0, closeShort: 0, n: 0, last: null };
+  for (const e of smartMoney.tape.events) {
+    if (e.coin !== tkr || e.end < since) continue;
+    f.n++;
+    if (e.dir === 'Open Long') f.openLong += e.usd; else if (e.dir === 'Close Long') f.closeLong += e.usd;
+    else if (e.dir === 'Open Short') f.openShort += e.usd; else if (e.dir === 'Close Short') f.closeShort += e.usd;
+    if (!f.last || e.end > f.last.end) f.last = e;
+  }
+  // presja kupna = otwieranie longów + zamykanie shortów; presja sprzedaży = odwrotnie
+  f.net = (f.openLong + f.closeShort) - (f.openShort + f.closeLong);
+  return f;
+}
+
+// Binance top traderzy — kiedy ostatnio ZMIENILI stronę (ratio przecięło 1.0) w ostatnich 24h
+async function smRefreshBinanceFlips() {
+  for (const tkr of SM_TICKERS) {
+    const b = smartMoney.binance[tkr]; if (!b) continue;
+    try {
+      const series = await smFetchJson(`https://fapi.binance.com/futures/data/topLongShortPositionRatio?symbol=${tkr}USDT&period=1h&limit=24`);
+      let flipAt = null, flipTo = null;
+      for (let i = 1; i < series.length; i++) {
+        const prev = parseFloat(series[i - 1].longShortRatio) >= 1, cur = parseFloat(series[i].longShortRatio) >= 1;
+        if (prev !== cur) { flipAt = series[i].timestamp; flipTo = cur ? 'long' : 'short'; }
+      }
+      const vals = series.map(s => parseFloat(s.longShortRatio));
+      b.flipAt = flipAt; b.flipTo = flipTo; b.min24 = Math.min(...vals); b.max24 = Math.max(...vals);
+    } catch (e) {}
+  }
 }
 
 async function smRefreshCot() {
@@ -3455,6 +3552,8 @@ async function smRefreshCot() {
 
 async function refreshSmartMoney() {
   await Promise.allSettled([smRefreshBinance(), smRefreshHyperliquid(), smRefreshCot()]);
+  // Zależne od powyższych: taśma wielorybów (lista walletów) + flipy top traderów (Binance OK)
+  await Promise.allSettled([smRefreshHlTape(), smRefreshBinanceFlips()]);
   smartMoney.ts = Date.now();
   renderSmartMoneyPanel();
   updateSmartMoneyTags();
@@ -3503,6 +3602,14 @@ function updateSmartMoneyTags() {
   }
 }
 
+function hhmm(ts) { return new Date(ts).toLocaleTimeString(_lang === 'en' ? 'en-US' : 'pl-PL', { hour: '2-digit', minute: '2-digit', hour12: false }); }
+function ddhhmm(ts) { const d = new Date(ts); const today = new Date().toDateString() === d.toDateString(); return (today ? '' : d.toLocaleDateString(_lang === 'en' ? 'en-US' : 'pl-PL', { day: '2-digit', month: '2-digit' }) + ' ') + hhmm(ts); }
+function dirShort(dir) { return ({ 'Open Long': '▲ open L', 'Close Long': '✕ close L', 'Open Short': '▼ open S', 'Close Short': '✕ close S' })[dir] || dir; }
+function dirBadge(dir) {
+  const m = { 'Open Long': ['▲ OPEN LONG', 'var(--green)'], 'Close Long': ['✕ CLOSE LONG', 'rgba(248,113,113,0.8)'], 'Open Short': ['▼ OPEN SHORT', 'var(--red)'], 'Close Short': ['✕ CLOSE SHORT', 'rgba(52,211,153,0.8)'] }[dir] || [dir, 'var(--text-muted)'];
+  return `<span style="color:${m[1]};font-weight:800;white-space:nowrap">${m[0]}</span>`;
+}
+
 function renderSmartMoneyPanel() {
   const slot = document.getElementById('smart-money-slot');
   if (!slot) return;
@@ -3519,11 +3626,12 @@ function renderSmartMoneyPanel() {
     const hlBar = h && (h.long + h.short) > 0 ? `<div style="display:flex;height:6px;border-radius:3px;overflow:hidden;background:var(--bg);margin-top:3px"><div style="width:${h.long / (h.long + h.short) * 100}%;background:var(--green)"></div><div style="flex:1;background:var(--red)"></div></div>` : '';
     return `<tr style="border-bottom:1px solid var(--border-soft)">
       <td style="padding:6px 6px;font-weight:800;color:var(--gold);font-family:var(--mono)">${tkr}</td>
-      <td style="padding:6px;text-align:right;font-family:var(--mono)">${b ? `<span style="color:${ratioCol(b.topPosRatio)};font-weight:800">${b.topPosRatio.toFixed(2)}</span><div style="font-size:9px;color:var(--text-dim)">${b.topPosLong.toFixed(0)}% L · Δ3h <span style="color:${b.topPosDelta3h > 0.02 ? 'var(--green)' : b.topPosDelta3h < -0.02 ? 'var(--red)' : 'var(--text-dim)'}">${b.topPosDelta3h >= 0 ? '+' : ''}${b.topPosDelta3h.toFixed(2)}</span></div>` : '<span style="color:var(--text-dim)">—</span>'}</td>
+      <td style="padding:6px;text-align:right;font-family:var(--mono)">${b ? `<span style="color:${ratioCol(b.topPosRatio)};font-weight:800">${b.topPosRatio.toFixed(2)}</span><div style="font-size:9px;color:var(--text-dim)">${b.topPosLong.toFixed(0)}% L · Δ3h <span style="color:${b.topPosDelta3h > 0.02 ? 'var(--green)' : b.topPosDelta3h < -0.02 ? 'var(--red)' : 'var(--text-dim)'}">${b.topPosDelta3h >= 0 ? '+' : ''}${b.topPosDelta3h.toFixed(2)}</span></div>${b.flipAt ? `<div style="font-size:9px;color:${b.flipTo === 'long' ? 'var(--green)' : 'var(--red)'}">${t('sm_flip')} ${b.flipTo} ${t('sm_since')} ${hhmm(b.flipAt)}</div>` : b.min24 != null ? `<div style="font-size:9px;color:var(--text-dim)">${t('sm_no_flip')}</div>` : ''}` : '<span style="color:var(--text-dim)">—</span>'}</td>
       <td style="padding:6px;text-align:right;font-family:var(--mono)">${b ? `<span style="color:${ratioCol(b.globalRatio)}">${b.globalRatio.toFixed(2)}</span><div style="font-size:9px;color:var(--text-dim)">${b.globalLong.toFixed(0)}% L</div>` : by ? `<span style="color:var(--text-muted)">${by.buy.toFixed(0)}% L</span><div style="font-size:9px;color:var(--text-dim)">Bybit</div>` : '<span style="color:var(--text-dim)">—</span>'}</td>
       <td style="padding:6px;text-align:center;font-family:var(--mono)">${b ? (() => { const d = b.topPosRatio - b.globalRatio; return `<span style="color:${d > 0.35 ? 'var(--green)' : d < -0.35 ? 'var(--red)' : 'var(--text-dim)'};font-weight:700">${d > 0.35 ? '▲ ' + t('sm_big_long') : d < -0.35 ? '▼ ' + t('sm_big_short') : '≈'}</span>`; })() : '—'}</td>
       <td style="padding:6px;text-align:right;font-family:var(--mono)">${b ? `<span style="color:${b.takerRatio >= 1.1 ? 'var(--green)' : b.takerRatio <= 0.9 ? 'var(--red)' : 'var(--text-muted)'}">${b.takerRatio.toFixed(2)}</span>` : '—'}</td>
       <td style="padding:6px;font-family:var(--mono);min-width:120px">${h && (h.long + h.short) > 0 ? `<span style="color:var(--green)">${usdM(h.long)}</span> <span style="color:var(--text-dim)">/</span> <span style="color:var(--red)">${usdM(h.short)}</span> <span style="font-size:9px;color:var(--text-dim)">(${h.nL}L/${h.nS}S)</span>${hlBar}` : `<span style="color:var(--text-dim)">${hlOk ? t('sm_hl_none') : '—'}</span>`}</td>
+      <td style="padding:6px;font-family:var(--mono);min-width:110px">${(() => { const f = smWhaleFlow24h(tkr); if (!f.n) return `<span style="color:var(--text-dim)">—</span>`; const c = f.net > 0 ? 'var(--green)' : f.net < 0 ? 'var(--red)' : 'var(--text-muted)'; return `<span style="color:${c};font-weight:800">${f.net >= 0 ? '+' : '-'}${usdM(Math.abs(f.net))}</span> <span style="font-size:9px;color:var(--text-dim)">${f.n}×</span><div style="font-size:9px;color:var(--text-dim)">${t('sm_last')}: ${dirShort(f.last.dir)} ${usdM(f.last.usd)} · ${hhmm(f.last.end)}</div>`; })()}</td>
       <td style="padding:6px;text-align:center"><span style="font-weight:800;color:${vCol};font-size:11px" title="${v.votes.map(x => `${x.src}: ${x.txt}`).join('&#10;')}">${v.label}</span></td>
     </tr>`;
   }).join('');
@@ -3568,6 +3676,7 @@ function renderSmartMoneyPanel() {
           <th style="text-align:center;padding:4px 6px" title="${t('sm_h_div_tip')}">${t('sm_h_div')}</th>
           <th style="text-align:right;padding:4px 6px" title="${t('sm_h_taker_tip')}">Taker B/S</th>
           <th style="text-align:left;padding:4px 6px" title="${t('sm_h_hl_tip')}">${t('sm_h_hl')}</th>
+          <th style="text-align:left;padding:4px 6px" title="${t('sm_h_flow_tip')}">${t('sm_h_flow')}</th>
           <th style="text-align:center;padding:4px 6px">${t('sm_h_verdict')}</th>
         </tr></thead>
         <tbody>${rows}</tbody>
@@ -3585,6 +3694,27 @@ function renderSmartMoneyPanel() {
           <div style="font-size:9.5px;color:var(--text-dim);margin-top:6px;line-height:1.5">${t('sm_cot_note')}</div>
         </div>
       </div>
+      ${(() => {
+        const ev = smartMoney.tape.events.filter(e => _smTapeAll || SM_TICKERS.includes(e.coin)).slice(0, 40);
+        const rows = ev.map(e => `<tr style="border-bottom:1px solid var(--border-soft);${e.usd >= SM_TAPE_JOURNAL_USD ? 'background:rgba(212,164,78,0.06)' : ''}">
+            <td style="padding:4px 6px;font-family:var(--mono);color:var(--text-muted);white-space:nowrap">${ddhhmm(e.end)}${e.end - e.start > 60_000 ? `<span style="font-size:9px;color:var(--text-dim)"> (${Math.round((e.end - e.start) / 60000)}min)</span>` : ''}</td>
+            <td style="padding:4px 6px"><a href="https://app.hyperliquid.xyz/explorer/address/${e.addr}" target="_blank" rel="noopener" style="color:var(--blue);text-decoration:none;font-family:var(--mono)">${e.name || e.addr.slice(0, 6) + '…' + e.addr.slice(-4)}</a> <span style="font-size:9px;color:var(--text-dim)">$${(e.acct / 1e6).toFixed(0)}M</span></td>
+            <td style="padding:4px 6px;font-family:var(--mono);font-weight:800;color:${SM_TICKERS.includes(e.coin) ? 'var(--gold)' : 'var(--text-muted)'}">${e.coin}</td>
+            <td style="padding:4px 6px">${dirBadge(e.dir)}</td>
+            <td style="padding:4px 6px;text-align:right;font-family:var(--mono);font-weight:${e.usd >= SM_TAPE_JOURNAL_USD ? 900 : 700}">${usdM(e.usd)}</td>
+            <td style="padding:4px 6px;text-align:right;font-family:var(--mono);color:var(--text-muted)">${fmt(e.px)}</td>
+            <td style="padding:4px 6px;text-align:right;font-family:var(--mono);color:${e.dir.startsWith('Close') ? (e.pnl >= 0 ? 'var(--green)' : 'var(--red)') : 'var(--text-dim)'}">${e.dir.startsWith('Close') ? `${e.pnl >= 0 ? '+' : '-'}$${(Math.abs(e.pnl) / 1e3).toFixed(0)}k` : '—'}</td>
+          </tr>`).join('');
+        return `
+        <div style="background:var(--bg-elev-2);border-radius:6px;padding:8px;margin-top:10px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;flex-wrap:wrap;gap:6px">
+            <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700">🐋 ${t('sm_tape_title')} · 24h · ≥ $${SM_TAPE_MIN_USD / 1e3}k</div>
+            <button onclick="smTapeToggleAll()" style="background:transparent;color:${_smTapeAll ? 'var(--gold)' : 'var(--text-dim)'};border:1px solid ${_smTapeAll ? 'var(--gold)' : 'var(--border)'};padding:2px 8px;border-radius:3px;font-size:10px;cursor:pointer">${_smTapeAll ? t('sm_tape_all') : t('sm_tape_ours')} ▾</button>
+          </div>
+          ${ev.length ? `<div style="max-height:320px;overflow-y:auto"><table style="width:100%;border-collapse:collapse;font-size:10.5px"><thead><tr style="color:var(--text-dim);font-size:9px;text-transform:uppercase;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-elev-2)"><th style="text-align:left;padding:3px 6px">${t('sm_tape_when')}</th><th style="text-align:left;padding:3px 6px">Wallet</th><th style="text-align:left;padding:3px 6px">Coin</th><th style="text-align:left;padding:3px 6px">${t('sm_tape_action')}</th><th style="text-align:right;padding:3px 6px">Size</th><th style="text-align:right;padding:3px 6px">Avg px</th><th style="text-align:right;padding:3px 6px">rPnL</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div style="padding:10px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">${smartMoney.tape.ts ? t('sm_tape_none') : t('sm_loading')}</div>`}
+          <div style="font-size:9.5px;color:var(--text-dim);margin-top:6px;line-height:1.5">${t('sm_tape_note')}</div>
+        </div>`;
+      })()}
     </section>`;
 }
 
