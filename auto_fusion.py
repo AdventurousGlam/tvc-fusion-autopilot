@@ -660,6 +660,7 @@ def generate_fusion():
         ],
         "short_blocked_by_regime": [] if regime in ("TRENDING_DOWN", "TRENDING_DOWN_VOLATILE", "CRASH") else [f"Regime {regime} — shorty bez CHoCH override dozwolone tylko w TRENDING_DOWN/CRASH. Token ze świeżym bearish CHoCH na 1h omija ten gate (patrz choch_override w decyzji)."],
         "catalyst_calendar_this_week": generate_catalyst_calendar(),
+        "crypto_picks": load_crypto_picks(),
         "conclusion": (
             f"Regime {regime}. Long risk {aggregate_risk:.1f}% · Short risk {aggregate_short_risk:.1f}% capital. "
             f"Top pick: {decisions[0]['ticker']} score {decisions[0]['score']} "
@@ -677,6 +678,31 @@ def generate_fusion():
     os.system(f"python3 {FUSION_DIR}/paper_bot.py upload")
 
     print(f"[done] Fusion {fusion['date']} generated + uploaded")
+
+
+def load_crypto_picks():
+    """
+    Poranne Crypto Picks (scheduled task morning-crypto-picks na Macu Gosi) zapisuje
+    crypto_picks.json do repo i pushuje. Tu tylko przepuszczamy je do fusion_latest.json,
+    żeby terminal mógł pokazać osobny panel. Brak pliku / zły JSON → None (panel się nie pokaże).
+    """
+    path = FUSION_DIR / "crypto_picks.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict) or not isinstance(data.get("picks"), list):
+            return None
+        # Oznacz wiek — terminal przygasza picks starsze niż 1 dzień
+        try:
+            age_days = (datetime.now() - datetime.strptime(data.get("date", ""), "%Y-%m-%d")).days
+        except ValueError:
+            age_days = None
+        data["age_days"] = age_days
+        return data
+    except Exception as e:
+        print(f"[picks] crypto_picks.json unreadable: {e}")
+        return None
 
 
 def loop_mode(interval_hours):
