@@ -171,27 +171,17 @@ def _parse_farside_table(text, days=60):
 
 def fetch_etf_flows():
     """
-    BTC + ETH spot ETF net flows — Farside 'all data' (HTML). Wartości w mln USD.
-    Zwraca dla każdego: series (60 dni), d1, d7, d30 (sumy), streak (dni z rzędu tego samego znaku),
-    plus kompatybilne btc_1d / eth_1d (w USD, nie mln — compute_score dzieli przez 1e8).
+    BTC + ETH spot ETF net flows (Farside, mln USD).
+    Runner GitHub NIE dosięga Farside (403 direct, 403 jina, 522 allorigins — Cloudflare blokuje
+    IP datacenter). Terminal w przeglądarce Gosi dosięga (przez jina) i — jeśli ma token Gist —
+    zapisuje etf_flows.json do Gist. Tu: najpierw próba bezpośrednia (gdyby kiedyś zadziałała),
+    potem Gist. Zwraca None gdy oba puste; d1/d7/d30/streak liczone jak w przeglądarce.
     """
-    out = {"btc_1d": None, "eth_1d": None}
+    out = {"btc_1d": None, "eth_1d": None, "btc": None, "eth": None}
     for key, url in (("btc", "https://farside.co.uk/bitcoin-etf-flow-all-data/"),
                      ("eth", "https://farside.co.uk/ethereum-etf-flow-all-data/")):
         try:
-            try:
-                text = _get_text(url)
-            except Exception as e1:
-                # Cloudflare 403 dla IP datacenter → reader proxy (zwraca markdown tej samej tabeli)
-                print(f"[etf] {key} direct failed ({e1}) — próbuję przez r.jina.ai")
-                FETCH_ERRORS.append(f"etf.{key}.direct: {type(e1).__name__}: {str(e1)[:80]}")
-                try:
-                    text = _get_text("https://r.jina.ai/" + url)
-                except Exception as e2:
-                    FETCH_ERRORS.append(f"etf.{key}.jina: {type(e2).__name__}: {str(e2)[:80]}")
-                    time.sleep(2)
-                    text = _get_text("https://api.allorigins.win/raw?url=" + ur.quote(url, safe=""))
-            series = _parse_farside_table(text)
+            series = _parse_farside_table(_get_text(url))
             if not series:
                 raise ValueError("pusta tabela")
             vals = [r["total"] for r in series]
@@ -203,13 +193,26 @@ def fetch_etf_flows():
                     break
             out[key] = {"series": series, "d1": vals[-1], "d7": sum(vals[-5:]), "d30": sum(vals[-21:]),
                         "streak": streak * sign, "last_date": series[-1]["date"], "unit": "USD mln",
-                        "cum_60d": sum(vals)}
+                        "cum_60d": sum(vals), "source": "farside-direct"}
             out[f"{key}_1d"] = vals[-1] * 1_000_000
-            print(f"[etf] {key.upper()} {series[-1]['date']}: {vals[-1]:+.1f}M · 5d {sum(vals[-5:]):+.0f}M · streak {streak * sign:+d}")
+            print(f"[etf] {key.upper()} direct {series[-1]['date']}: {vals[-1]:+.1f}M")
         except Exception as e:
-            print(f"[etf] {key} fetch/parse failed: {e}")
-            FETCH_ERRORS.append(f"etf.{key}: {type(e).__name__}: {str(e)[:160]}")
-            out[key] = None
+            FETCH_ERRORS.append(f"etf.{key}.direct: {type(e).__name__}: {str(e)[:60]}")
+    if not out["btc"] and not out["eth"]:
+        # Gist: etf_flows.json zapisany przez terminal (przeglądarka Gosi przez jina)
+        gist_id = os.environ.get("TVC_GIST_ID", "e88c461a964ed22d2cf14326c65b4438")
+        try:
+            g = _get_json(f"https://gist.githubusercontent.com/AdventurousGlam/{gist_id}/raw/etf_flows.json?t={int(time.time())}", retries=1)
+            age_h = (time.time() * 1000 - g.get("ts", 0)) / 3600_000
+            if age_h > 96:
+                raise ValueError(f"etf_flows.json ma {age_h:.0f}h — za stare")
+            for key in ("btc", "eth"):
+                if g.get(key):
+                    out[key] = {**g[key], "source": f"gist/browser ({age_h:.0f}h)"}
+                    out[f"{key}_1d"] = float(g[key]["d1"]) * 1_000_000
+                    print(f"[etf] {key.upper()} z Gist ({age_h:.0f}h): {g[key]['d1']:+.1f}M · streak {g[key].get('streak')}")
+        except Exception as e:
+            FETCH_ERRORS.append(f"etf.gist: {type(e).__name__}: {str(e)[:80]}")
     return out if (out["btc"] or out["eth"]) else None
 
 

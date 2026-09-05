@@ -1145,12 +1145,30 @@ const I18N = {
   fr_top_flip:        { pl: 'Top traderzy Binance przeszli na short o',   en: 'Binance top traders flipped short at' },
   fr_range:           { pl: 'zakres',                                     en: 'range' },
   fr_oi_tip:          { pl: 'Zmiana Open Interest (Bybit perp). Spadek przy płaskiej cenie = dźwignia wychodzi = rynek traci paliwo.', en: 'Open Interest change (Bybit perp). Falling while price is flat = leverage leaving = market losing fuel.' },
+  // ─── CVD ───
+  cvd_title:          { pl: 'CVD spot vs perp · kto kupuje',              en: 'Spot vs perp CVD · who is buying' },
+  cvd_desc:           { pl: '<strong>CVD</strong> = skumulowana delta agresywnego wolumenu (market buy − market sell) w USD. <strong>Spot</strong> = gotówka, prawdziwy popyt/podaż. <strong>Perp</strong> = dźwignia, może zniknąć w jednej likwidacji. Ruch w górę na perpach bez spotu = kruchy. Spadek, w którym spot kupuje, a perp sprzedaje = zdrowy dip. To ta różnica dzieli 4.09 na „likwidacja dźwigni" vs „instytucje sprzedają".', en: '<strong>CVD</strong> = cumulative aggressive volume delta (market buy − market sell) in USD. <strong>Spot</strong> = cash, real demand/supply. <strong>Perp</strong> = leverage, can vanish in one liquidation. A move up on perps without spot = fragile. A dip where spot buys and perp sells = healthy. This distinction separates "leverage flush" from "institutions selling".' },
+  cvd_note:           { pl: 'S = spot (Binance), P = perp (Binance Futures), Δ = zmiana ceny w oknie. Seed z 1-minutowych świec (16h), potem na żywo z aggTrade. Odczyt 4h wchodzi do werdyktu tokena (±1), „pompa na dźwigni" do Flush Risk (+10).', en: 'S = spot (Binance), P = perp (Binance Futures), Δ = price change in window. Seeded from 1-minute candles (16h), then live via aggTrade. The 4h read enters the token verdict (±1), "leverage pump" enters Flush Risk (+10).' },
+  cvd_ws_off:         { pl: 'WS łączy się',                                en: 'WS connecting' },
+  cvd_lev_pump:       { pl: 'Pompa na dźwigni — spot nie potwierdza',       en: 'Leverage pump — spot not confirming' },
+  cvd_confirmed_up:   { pl: 'Wzrost potwierdzony (spot + perp)',            en: 'Rise confirmed (spot + perp)' },
+  cvd_spot_led_up:    { pl: 'Wzrost prowadzi spot (zdrowy)',                en: 'Spot-led rise (healthy)' },
+  cvd_spot_absorb:    { pl: 'Spot absorbuje spadek (kupują dip)',           en: 'Spot absorbing the dip (buying)' },
+  cvd_confirmed_down: { pl: 'Spadek potwierdzony (spot + perp sprzedają)',  en: 'Drop confirmed (spot + perp selling)' },
+  cvd_spot_distrib:   { pl: 'Dystrybucja spot (realna sprzedaż)',           en: 'Spot distribution (real selling)' },
+  cvd_flat_spot_accum: { pl: 'Cicha akumulacja spot przy płaskiej cenie',  en: 'Quiet spot accumulation, flat price' },
+  cvd_flat_lev_only:  { pl: 'Tylko dźwignia kupuje, spot sprzedaje',        en: 'Only leverage buying, spot selling' },
+  cvd_neutral:        { pl: 'neutralnie',                                   en: 'neutral' },
   // ─── MAKRO & ETF ───
   me_title:           { pl: 'ETF flows & makro',                          en: 'ETF flows & macro' },
   me_via_fusion:      { pl: 'z auto-fusion, co 5 min',                    en: 'via auto-fusion, every 5 min' },
   me_desc:            { pl: '<strong>ETF</strong> = dzienne przepływy netto spot ETF (Farside, mln USD, sesje giełdowe) — to jest realny popyt instytucjonalny, nie narracja; ten sam strumień zasila sub-score On-Chain BTC/ETH w fusion. <strong>Makro</strong> = korelacja 30 sesji dziennych zwrotów BTC z Nasdaq, S&P, dolarem, 10-latkami i złotem: > +0.5 z NQ = crypto handluje jak beta na ryzyko i stopy rządzą; < −0.4 z DXY = dolar rządzi.', en: '<strong>ETF</strong> = daily net flows of spot ETFs (Farside, USD mln, trading sessions) — real institutional demand, not narrative; the same feed drives the BTC/ETH On-Chain sub-score in fusion. <strong>Macro</strong> = 30-session correlation of BTC daily returns with Nasdaq, S&P, dollar, 10Y and gold: > +0.5 with NQ = crypto trades as risk beta and rates rule; < −0.4 with DXY = dollar rules.' },
   me_no_data:         { pl: 'brak danych (Farside niedostępny)',           en: 'no data (Farside unavailable)' },
   me_browser:         { pl: 'z przeglądarki',                              en: 'from browser' },
+  me_note_mixed:      { pl: 'Korelacje umiarkowane — makro to tło, nie sterownik', en: 'Moderate correlations — macro is backdrop, not driver' },
+  me_note_risk:       { pl: 'BTC handluje jak beta na ryzyko — makro i stopy rządzą kierunkiem', en: 'BTC trades as risk beta — macro and rates drive direction' },
+  me_note_dollar:     { pl: 'Dolar rządzi — patrz na DXY przed wejściem',   en: 'Dollar rules — check DXY before entry' },
+  me_note_decoupled:  { pl: 'BTC odklejony od makro — czynniki własne crypto dominują', en: 'BTC decoupled from macro — crypto-native factors dominate' },
   me_sessions:        { pl: 'sesji',                                       en: 'sessions' },
   me_days:            { pl: 'dni',                                         en: 'days' },
   me_inflows:         { pl: 'napływów z rzędu',                            en: 'inflow streak' },
@@ -1978,6 +1996,9 @@ function render() {
       <!-- FLUSH RISK — kruchość rynku per token (OI dywergencja, kompresja, makro, SFP, funding, wieloryby) -->
       <div id="flush-risk-slot" style="grid-column: span 12; width: 100%;"></div>
 
+      <!-- CVD SPOT vs PERP — kto kupuje: gotówka czy dźwignia -->
+      <div id="cvd-slot" style="grid-column: span 12; width: 100%;"></div>
+
       <!-- OPCJE — Deribit DVOL, skew, term structure, oczekiwany ruch (BTC/ETH) -->
       <div id="options-slot" class="hide-trading" style="grid-column: span 12; width: 100%;"></div>
 
@@ -2157,7 +2178,7 @@ function render() {
   `;
 
   updatePriceCells();
-  try { renderSmartMoneyPanel(); updateSmartMoneyTags(); renderFlushRiskPanel(); renderOptionsPanel(); renderCyclePanel(); } catch (e) {}
+  try { renderSmartMoneyPanel(); updateSmartMoneyTags(); renderFlushRiskPanel(); renderOptionsPanel(); renderCyclePanel(); renderCvdPanel(); } catch (e) {}
   renderBreakdownChart();
   updateFngGauge();
   if (btcDominance != null) {
@@ -3650,6 +3671,11 @@ async function computeFlushRisk(tkr) {
   if (wf.n && (wf.openShort - wf.closeShort) > 5e6) add('whales', 10, `${t('fr_whales')} $${((wf.openShort - wf.closeShort) / 1e6).toFixed(0)}M`);
   const b = smartMoney.binance[tkr];
   if (b?.flipTo === 'short' && b.flipAt && Date.now() - b.flipAt < 6 * 3600_000) add('whales', 5, `${t('fr_top_flip')} ${hhmm(b.flipAt)}`);
+  // CVD: pompa na dźwigni bez spotu (4h lub 12h) — flush-prone; dystrybucja spot przy spadku też
+  const cr4 = cvdRead(tkr, 4), cr12 = cvdRead(tkr, 12);
+  const lev = [cr4, cr12].find(r => r && r.key === 'lev_pump');
+  if (lev) add('cvd', 10, `${t('cvd_lev_pump')} (spot ${lev.w.spot >= 0 ? '+' : '−'}$${(Math.abs(lev.w.spot) / 1e6).toFixed(1)}M / perp +$${(lev.w.perp / 1e6).toFixed(1)}M)`);
+  else if ([cr4, cr12].find(r => r && r.key === 'flat_lev_only')) add('cvd', 5, t('cvd_flat_lev_only'));
   // opcje: własny łańcuch dla BTC/ETH; dla altów proxy z BTC (½ wagi) — alty dziedziczą reżim vol BTC
   const optSrc = optionsData[tkr] ? tkr : 'BTC', optW = optionsData[tkr] ? 1 : 0.5;
   const oread = optionsRead(optionsData[optSrc]);
@@ -3732,6 +3758,115 @@ function renderFlushRiskPanel() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// CVD SPOT vs PERP — kto naprawdę kupuje/sprzedaje: gotówka (spot) czy dźwignia (perp)?
+//   CVD = skumulowana delta agresywnego wolumenu (taker buy − taker sell), w USD.
+//   Seed: 1m klines Binance (spot + futures) mają "taker buy quote volume" → 16h historii od razu.
+//   Live: dwa combined streamy aggTrade (spot: stream.binance.com, perp: fstream.binance.com).
+//   Odczyt per okno (1h/4h/12h):
+//     cena ↑, perp CVD ≫ spot CVD ≤ 0  → pompa na dźwigni, spot nie potwierdza (kruche)
+//     cena ↓, spot CVD > 0             → spot absorbuje, sprzedaje dźwignia (zdrowy dip)
+//     cena ↑, spot CVD > 0 i perp > 0  → potwierdzone (gotówka + dźwignia razem)
+//     cena ↓, spot CVD < 0             → realna dystrybucja (spot sprzedaje)
+// ═══════════════════════════════════════════════════════════════════════════
+const cvd = {};   // { ticker: { spot: Map(minTs → delta$), perp: Map(minTs → delta$), px: Map(minTs → close), seeded, ts } }
+let _cvdWsSpot = null, _cvdWsPerp = null, _cvdSeeded = false;
+
+function cvdInit(tk) { if (!cvd[tk]) cvd[tk] = { spot: new Map(), perp: new Map(), px: new Map(), seeded: false, ts: 0 }; return cvd[tk]; }
+function cvdAdd(tk, market, ts, deltaUsd, price) {
+  const c = cvdInit(tk); const m = Math.floor(ts / 60000) * 60000;
+  c[market].set(m, (c[market].get(m) || 0) + deltaUsd);
+  if (price) c.px.set(m, price);
+  c.ts = Date.now();
+  // przytnij do 24h
+  if (c[market].size > 1500) { const cutoff = Date.now() - 24 * 3600_000; for (const k of c[market].keys()) if (k < cutoff) c[market].delete(k); }
+}
+
+async function seedCvd() {
+  // klines: [openTime, o, h, l, c, vol, closeTime, quoteVol, trades, takerBuyBase, takerBuyQuote, ...]
+  for (const tk of SM_TICKERS) {
+    const sym = `${tk}USDT`;
+    for (const [market, base] of [['spot', 'https://api.binance.com/api/v3/klines'], ['perp', 'https://fapi.binance.com/fapi/v1/klines']]) {
+      try {
+        const k = await smFetchJson(`${base}?symbol=${sym}&interval=1m&limit=1000`);
+        const c = cvdInit(tk);
+        for (const r of k) { const q = +r[7], tb = +r[10]; c[market].set(+r[0], 2 * tb - q); if (market === 'spot') c.px.set(+r[0], +r[4]); }
+        c.seeded = true; c.ts = Date.now();
+      } catch (e) { console.warn('[cvd] seed', tk, market, e.message); }
+    }
+  }
+  _cvdSeeded = true;
+  renderCvdPanel();
+}
+
+function openCvdStreams() {
+  const streams = SM_TICKERS.map(tk => `${tk.toLowerCase()}usdt@aggTrade`).join('/');
+  const mk = (url, market) => {
+    let ws;
+    try { ws = new WebSocket(url); } catch (e) { return null; }
+    ws.onmessage = (msg) => {
+      try {
+        const d = JSON.parse(msg.data).data || JSON.parse(msg.data);
+        const sym = (d.s || '').replace('USDT', ''); if (!cvd[sym] && !SM_TICKERS.includes(sym)) return;
+        const px = parseFloat(d.p), q = parseFloat(d.q), usd = px * q;
+        cvdAdd(sym, market, d.T || Date.now(), d.m ? -usd : usd, market === 'spot' ? px : null);   // m=true → kupujący był makerem → agresor sprzedał
+      } catch (e) {}
+    };
+    ws.onclose = () => setTimeout(() => { if (market === 'spot') _cvdWsSpot = mk(url, market); else _cvdWsPerp = mk(url, market); }, 5000);
+    ws.onerror = () => {};
+    return ws;
+  };
+  _cvdWsSpot = mk(`wss://stream.binance.com:9443/stream?streams=${streams}`, 'spot');
+  _cvdWsPerp = mk(`wss://fstream.binance.com/stream?streams=${streams}`, 'perp');
+}
+
+function cvdWindow(tk, hours) {
+  const c = cvd[tk]; if (!c) return null;
+  const since = Date.now() - hours * 3600_000;
+  const sum = m => { let s = 0; for (const [k, v] of m) if (k >= since) s += v; return s; };
+  const pxs = [...c.px.entries()].filter(([k]) => k >= since).sort((a, b) => a[0] - b[0]);
+  const chg = pxs.length >= 2 ? (pxs[pxs.length - 1][1] / pxs[0][1] - 1) * 100 : null;
+  return { spot: sum(c.spot), perp: sum(c.perp), chg, n: pxs.length };
+}
+// Odczyt: zwraca { key, label(pl/en via t), score } — score: +1 bullish, −1 bearish, 0 neutral; strength dla Flush Risk
+function cvdRead(tk, hours = 4) {
+  const w = cvdWindow(tk, hours); if (!w || w.chg == null || w.n < 10) return null;
+  const s = w.spot, p = w.perp, up = w.chg > 0.8, down = w.chg < -0.8;
+  const tot = Math.abs(s) + Math.abs(p) || 1;
+  if (up && s <= 0 && p > 0 && p > Math.abs(s)) return { key: 'lev_pump', score: -1, strength: p / tot, w };
+  if (up && s > 0 && p > 0) return { key: 'confirmed_up', score: 1, strength: (s + p) / tot, w };
+  if (up && s > 0 && p <= 0) return { key: 'spot_led_up', score: 1, strength: s / tot, w };
+  if (down && s > 0) return { key: 'spot_absorb', score: 1, strength: s / tot, w };
+  if (down && s < 0 && p < 0) return { key: 'confirmed_down', score: -1, strength: 1, w };
+  if (down && s < 0) return { key: 'spot_distrib', score: -1, strength: Math.abs(s) / tot, w };
+  if (!up && !down && s > 0 && p < 0) return { key: 'flat_spot_accum', score: 1, strength: 0.5, w };
+  if (!up && !down && s < 0 && p > 0) return { key: 'flat_lev_only', score: -1, strength: 0.5, w };
+  return { key: 'neutral', score: 0, strength: 0, w };
+}
+
+function renderCvdPanel() {
+  const slot = document.getElementById('cvd-slot'); if (!slot) return;
+  const M = v => `${v >= 0 ? '+' : '−'}$${Math.abs(v) >= 1e6 ? (Math.abs(v) / 1e6).toFixed(1) + 'M' : (Math.abs(v) / 1e3).toFixed(0) + 'k'}`;
+  const col = v => v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--text-dim)';
+  const bar = (s, p) => { const mx = Math.max(Math.abs(s), Math.abs(p), 1); const w = v => Math.abs(v) / mx * 50; return `<div style="display:flex;flex-direction:column;gap:2px;width:110px"><div style="display:flex;align-items:center;gap:3px;font-size:8.5px;color:var(--text-dim)"><span style="width:26px">spot</span><div style="width:${w(s)}%;height:5px;background:${col(s)};border-radius:2px"></div></div><div style="display:flex;align-items:center;gap:3px;font-size:8.5px;color:var(--text-dim)"><span style="width:26px">perp</span><div style="width:${w(p)}%;height:5px;background:${col(p)};border-radius:2px"></div></div></div>`; };
+  const rows = SM_TICKERS.map(tk => {
+    const c = cvd[tk];
+    if (!c || !c.seeded) return `<tr><td style="padding:5px 6px;color:var(--gold);font-weight:800">${tk}</td><td colspan="4" style="padding:5px 6px;color:var(--text-dim)">${t('sm_loading')}</td></tr>`;
+    const cells = [1, 4, 12].map(h => { const w = cvdWindow(tk, h); const r = cvdRead(tk, h); return `<td style="padding:5px 6px;vertical-align:top"><div style="display:flex;gap:8px;align-items:flex-start"><div style="font-family:var(--mono);font-size:10px;line-height:1.5;min-width:72px"><div>S <b style="color:${col(w.spot)}">${M(w.spot)}</b></div><div>P <b style="color:${col(w.perp)}">${M(w.perp)}</b></div><div style="color:${col(w.chg || 0)}">Δ ${w.chg == null ? '—' : (w.chg >= 0 ? '+' : '') + w.chg.toFixed(2) + '%'}</div></div>${bar(w.spot, w.perp)}</div>${r && r.key !== 'neutral' ? `<div style="font-size:9.5px;margin-top:3px;color:${r.score > 0 ? 'var(--green)' : r.score < 0 ? 'var(--red)' : 'var(--text-dim)'};font-weight:700">${t('cvd_' + r.key)}</div>` : ''}</td>`; }).join('');
+    return `<tr style="border-bottom:1px solid var(--border-soft)"><td style="padding:5px 6px;color:var(--gold);font-weight:800;font-family:var(--mono);vertical-align:top">${tk}</td>${cells}</tr>`;
+  }).join('');
+  const live = (_cvdWsSpot && _cvdWsSpot.readyState === 1) && (_cvdWsPerp && _cvdWsPerp.readyState === 1);
+  slot.innerHTML = `
+    <section class="panel">
+      <div class="panel-head"><h3>⚖️ ${t('cvd_title')}</h3><span class="meta">Binance spot + perp · ${live ? `<span style="color:var(--green)">● live</span>` : `<span style="color:var(--amber)">● ${_cvdSeeded ? t('cvd_ws_off') : t('sm_loading')}</span>`}</span></div>
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;line-height:1.5">${t('cvd_desc')}</div>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead><tr style="border-bottom:1px solid var(--border);color:var(--text-dim);font-size:9px;text-transform:uppercase"><th style="text-align:left;padding:3px 6px">Token</th><th style="text-align:left;padding:3px 6px">1h</th><th style="text-align:left;padding:3px 6px">4h</th><th style="text-align:left;padding:3px 6px">12h</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>
+      <div style="font-size:9.5px;color:var(--text-dim);margin-top:6px;line-height:1.5">${t('cvd_note')}</div>
+    </section>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MAKRO & ETF — z fusion json (auto_fusion liczy server-side co 5 min):
 //   etf: Farside BTC/ETH dzienne przepływy (mln USD), 60 sesji
 //   macro_context: NQ/SPX/DXY/US10Y/GOLD zmiana 1d/5d + korelacja 30 sesji z BTC + reżim makro
@@ -3767,13 +3902,61 @@ async function refreshEtfBrowser() {
   }
   etfBrowser.ts = Date.now();
   const slot = document.getElementById('macro-etf-slot'); if (slot && lastFusion) slot.innerHTML = renderMacroEtf(lastFusion);
+  // Most do serwera: runner GitHub nie dosięga Farside (403 z każdego proxy), Twoja przeglądarka tak.
+  // Jeśli masz token Gist (🔑 w panelu Orderflow) → zapisujemy etf_flows.json, auto_fusion czyta go z Gist
+  // i On-Chain sub-score BTC/ETH liczy się z prawdziwych przepływów. Bez tokenu: tylko panel.
+  if ((etfBrowser.btc || etfBrowser.eth) && ofGistToken()) {
+    try {
+      const payload = { ts: Date.now(), source: 'browser/jina', btc: etfBrowser.btc, eth: etfBrowser.eth };
+      await fetch(`https://api.github.com/gists/${OF_GIST_ID}`, { method: 'PATCH', headers: { 'Authorization': `Bearer ${ofGistToken()}`, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: { 'etf_flows.json': { content: JSON.stringify(payload) } } }) });
+    } catch (e) { console.warn('[etf] gist push', e.message); }
+  }
+}
+
+// ─── MAKRO z przeglądarki: Yahoo przez jina (Yahoo 429 i stooq pusty z runnerów GitHub) ───
+const macroBrowser = { ctx: null, ts: 0 };
+const MACRO_SYMS = { NQ: ['^IXIC', 'Nasdaq Composite'], SPX: ['^GSPC', 'S&P 500'], DXY: ['DX-Y.NYB', 'Dollar Index'], US10Y: ['^TNX', 'US 10Y yield'], GOLD: ['GC=F', 'Gold futures'] };
+async function yahooViaJina(sym) {
+  const r = await fetch(`https://r.jina.ai/https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=3mo&interval=1d`, { headers: { 'Accept': 'application/json' } });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const j = await r.json(); const inner = JSON.parse(j.data.content);
+  const res = inner.chart.result[0]; const ts = res.timestamp, cl = res.indicators.quote[0].close;
+  return ts.map((t, i) => [new Date(t * 1000).toISOString().slice(0, 10), cl[i]]).filter(x => x[1] != null);
+}
+function pearson(xs, ys) { const n = xs.length; if (n < 10) return null; const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n; let sxy = 0, sxx = 0, syy = 0; for (let i = 0; i < n; i++) { sxy += (xs[i] - mx) * (ys[i] - my); sxx += (xs[i] - mx) ** 2; syy += (ys[i] - my) ** 2; } return sxx && syy ? sxy / Math.sqrt(sxx * syy) : null; }
+async function refreshMacroBrowser() {
+  if (Date.now() - macroBrowser.ts < 60 * 60_000) return;
+  try {
+    const btc = Object.fromEntries(await yahooViaJina('BTC-USD'));
+    const assets = {};
+    for (const [k, [sym, name]] of Object.entries(MACRO_SYMS)) {
+      try {
+        const s = await yahooViaJina(sym); if (s.length < 6) continue;
+        let last = s[s.length - 1][1], prev = s[s.length - 2][1], prev5 = s[s.length - 6][1];
+        if (k === 'US10Y' && last > 20) { last /= 10; prev /= 10; prev5 /= 10; }
+        const sd = Object.fromEntries(s), common = s.map(x => x[0]).filter(d => d in btc);
+        const pairs = []; for (let i = 1; i < common.length; i++) pairs.push([sd[common[i]] / sd[common[i - 1]] - 1, btc[common[i]] / btc[common[i - 1]] - 1]);
+        const p30 = pairs.slice(-30); const corr = pearson(p30.map(p => p[0]), p30.map(p => p[1]));
+        assets[k] = { name, symbol: sym, last: +last.toFixed(3), chg_1d: +((last / prev - 1) * 100).toFixed(2), chg_5d: +((last / prev5 - 1) * 100).toFixed(2), corr_30d: corr == null ? null : +corr.toFixed(2), date: s[s.length - 1][0] };
+      } catch (e) { console.warn('[macro] browser', k, e.message); }
+    }
+    const nq = assets.NQ?.corr_30d, dxy = assets.DXY?.corr_30d;
+    let regime = 'mixed', note = t('me_note_mixed');
+    if (nq != null && nq > 0.5) { regime = 'risk_beta'; note = `${t('me_note_risk')} (corr NQ ${nq >= 0 ? '+' : ''}${nq})`; }
+    else if (dxy != null && dxy < -0.4) { regime = 'dollar_driven'; note = `${t('me_note_dollar')} (corr DXY ${dxy})`; }
+    else if (nq != null && Math.abs(nq) < 0.25 && (dxy == null || Math.abs(dxy) < 0.25)) { regime = 'decoupled'; note = `${t('me_note_decoupled')} (corr NQ ${nq >= 0 ? '+' : ''}${nq})`; }
+    macroBrowser.ctx = { assets, regime, regime_note: note, as_of: Object.values(assets)[0]?.date, source: 'browser' };
+  } catch (e) { console.warn('[macro] browser', e.message); }
+  macroBrowser.ts = Date.now();
+  const slot = document.getElementById('macro-etf-slot'); if (slot && lastFusion) slot.innerHTML = renderMacroEtf(lastFusion);
 }
 
 function renderMacroEtf(data) {
   // serwer (fusion json) ma pierwszeństwo; gdy runner nie dosięgnął Farside → dane z przeglądarki
   const etf = { btc: data.etf?.btc || etfBrowser.btc, eth: data.etf?.eth || etfBrowser.eth };
   if (!etf.btc && !etf.eth) etfBrowser.ts = 0;   // wymuś ponowną próbę przy następnym cyklu
-  const mc = data.macro_context;
+  const mc = data.macro_context || macroBrowser.ctx;
   if (!etf.btc && !etf.eth && !mc) return '';
   const M = v => `${v >= 0 ? '+' : '−'}$${Math.abs(v) >= 1000 ? (Math.abs(v) / 1000).toFixed(2) + 'B' : Math.abs(v).toFixed(0) + 'M'}`;
   const col = v => v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--text-dim)';
@@ -4961,6 +5144,9 @@ function interpretTokenState(ticker) {
     if (smv.score >= 2) { score += 1; reasoning.push(`🏦 Smart money BULLISH — ${smv.votes.filter(v => v.v > 0).map(v => v.txt).join(', ')}`); }
     else if (smv.score <= -2) { score -= 1; reasoning.push(`🏦 Smart money BEARISH — ${smv.votes.filter(v => v.v < 0).map(v => v.txt).join(', ')}`); }
   }
+  // 8b. CVD spot vs perp (4h) — kto stoi za ruchem
+  const cr = cvdRead(ticker, 4);
+  if (cr && cr.key !== 'neutral') { score += cr.score; reasoning.push(`⚖️ ${t('cvd_' + cr.key)} (4h: spot ${cr.w.spot >= 0 ? '+' : '−'}$${(Math.abs(cr.w.spot) / 1e6).toFixed(1)}M / perp ${cr.w.perp >= 0 ? '+' : '−'}$${(Math.abs(cr.w.perp) / 1e6).toFixed(1)}M)`); }
   // 9. OPCJE — strach (skew) lub premia za event; alty dziedziczą BTC
   const oread = optionsRead(optionsData[ticker] || optionsData.BTC);
   if (oread) {
@@ -6350,9 +6536,15 @@ setTimeout(() => {
   setTimeout(refreshSmartMoney, 1500);
   setInterval(refreshSmartMoney, 300_000);
   // FLUSH RISK — co 5 min (po smart money, żeby mieć taśmę wielorybów), pierwszy raz po 4s
+  // CVD spot vs perp — seed z 1m klines, potem live WS; panel co 10s
+  renderCvdPanel();
+  setTimeout(() => { seedCvd(); openCvdStreams(); }, 3000);
+  setInterval(renderCvdPanel, 10_000);
   // ETF fallback z przeglądarki (Farside przez jina) — co 30 min
   setTimeout(refreshEtfBrowser, 2500);
   setInterval(refreshEtfBrowser, 30 * 60_000);
+  setTimeout(refreshMacroBrowser, 8000);
+  setInterval(refreshMacroBrowser, 60 * 60_000);
   // CYKL · DŁUGI TERMIN — co 60 min
   renderCyclePanel();
   setTimeout(refreshCycle, 6000);
