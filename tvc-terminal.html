@@ -1288,7 +1288,7 @@ let sparklineData = {};
 let ohlcCache = {};         // { "SOL_1D": [[ts,o,h,l,c], ...] }
 let expandedToken = null;
 let overlays = {
-  sr: true, ob: true, sfp: true, liq: true, pressure: true, breakout: true, pred: true, walls: true, heatmap: true, fvg: true
+  sr: true, ob: true, sfp: true, liq: true, pressure: true, breakout: true, pred: true, walls: true, heatmap: true, fvg: true, ma: true
 };
 try {
   const saved = localStorage.getItem('tvc_overlays');
@@ -6722,6 +6722,7 @@ function renderTokenDetailShell(ticker) {
         <button class="toggle-btn pressure ${overlays.pressure ? 'active' : ''}" onclick="toggleOverlay('pressure', '${ticker}')" title="Buy/Sell Pressure gauge (pod chartem). Kombinuje body direction, close position, volume + live boost dla ostatnich 3 świec.">Pressure</button>
         <button class="toggle-btn pred ${overlays.pred ? 'active' : ''}" onclick="toggleOverlay('pred', '${ticker}')" title="Predictive Buy/Sell Zones — wykrywa gdzie zbierają się orders (rejection clusters + volume) PRZED ruchem ceny. Adaptive per timeframe.">🎯 Pred Zones</button>
         <button class="toggle-btn walls ${overlays.walls ? 'active' : ''}" onclick="toggleOverlay('walls', '${ticker}')" title="Live Walls — realne orders w Binance orderbook TERAZ (WebSocket, 100ms). Buy Wall (bid) = ktoś stoi z dużym zleceniem kupna. Sell Wall (ask) = ściana sprzedaży.">🌊 Live Walls</button>
+        <button class="toggle-btn ma ${overlays.ma ? 'active' : ''}" onclick="toggleOverlay('ma', '${ticker}')" title="Długoterminowe średnie z panelu Cykl: EMA200D (fiolet), MA200D (fiolet kropki), MA200W (róż). Rysowane gdy mieszczą się w zakresie wykresu — na 1D/7D bywają poza ekranem, przełącz na 30D/90D.">📐 MA</button>
         <button class="toggle-btn heatmap ${overlays.heatmap ? 'active' : ''}" onclick="toggleOverlay('heatmap', '${ticker}')" title="Liquidity Heatmap — CAŁA widoczna głębokość orderbooka (nie tylko outlier walls) jako paski od prawej krawędzi. Podświetlone linie = trwałe strefy (śr. z 5 min), te same które zasilają CONFLUENCE alerty i scoring tokena.">🔥 Heatmap</button>
       </div>
     </div>
@@ -7247,6 +7248,27 @@ function renderTokenChart(ticker, ohlc) {
       drawLevel(dec.sl, '#F87171', 'SL');
       drawLevel(dec.tp1, '#34D399', 'TP1');
       drawLevel(dec.tp2, '#34D399', 'TP2');
+
+      // Długoterminowe średnie z panelu Cykl (overlay "MA") — wartości bieżące jako poziomy.
+      // Etykieta po PRAWEJ, żeby nie nachodziła na ENTRY/SL/TP po lewej.
+      if (overlays.ma) {
+        const cy = cycleData.tokens[ticker];
+        if (cy && !cy.error) {
+          const drawMa = (price, color, label, dash) => {
+            if (!price) return;
+            const y = yScale.getPixelForValue(price);
+            if (y < chartArea.top || y > chartArea.bottom) return;
+            ctx.strokeStyle = color; ctx.lineWidth = 1.2; ctx.setLineDash(dash);
+            ctx.beginPath(); ctx.moveTo(chartArea.left, y); ctx.lineTo(chartArea.right, y); ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = color; ctx.font = 'bold 9.5px SF Mono, Menlo, monospace'; ctx.textAlign = 'right';
+            ctx.fillText(`${label} ${fmt(price)}`, chartArea.right - 4, y - 3);
+          };
+          drawMa(cy.ema200d, '#C084FC', 'EMA200D', [6, 3]);
+          drawMa(cy.ma200d, '#A78BFA', 'MA200D', [2, 3]);
+          drawMa(cy.ma200w || cy.ma200wPartial, '#F472B6', cy.ma200w ? 'MA200W' : `MA${cy.weeks}W`, [10, 4]);
+        }
+      }
 
       // Breakout markers (orange triangles at breakout level + candle)
       breakouts.forEach(br => {
