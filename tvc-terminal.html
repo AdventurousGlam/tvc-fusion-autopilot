@@ -1144,6 +1144,19 @@ const I18N = {
   fr_top_flip:        { pl: 'Top traderzy Binance przeszli na short o',   en: 'Binance top traders flipped short at' },
   fr_range:           { pl: 'zakres',                                     en: 'range' },
   fr_oi_tip:          { pl: 'Zmiana Open Interest (Bybit perp). Spadek przy płaskiej cenie = dźwignia wychodzi = rynek traci paliwo.', en: 'Open Interest change (Bybit perp). Falling while price is flat = leverage leaving = market losing fuel.' },
+  // ─── COMMAND CENTER (nowe sygnały) ───
+  cc_flush_title:     { pl: 'WYSOKA kruchość rynku',                     en: 'HIGH market fragility' },
+  cc_flush_cmd:       { pl: 'Brak nowych longów · trailing SL ciaśniej · rozmiar ×0.5 · czekaj na powrót do NISKI', en: 'No new longs · tighter trailing SL · size ×0.5 · wait for return to LOW' },
+  cc_sm_oppose:       { pl: 'Smart money PRZECIWNE do pozycji',           en: 'Smart money OPPOSES position' },
+  cc_sm_cmd:          { pl: 'Nie dokładaj · rozważ partial · SL do breakeven gdy tylko pozwoli cena', en: 'Do not add · consider partial · SL to breakeven as soon as price allows' },
+  cc_whale:           { pl: 'Wieloryb HL',                                en: 'HL whale' },
+  cc_whale_bull:      { pl: 'Duży gracz kupuje — potwierdzenie dla longa, nie sygnał sam w sobie', en: 'Big player buying — confirmation for a long, not a signal on its own' },
+  cc_whale_bear:      { pl: 'Duży gracz sprzedaje — ostrożnie z longami, sprawdź poziom w heatmapie', en: 'Big player selling — careful with longs, check heatmap level' },
+  cc_opt_fear_cmd:    { pl: 'Rynek opcji płaci za ochronę — nie łap noża, czekaj na confluence', en: 'Options market paying for protection — no knife-catching, wait for confluence' },
+  cc_opt_prem_cmd:    { pl: 'Rynek wycenia duży ruch w oknie eventu — mniejszy rozmiar, szersze stopy', en: 'Market prices a large move in the event window — smaller size, wider stops' },
+  cc_macro:           { pl: 'MAKRO BLACKOUT',                             en: 'MACRO BLACKOUT' },
+  cc_macro_reason:    { pl: 'Tier-1 event w oknie ±3h/1h. paper_bot nie otwiera nowych pozycji. 4.09: NFP zrobił −2.5% BTC w jednej świecy.', en: 'Tier-1 event within 3h before / 1h after. paper_bot opens nothing. Sep 4: NFP did −2.5% BTC in one candle.' },
+  cc_macro_cmd:       { pl: 'Nie wchodź przed danymi · pierwsza reakcja to zwykle fałszywa · czekaj 30–60 min po publikacji', en: 'Do not enter before data · first reaction is usually the fake one · wait 30–60 min after release' },
   // ─── OPCJE ───
   opt_title:          { pl: 'Opcje · ile ruchu rynek wycenia',            en: 'Options · how much move the market prices' },
   opt_desc:           { pl: '<strong>DVOL</strong> = implied vol 30d (jak VIX), z percentylem 30-dniowym. <strong>Oczekiwany ruch</strong> = 1σ z DVOL. <strong>Skew</strong> = IV put OTM − IV call OTM: > +6 strach, < −3 chciwość. <strong>Term</strong> = IV tydzień − miesiąc: dodatnia = rynek płaci za ochronę na najbliższe dni (event premium), ujemna przed tier-1 = complacency. Tylko BTC/ETH (Deribit); alty dziedziczą reżim BTC w Flush Risk.', en: '<strong>DVOL</strong> = 30d implied vol (like VIX), with 30-day percentile. <strong>Expected move</strong> = 1σ from DVOL. <strong>Skew</strong> = OTM put IV − OTM call IV: > +6 fear, < −3 greed. <strong>Term</strong> = weekly − monthly IV: positive = market pays for near-term protection (event premium), negative before tier-1 = complacency. BTC/ETH only (Deribit); alts inherit BTC regime in Flush Risk.' },
@@ -2148,6 +2161,7 @@ function renderDecision(d) {
         <span class="action-badge ${action}">${action.replace('_', ' ')}</span>
         <span class="size ${size == 0 ? 'zero' : ''}">${size}% cap</span>
         <span class="sm-tag" style="font-size:9px;font-weight:700;letter-spacing:0.02em"></span>
+        ${(() => { const p = (lastFusion?.crypto_picks?.picks || []).find(x => x.ticker === d.ticker); return p ? `<span title="Crypto Picks · ${p.category} · ${p.direction}" style="font-size:9px;color:var(--gold);border:1px solid var(--gold);border-radius:3px;padding:0 4px;font-weight:700">🎯 ${p.category}</span>` : ''; })()}
       </div>
       <button class="expand-btn">▾</button>
     </div>
@@ -4504,6 +4518,63 @@ function generateCommandCenterActions() {
         command: isBull ? `Hold, trailing SL up` : `Consider tightening SL further`,
       });
     }
+    // 8. FLUSH RISK WYSOKI — nie otwieraj longów, zacieśnij trailing (prio 90)
+    const fr = flushRisk[ticker];
+    if (fr && !fr.error && fr.level === 'high') {
+      actions.push({
+        priority: 90, ticker, urgency: 'HIGH', icon: '🌊', color: 'var(--red)',
+        title: `${ticker}: Flush Risk ${fr.score}/100 — ${t('cc_flush_title')}`,
+        reasoning: fr.parts.map(p => `+${p.pts} ${p.txt}`).join(' · '),
+        command: t('cc_flush_cmd'),
+      });
+    }
+    // 9. SMART MONEY przeciwne do otwartej pozycji (prio 65) — tylko gdy jest pozycja paper
+    const openPos = (lastFusion.state?.open_positions || []).find(p => p.ticker === ticker);
+    const smv = smVerdict(ticker);
+    if (openPos && smv.votes.length) {
+      const dir = (openPos.direction || 'long').toLowerCase();
+      const oppose = (dir === 'long' && smv.score <= -2) || (dir === 'short' && smv.score >= 2);
+      if (oppose) actions.push({
+        priority: 65, ticker, urgency: 'MEDIUM', icon: '🏦', color: 'var(--amber)',
+        title: `${ticker}: ${t('cc_sm_oppose')} ${dir.toUpperCase()}`,
+        reasoning: smv.votes.map(v => `${v.src}: ${v.txt}`).join(' · '),
+        command: t('cc_sm_cmd'),
+      });
+    }
+    // 10. WIELORYB ≥ $5M na tym tokenie w ostatnich 2h (prio 55, informacyjnie)
+    const bigWhale = smartMoney.tape.events.find(e => e.coin === ticker && e.usd >= 5e6 && now - e.end < 2 * 3600_000);
+    if (bigWhale) {
+      const isBull = bigWhale.dir === 'Open Long' || bigWhale.dir === 'Close Short';
+      actions.push({
+        priority: 55, ticker, urgency: 'MEDIUM', icon: '🐋', color: isBull ? 'var(--green)' : 'var(--red)',
+        title: `${ticker}: ${t('cc_whale')} ${bigWhale.dir} $${(bigWhale.usd / 1e6).toFixed(1)}M @ ${fmt(bigWhale.px)} · ${hhmm(bigWhale.end)}`,
+        reasoning: `${bigWhale.name || bigWhale.addr.slice(0, 6) + '…' + bigWhale.addr.slice(-4)} ($${(bigWhale.acct / 1e6).toFixed(0)}M) · ${bigWhale.n} filli / ${Math.max(1, Math.round((bigWhale.end - bigWhale.start) / 60000))} min${bigWhale.dir.startsWith('Close') ? ` · rPnL ${bigWhale.pnl >= 0 ? '+' : '-'}$${(Math.abs(bigWhale.pnl) / 1e3).toFixed(0)}k` : ''}`,
+        command: isBull ? t('cc_whale_bull') : t('cc_whale_bear'),
+      });
+    }
+    // 11. OPCJE — strach lub premia za event (prio 45), tylko dla tokenów z własnym łańcuchem
+    const od = optionsData[ticker];
+    const oread = od ? optionsRead(od) : null;
+    if (oread) {
+      const f = oread.flags.find(x => x.key === 'fear') || oread.flags.find(x => x.key === 'premium');
+      if (f) actions.push({
+        priority: 45, ticker, urgency: 'LOW', icon: '🎭', color: f.key === 'fear' ? 'var(--amber)' : 'var(--text-muted)',
+        title: `${ticker}: ${f.txt}`,
+        reasoning: `DVOL ${od.dvol.toFixed(1)} (${od.pct30.toFixed(0)}. pct 30d) · ${t('opt_move')} 1d ±${od.move1d.toFixed(1)}%`,
+        command: f.key === 'fear' ? t('cc_opt_fear_cmd') : t('cc_opt_prem_cmd'),
+      });
+    }
+  }
+  // 12. MAKRO BLACKOUT — jeden wpis dla całego rynku (prio 80)
+  const m1 = macroWithin(3, 1);
+  if (m1) {
+    const mins = Math.round((Date.parse(m1.ts_utc) - now) / 60000);
+    actions.push({
+      priority: 80, ticker: 'ALL', urgency: 'HIGH', icon: '⏳', color: 'var(--red)',
+      title: `${t('cc_macro')}: ${m1.name.split(' — ')[0]} ${mins >= 0 ? t('fr_in') + ' ' + mins + ' min' : Math.abs(mins) + ' min ' + t('ago_suffix')}`,
+      reasoning: t('cc_macro_reason'),
+      command: t('cc_macro_cmd'),
+    });
   }
   // Sort by priority desc, cap at 8 top actions
   return actions.sort((a, b) => b.priority - a.priority).slice(0, 8);
@@ -4644,6 +4715,27 @@ function interpretTokenState(ticker) {
   } else if (rangeBoundConfluence) {
     reasoning.push(`🔁 RANGE — kupno i sprzedaż aktywne naprzemiennie, brak kierunku`);
     // brak zmiany score — celowo neutralne, nie podnosimy ani nie obniżamy confidence
+  }
+
+  // 7. FLUSH RISK — kruchość rynku (OI dywergencja, kompresja, makro, SFP, funding, wieloryby, opcje)
+  const fr = flushRisk[ticker];
+  if (fr && !fr.error) {
+    if (fr.level === 'high') { score -= 2; reasoning.push(`🌊 Flush Risk ${fr.score}/100 WYSOKI — ${fr.parts.slice(0, 2).map(p => p.txt).join(' · ')}`); }
+    else if (fr.level === 'elevated') { score -= 1; reasoning.push(`🌊 Flush Risk ${fr.score}/100 podwyższony`); }
+  }
+  // 8. SMART MONEY — top traderzy Binance + wieloryby HL + COT (werdykt z 3 źródeł)
+  const smv = smVerdict(ticker);
+  if (smv.votes.length) {
+    if (smv.score >= 2) { score += 1; reasoning.push(`🏦 Smart money BULLISH — ${smv.votes.filter(v => v.v > 0).map(v => v.txt).join(', ')}`); }
+    else if (smv.score <= -2) { score -= 1; reasoning.push(`🏦 Smart money BEARISH — ${smv.votes.filter(v => v.v < 0).map(v => v.txt).join(', ')}`); }
+  }
+  // 9. OPCJE — strach (skew) lub premia za event; alty dziedziczą BTC
+  const oread = optionsRead(optionsData[ticker] || optionsData.BTC);
+  if (oread) {
+    const fear = oread.flags.find(f => f.key === 'fear');
+    if (fear) { score -= 1; reasoning.push(`🎭 ${fear.txt}`); }
+    const prem = oread.flags.find(f => f.key === 'premium');
+    if (prem) reasoning.push(`🎭 ${prem.txt}`);
   }
 
   // ═══ VERDICT LOGIC ═══
