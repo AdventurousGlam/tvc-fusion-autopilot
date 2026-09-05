@@ -128,7 +128,8 @@
     border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px;
   }
   @media (max-width: 600px) { .hero { grid-template-columns: 1fr; gap: 8px; } }
-  @media (max-width: 700px) { .of-grid { grid-template-columns: 1fr !important; } }
+  @media (max-width: 700px) { .of-grid, .of-grid3 { grid-template-columns: 1fr !important; } }
+  @media (min-width: 701px) and (max-width: 1100px) { .of-grid3 { grid-template-columns: 1fr 1fr !important; } }
   .brand-block { display: flex; align-items: center; gap: 10px; }
   .brand-mark {
     width: 30px; height: 30px;
@@ -1144,6 +1145,22 @@ const I18N = {
   fr_top_flip:        { pl: 'Top traderzy Binance przeszli na short o',   en: 'Binance top traders flipped short at' },
   fr_range:           { pl: 'zakres',                                     en: 'range' },
   fr_oi_tip:          { pl: 'Zmiana Open Interest (Bybit perp). Spadek przy płaskiej cenie = dźwignia wychodzi = rynek traci paliwo.', en: 'Open Interest change (Bybit perp). Falling while price is flat = leverage leaving = market losing fuel.' },
+  // ─── MAKRO & ETF ───
+  me_title:           { pl: 'ETF flows & makro',                          en: 'ETF flows & macro' },
+  me_via_fusion:      { pl: 'z auto-fusion, co 5 min',                    en: 'via auto-fusion, every 5 min' },
+  me_desc:            { pl: '<strong>ETF</strong> = dzienne przepływy netto spot ETF (Farside, mln USD, sesje giełdowe) — to jest realny popyt instytucjonalny, nie narracja; ten sam strumień zasila sub-score On-Chain BTC/ETH w fusion. <strong>Makro</strong> = korelacja 30 sesji dziennych zwrotów BTC z Nasdaq, S&P, dolarem, 10-latkami i złotem: > +0.5 z NQ = crypto handluje jak beta na ryzyko i stopy rządzą; < −0.4 z DXY = dolar rządzi.', en: '<strong>ETF</strong> = daily net flows of spot ETFs (Farside, USD mln, trading sessions) — real institutional demand, not narrative; the same feed drives the BTC/ETH On-Chain sub-score in fusion. <strong>Macro</strong> = 30-session correlation of BTC daily returns with Nasdaq, S&P, dollar, 10Y and gold: > +0.5 with NQ = crypto trades as risk beta and rates rule; < −0.4 with DXY = dollar rules.' },
+  me_no_data:         { pl: 'brak danych (Farside niedostępny)',           en: 'no data (Farside unavailable)' },
+  me_sessions:        { pl: 'sesji',                                       en: 'sessions' },
+  me_days:            { pl: 'dni',                                         en: 'days' },
+  me_inflows:         { pl: 'napływów z rzędu',                            en: 'inflow streak' },
+  me_outflows:        { pl: 'odpływów z rzędu',                            en: 'outflow streak' },
+  me_macro:           { pl: 'Rynki tradycyjne vs BTC',                     en: 'Traditional markets vs BTC' },
+  me_last:            { pl: 'Kurs',                                        en: 'Last' },
+  me_corr_tip:        { pl: 'Korelacja Pearsona dziennych zwrotów z BTC-USD, ostatnie 30 wspólnych sesji.', en: 'Pearson correlation of daily returns with BTC-USD, last 30 common sessions.' },
+  me_reg_risk_beta:   { pl: '⚠ Reżim: BTC = beta na ryzyko',              en: '⚠ Regime: BTC = risk beta' },
+  me_reg_dollar_driven: { pl: '⚠ Reżim: dolar rządzi',                     en: '⚠ Regime: dollar-driven' },
+  me_reg_decoupled:   { pl: '✓ Reżim: BTC odklejony od makro',             en: '✓ Regime: BTC decoupled from macro' },
+  me_reg_mixed:       { pl: '■ Reżim: korelacje umiarkowane',              en: '■ Regime: moderate correlations' },
   // ─── CYKL · DŁUGI TERMIN ───
   cy_title:           { pl: 'Cykl · długi termin',                       en: 'Cycle · long term' },
   cy_desc:            { pl: 'Gdzie jesteśmy w cyklu, nie w tygodniu. <strong>Stablecoiny</strong> = suchy proch: rosnąca podaż to kapitał, który wszedł do systemu i czeka; spadająca = wychodzi. <strong>200W MA</strong> = historyczna linia hossa/bessa BTC (dna 2015, 2018, 2022 dokładnie na niej). <strong>Mayer</strong> = cena / 200D MA: > 2.4 historycznie przegrzanie, < 0.8 kapitulacja. Tygodnie na SUI &lt; 200 → MA częściowa.', en: 'Where we are in the cycle, not the week. <strong>Stablecoins</strong> = dry powder: rising supply is capital that entered the system and waits; falling = leaving. <strong>200W MA</strong> = BTC historical bull/bear line (2015, 2018, 2022 bottoms sat exactly on it). <strong>Mayer</strong> = price / 200D MA: > 2.4 historically overheated, < 0.8 capitulation. SUI has &lt; 200 weeks → partial MA.' },
@@ -2064,6 +2081,9 @@ function render() {
           <div style="padding:12px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">${t('loading_whales')}</div>
         </div>
       </section>
+
+      <!-- MAKRO & ETF — Farside flows + korelacje z NQ/DXY/US10Y (server-side, z fusion json) -->
+      ${(data.etf || data.macro_context) ? `<div id="macro-etf-slot" class="hide-trading" style="grid-column: span 12; width: 100%;">${renderMacroEtf(data)}</div>` : ''}
 
       <!-- SMART MONEY — instytucje i wieloryby (Binance top traders, Hyperliquid, CFTC COT) -->
       <div id="smart-money-slot" class="hide-eod" style="grid-column: span 12; width: 100%;"></div>
@@ -3707,6 +3727,41 @@ function renderFlushRiskPanel() {
       <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;line-height:1.5">${t('fr_desc')}</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px">${rows}</div>
       <div style="font-size:9.5px;color:var(--text-dim);margin-top:8px;line-height:1.5">${t('fr_note')}</div>
+    </section>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MAKRO & ETF — z fusion json (auto_fusion liczy server-side co 5 min):
+//   etf: Farside BTC/ETH dzienne przepływy (mln USD), 60 sesji
+//   macro_context: NQ/SPX/DXY/US10Y/GOLD zmiana 1d/5d + korelacja 30 sesji z BTC + reżim makro
+// ═══════════════════════════════════════════════════════════════════════════
+function renderMacroEtf(data) {
+  const etf = data.etf, mc = data.macro_context;
+  if (!etf && !mc) return '';
+  const M = v => `${v >= 0 ? '+' : '−'}$${Math.abs(v) >= 1000 ? (Math.abs(v) / 1000).toFixed(2) + 'B' : Math.abs(v).toFixed(0) + 'M'}`;
+  const col = v => v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--text-dim)';
+  const bars = series => { if (!series || !series.length) return ''; const s = series.slice(-30); const mx = Math.max(...s.map(x => Math.abs(x.total))) || 1; return `<div style="display:flex;align-items:flex-end;gap:2px;height:44px;margin:6px 0 2px">${s.map(x => { const h = Math.max(2, Math.abs(x.total) / mx * 40); return `<div title="${x.date}: ${M(x.total)}" style="flex:1;display:flex;flex-direction:column;justify-content:${x.total >= 0 ? 'flex-end' : 'flex-start'};height:44px"><div style="height:${h}px;background:${x.total >= 0 ? 'var(--green)' : 'var(--red)'};opacity:${x === s[s.length - 1] ? 1 : 0.65};border-radius:1px"></div></div>`; }).join('')}</div>`; };
+  const etfCard = (k, label) => { const e = etf?.[k]; if (!e) return `<div style="background:var(--bg-elev-2);border-radius:6px;padding:8px;font-size:11px;color:var(--text-dim)">${label} ETF — ${t('me_no_data')}</div>`;
+    const streakTxt = e.streak ? `${Math.abs(e.streak)} ${t('me_days')} ${e.streak > 0 ? t('me_inflows') : t('me_outflows')}` : '';
+    return `<div style="background:var(--bg-elev-2);border-radius:6px;padding:8px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700">🏛 ${label} spot ETF · ${e.last_date}</span><span style="font-family:var(--mono);font-weight:900;font-size:14px;color:${col(e.d1)}">${M(e.d1)}</span></div>
+      ${bars(e.series)}
+      <div style="font-family:var(--mono);font-size:10.5px;display:flex;gap:10px;flex-wrap:wrap"><span>5 ${t('me_sessions')} <b style="color:${col(e.d7)}">${M(e.d7)}</b></span><span>21 ${t('me_sessions')} <b style="color:${col(e.d30)}">${M(e.d30)}</b></span><span>60 <b style="color:${col(e.cum_60d)}">${M(e.cum_60d)}</b></span>${streakTxt ? `<span style="color:${col(e.streak)}">${streakTxt}</span>` : ''}</div>
+    </div>`; };
+  const macroCard = mc ? (() => { const a = mc.assets || {}; const regCol = mc.regime === 'risk_beta' ? 'var(--amber)' : mc.regime === 'dollar_driven' ? 'var(--red)' : mc.regime === 'decoupled' ? 'var(--green)' : 'var(--text-muted)';
+    const rows = ['NQ', 'SPX', 'DXY', 'US10Y', 'GOLD'].filter(k => a[k]).map(k => { const x = a[k]; const c = x.corr_30d; const cc = c == null ? 'var(--text-dim)' : Math.abs(c) >= 0.5 ? (c > 0 ? 'var(--green)' : 'var(--red)') : 'var(--text-muted)';
+      return `<tr style="border-bottom:1px solid var(--border-soft)"><td style="padding:3px 6px;font-weight:700;color:var(--gold);font-family:var(--mono)" title="${x.name}">${k}</td><td style="padding:3px 6px;text-align:right;font-family:var(--mono)">${k === 'US10Y' ? (x.last / 10).toFixed(2) + '%' : x.last.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td><td style="padding:3px 6px;text-align:right;font-family:var(--mono);color:${col(x.chg_1d)}">${x.chg_1d >= 0 ? '+' : ''}${x.chg_1d.toFixed(2)}%</td><td style="padding:3px 6px;text-align:right;font-family:var(--mono);color:${col(x.chg_5d)}">${x.chg_5d >= 0 ? '+' : ''}${x.chg_5d.toFixed(2)}%</td><td style="padding:3px 6px;text-align:right;font-family:var(--mono);font-weight:800;color:${cc}">${c == null ? '—' : (c >= 0 ? '+' : '') + c.toFixed(2)}</td></tr>`; }).join('');
+    return `<div style="background:var(--bg-elev-2);border-radius:6px;padding:8px">
+      <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700;margin-bottom:4px">🌐 ${t('me_macro')} · ${mc.as_of || ''}</div>
+      <table style="width:100%;border-collapse:collapse;font-size:11px"><thead><tr style="color:var(--text-dim);font-size:9px;text-transform:uppercase;border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 6px"></th><th style="text-align:right;padding:3px 6px">${t('me_last')}</th><th style="text-align:right;padding:3px 6px">1d</th><th style="text-align:right;padding:3px 6px">5d</th><th style="text-align:right;padding:3px 6px" title="${t('me_corr_tip')}">corr BTC 30d</th></tr></thead><tbody>${rows}</tbody></table>
+      <div style="margin-top:6px;font-size:11px;font-weight:700;color:${regCol}">${t('me_reg_' + mc.regime)}</div>
+      <div style="font-size:10px;color:var(--text-muted);line-height:1.4">${mc.regime_note || ''}</div>
+    </div>`; })() : '';
+  return `
+    <section class="panel">
+      <div class="panel-head"><h3>🏛 ${t('me_title')}</h3><span class="meta">Farside · Yahoo · ${t('me_via_fusion')}</span></div>
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;line-height:1.5">${t('me_desc')}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:10px" class="of-grid3">${etfCard('btc', 'BTC')}${etfCard('eth', 'ETH')}${macroCard}</div>
     </section>`;
 }
 

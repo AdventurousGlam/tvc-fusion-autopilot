@@ -124,17 +124,153 @@ def fetch_btc_dominance():
         return None
 
 
+def _get_text(url, timeout=20):
+    req = ur.Request(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+                                   "Accept": "text/html,application/xhtml+xml", "Accept-Language": "en-US,en;q=0.9"})
+    with ur.urlopen(req, timeout=timeout, context=SSL_CTX) as r:
+        return r.read().decode("utf-8", errors="replace")
+
+
+def _parse_farside_table(html, days=60):
+    """
+    Farside publikuje TYLKO HTML (endpoint .json nigdy nie istniał — stara funkcja zwracała None
+    od pierwszego dnia, więc On-Chain sub-score BTC/ETH liczył się z formuły zapasowej).
+    Wiersz: <td>DD Mon YYYY</td> ... <td>Total</td>. Liczby: "(19.6)" = ujemna, "-" = brak, "1,119.9".
+    Zwraca listę {date: 'YYYY-MM-DD', total: float} (w mln USD), najstarsze pierwsze.
+    """
+    import re as _re
+    from datetime import datetime as _dt
+    rows = []
+    for tr in _re.findall(r"<tr[^>]*>(.*?)</tr>", html, flags=_re.S):
+        cells = [_re.sub(r"<[^>]+>", "", c).strip() for c in _re.findall(r"<td[^>]*>(.*?)</td>", tr, flags=_re.S)]
+        if len(cells) < 3:
+            continue
+        m = _re.match(r"^(\d{2}) (\w{3}) (\d{4})$", cells[0])
+        if not m:
+            continue
+        raw = cells[-1].replace(",", "")
+        if raw in ("-", ""):
+            continue
+        neg = raw.startswith("(")
+        try:
+            val = float(raw.strip("()"))
+        except ValueError:
+            continue
+        try:
+            d = _dt.strptime(cells[0], "%d %b %Y").strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+        rows.append({"date": d, "total": -val if neg else val})
+    return rows[-days:]
+
+
 def fetch_etf_flows():
-    """BTC + ETH spot ETF net flows (Farside.co.uk public JSON)."""
-    try:
-        btc_data = _get_json("https://farside.co.uk/btc/etf-flows.json")
-        eth_data = _get_json("https://farside.co.uk/eth/etf-flows.json")
-        return {
-            "btc_1d": btc_data.get("total", [{}])[-1] if btc_data else None,
-            "eth_1d": eth_data.get("total", [{}])[-1] if eth_data else None,
-        }
-    except Exception:
+    """
+    BTC + ETH spot ETF net flows — Farside 'all data' (HTML). Wartości w mln USD.
+    Zwraca dla każdego: series (60 dni), d1, d7, d30 (sumy), streak (dni z rzędu tego samego znaku),
+    plus kompatybilne btc_1d / eth_1d (w USD, nie mln — compute_score dzieli przez 1e8).
+    """
+    out = {"btc_1d": None, "eth_1d": None}
+    for key, url in (("btc", "https://farside.co.uk/bitcoin-etf-flow-all-data/"),
+                     ("eth", "https://farside.co.uk/ethereum-etf-flow-all-data/")):
+        try:
+            series = _parse_farside_table(_get_text(url))
+            if not series:
+                raise ValueError("pusta tabela")
+            vals = [r["total"] for r in series]
+            streak, sign = 0, (1 if vals[-1] > 0 else -1 if vals[-1] < 0 else 0)
+            for v in reversed(vals):
+                if sign and (v > 0) == (sign > 0) and v != 0:
+                    streak += 1
+                else:
+                    break
+            out[key] = {"series": series, "d1": vals[-1], "d7": sum(vals[-5:]), "d30": sum(vals[-21:]),
+                        "streak": streak * sign, "last_date": series[-1]["date"], "unit": "USD mln",
+                        "cum_60d": sum(vals)}
+            out[f"{key}_1d"] = vals[-1] * 1_000_000
+            print(f"[etf] {key.upper()} {series[-1]['date']}: {vals[-1]:+.1f}M · 5d {sum(vals[-5:]):+.0f}M · streak {streak * sign:+d}")
+        except Exception as e:
+            print(f"[etf] {key} fetch/parse failed: {e}")
+            out[key] = None
+    return out if (out["btc"] or out["eth"]) else None
+
+
+# ─── MAKRO: korelacje BTC z rynkami tradycyjnymi (Yahoo chart API, bez klucza) ───
+MACRO_SYMBOLS = {
+    "NQ":   ("^IXIC",    "Nasdaq Composite"),
+    "SPX":  ("^GSPC",    "S&P 500"),
+    "DXY":  ("DX-Y.NYB", "Dollar Index"),
+    "US10Y": ("^TNX",    "US 10Y yield"),
+    "GOLD": ("GC=F",     "Gold futures"),
+}
+
+
+def _yahoo_daily(symbol, rng="3mo"):
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ur.quote(symbol)}?range={rng}&interval=1d"
+    req = ur.Request(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124.0 Safari/537.36", "Accept": "application/json"})
+    with ur.urlopen(req, timeout=20, context=SSL_CTX) as r:
+        j = json.loads(r.read())
+    res = j["chart"]["result"][0]
+    ts = res["timestamp"]; closes = res["indicators"]["quote"][0]["close"]
+    return [(datetime.fromtimestamp(t, tz=timezone.utc).strftime("%Y-%m-%d"), c) for t, c in zip(ts, closes) if c is not None]
+
+
+def _pearson(xs, ys):
+    n = len(xs)
+    if n < 10:
         return None
+    mx, my = sum(xs) / n, sum(ys) / n
+    sxx = sum((x - mx) ** 2 for x in xs); syy = sum((y - my) ** 2 for y in ys)
+    if sxx == 0 or syy == 0:
+        return None
+    return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / (sxx * syy) ** 0.5
+
+
+def fetch_macro_context():
+    """
+    Zmiana 1d/5d + korelacja 30-sesyjna dziennych zwrotów BTC z NQ/SPX/DXY/US10Y/GOLD.
+    Interpretacja: corr(BTC,NQ) > 0.5 = crypto handluje jak beta na ryzyko (stopy rządzą);
+    corr(BTC,DXY) < -0.4 = dolar rządzi. Zwraca None gdy Yahoo padnie — cykl idzie dalej.
+    """
+    try:
+        btc = dict(_yahoo_daily("BTC-USD"))
+    except Exception as e:
+        print(f"[macro] BTC-USD failed: {e}")
+        return None
+    out = {"assets": {}, "as_of": max(btc.keys()) if btc else None}
+    for key, (sym, name) in MACRO_SYMBOLS.items():
+        try:
+            series = _yahoo_daily(sym)
+            if len(series) < 6:
+                raise ValueError("za krótka seria")
+            closes = [c for _, c in series]
+            last, prev, prev5 = closes[-1], closes[-2], closes[-6]
+            # wspólne daty → dzienne zwroty → korelacja z ostatnich 30 wspólnych sesji
+            common = [d for d, _ in series if d in btc]
+            pairs = []
+            sd = dict(series)
+            for i in range(1, len(common)):
+                d0, d1 = common[i - 1], common[i]
+                pairs.append(((sd[d1] / sd[d0] - 1), (btc[d1] / btc[d0] - 1)))
+            pairs = pairs[-30:]
+            corr = _pearson([p[0] for p in pairs], [p[1] for p in pairs])
+            out["assets"][key] = {"name": name, "symbol": sym, "last": round(last, 3), "chg_1d": round((last / prev - 1) * 100, 2),
+                                  "chg_5d": round((last / prev5 - 1) * 100, 2), "corr_30d": round(corr, 2) if corr is not None else None,
+                                  "date": series[-1][0]}
+        except Exception as e:
+            print(f"[macro] {key} failed: {e}")
+    a = out["assets"]
+    nq, dxy, y10 = a.get("NQ", {}).get("corr_30d"), a.get("DXY", {}).get("corr_30d"), a.get("US10Y", {}).get("corr_30d")
+    if nq is not None and nq > 0.5:
+        out["regime"] = "risk_beta"; out["regime_note"] = f"BTC handluje jak beta na ryzyko (corr NQ {nq:+.2f}) — makro i stopy rządzą kierunkiem"
+    elif dxy is not None and dxy < -0.4:
+        out["regime"] = "dollar_driven"; out["regime_note"] = f"Dolar rządzi (corr DXY {dxy:+.2f}) — patrz na DXY przed wejściem"
+    elif nq is not None and abs(nq) < 0.25 and (dxy is None or abs(dxy) < 0.25):
+        out["regime"] = "decoupled"; out["regime_note"] = f"BTC odklejony od makro (corr NQ {nq:+.2f}) — czynniki własne rynku crypto dominują"
+    else:
+        out["regime"] = "mixed"; out["regime_note"] = "Korelacje umiarkowane — makro to tło, nie sterownik"
+    print(f"[macro] regime {out.get('regime')} · " + " · ".join(f"{k} {v['chg_1d']:+.1f}% corr {v['corr_30d']}" for k, v in a.items()))
+    return out
 
 
 def compute_ta_score(klines):
@@ -548,6 +684,10 @@ def generate_fusion():
 
     etf_flows = fetch_etf_flows()
     print(f"[data] ETF flows: {'✓' if etf_flows else 'N/A'}")
+    try:
+        macro_ctx = fetch_macro_context()
+    except Exception as e:
+        print(f"[macro] failed: {e}"); macro_ctx = None
 
     regime = detect_regime(prices.get("BTC"), fng, dom)
     print(f"[regime] {regime}")
@@ -693,6 +833,8 @@ def generate_fusion():
         "catalyst_calendar_this_week": generate_catalyst_calendar(),
         "crypto_picks": load_crypto_picks(),
         "macro_events": generate_macro_events(days_ahead=45),
+        "etf": {k: etf_flows.get(k) for k in ("btc", "eth")} if etf_flows else None,
+        "macro_context": macro_ctx,
         "conclusion": (
             f"Regime {regime}. Long risk {aggregate_risk:.1f}% · Short risk {aggregate_short_risk:.1f}% capital. "
             f"Top pick: {decisions[0]['ticker']} score {decisions[0]['score']} "
