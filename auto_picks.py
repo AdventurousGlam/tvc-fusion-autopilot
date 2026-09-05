@@ -183,7 +183,8 @@ def analyze(row, k):
     vol_ratio = (row["turnover"] / vol_avg30) if vol_avg30 else None
     # higher highs: 3 ostatnie domknięte szczyty tygodniowe rosną
     hh = all(max(c["h"] for c in done[-7 * (i + 1):len(done) - 7 * i]) > max(c["h"] for c in done[-7 * (i + 2):len(done) - 7 * (i + 1)]) for i in range(2)) if len(done) >= 21 else False
-    return {"px": px, "ema20": e20, "ema50": e50, "hi20": hi20, "lo20": lo20, "rsi": rsi(closes[:-1]), "vol_ratio": vol_ratio, "hh": hh,
+    lo5 = min(c["l"] for c in done[-5:])   # swing low 5 dni — inwalidacja dla trendów (20d low jest za daleko)
+    return {"px": px, "ema20": e20, "ema50": e50, "hi20": hi20, "lo20": lo20, "lo5": lo5, "rsi": rsi(closes[:-1]), "vol_ratio": vol_ratio, "hh": hh,
             "dist_lo20": (px - lo20) / px * 100 if px else None, "dist_hi20": (hi20 - px) / px * 100 if px else None}
 
 
@@ -194,9 +195,13 @@ def score_momentum(r, a):
         return None
     if r["r24"] < 3 or r["r7"] < 8 or not (a["px"] > a["ema20"]) or (a["ema50"] and not a["ema20"] > a["ema50"]):
         return None
+    if a["rsi"] is not None and a["rsi"] >= 85:
+        return None   # parabola (RSI ≥ 85) to nie momentum — to kandydat na mean reversion w drugą stronę
     s = min(r["r7"], 40) + min(r["r24"], 15) * 1.5 + (min(a["vol_ratio"], 4) * 8 if a["vol_ratio"] else 0) + (10 if a["hh"] else 0)
     if r["r24"] > 25:
         s *= 0.7   # pościg
+    if r["r7"] > 150:
+        s *= 0.6   # +150% w tydzień = późna faza
     return s
 
 
@@ -259,13 +264,15 @@ def build_pick(cat, r, a, mcap, score):
         thesis = (f"7d {r['r7']:+.1f}%, 24h {r['r24']:+.1f}%, cena nad EMA20{' > EMA50' if a and a['ema50'] else ''}"
                   f"{', wolumen ' + format(a['vol_ratio'], '.1f') + '× śr. 30d' if a and a['vol_ratio'] else ''}"
                   f"{', wyższe szczyty tygodniowe' if a and a['hh'] else ''}. Trend z paliwem — wejście na cofnięciu do EMA20, nie na świecy.")
-        support, resistance, inval = (a["ema20"] if a else lo), hi, lo
+        lo5 = a["lo5"] if a else lo
+        support, resistance, inval = (a["ema20"] if a else lo), hi, lo5 * 0.98
     elif cat == "Derivatives":
+        lo5 = a["lo5"] if a else lo
         if f <= -0.03:
             direction = "long"
             thesis = (f"Funding {f:+.3f}%/8h — shorty płacą za utrzymanie pozycji, a cena się trzyma ({r['r24']:+.1f}% 24h). "
                       f"Klasyczny układ pod short squeeze: wybicie nad {fmtp(hi)} zmusza shorty do zamknięcia.")
-            support, resistance, inval = lo, hi, lo * 0.97
+            support, resistance, inval = lo5, hi, lo5 * 0.97
         else:
             direction = "short" if r["r24"] < 0 else "watch"
             thesis = (f"Funding {f:+.3f}%/8h — longi przepłacają, a cena nie idzie ({r['r24']:+.1f}% 24h). "
