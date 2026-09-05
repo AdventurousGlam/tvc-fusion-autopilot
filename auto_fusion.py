@@ -132,32 +132,36 @@ def _get_text(url, timeout=20):
         return r.read().decode("utf-8", errors="replace")
 
 
-def _parse_farside_table(html, days=60):
+def _parse_farside_table(text, days=60):
     """
     Farside publikuje TYLKO HTML (endpoint .json nigdy nie istniał — stara funkcja zwracała None
     od pierwszego dnia, więc On-Chain sub-score BTC/ETH liczył się z formuły zapasowej).
-    Wiersz: <td>DD Mon YYYY</td> ... <td>Total</td>. Liczby: "(19.6)" = ujemna, "-" = brak, "1,119.9".
-    Zwraca listę {date: 'YYYY-MM-DD', total: float} (w mln USD), najstarsze pierwsze.
+    Cloudflare Farside odrzuca IP runnerów GitHub (403), więc pobieramy przez r.jina.ai (reader
+    proxy → markdown). Parser obsługuje OBA formaty:
+      HTML:     <td>04 Sep 2026</td> ... <td>174.6</td>
+      markdown: | 04 Sep 2026 | 117.4 | ... | 174.6 |
+    Liczby: "(19.6)" = ujemna, "-" = brak, "1,119.9". Zwraca [{date, total}] w mln USD, najstarsze pierwsze.
     """
     import re as _re
     from datetime import datetime as _dt
     rows = []
-    for tr in _re.findall(r"<tr[^>]*>(.*?)</tr>", html, flags=_re.S):
-        cells = [_re.sub(r"<[^>]+>", "", c).strip() for c in _re.findall(r"<td[^>]*>(.*?)</td>", tr, flags=_re.S)]
+    if "<tr" in text:
+        lines = []
+        for tr in _re.findall(r"<tr[^>]*>(.*?)</tr>", text, flags=_re.S):
+            lines.append([_re.sub(r"<[^>]+>", "", c).strip() for c in _re.findall(r"<td[^>]*>(.*?)</td>", tr, flags=_re.S)])
+    else:
+        lines = [[c.strip() for c in ln.strip().strip("|").split("|")] for ln in text.splitlines() if ln.strip().startswith("|")]
+    for cells in lines:
         if len(cells) < 3:
             continue
-        m = _re.match(r"^(\d{2}) (\w{3}) (\d{4})$", cells[0])
-        if not m:
+        if not _re.match(r"^\d{2} \w{3} \d{4}$", cells[0]):
             continue
-        raw = cells[-1].replace(",", "")
+        raw = cells[-1].replace(",", "").strip()
         if raw in ("-", ""):
             continue
         neg = raw.startswith("(")
         try:
             val = float(raw.strip("()"))
-        except ValueError:
-            continue
-        try:
             d = _dt.strptime(cells[0], "%d %b %Y").strftime("%Y-%m-%d")
         except ValueError:
             continue
@@ -175,7 +179,13 @@ def fetch_etf_flows():
     for key, url in (("btc", "https://farside.co.uk/bitcoin-etf-flow-all-data/"),
                      ("eth", "https://farside.co.uk/ethereum-etf-flow-all-data/")):
         try:
-            series = _parse_farside_table(_get_text(url))
+            try:
+                text = _get_text(url)
+            except Exception as e1:
+                # Cloudflare 403 dla IP datacenter → reader proxy (zwraca markdown tej samej tabeli)
+                print(f"[etf] {key} direct failed ({e1}) — próbuję przez r.jina.ai")
+                text = _get_text("https://r.jina.ai/" + url)
+            series = _parse_farside_table(text)
             if not series:
                 raise ValueError("pusta tabela")
             vals = [r["total"] for r in series]
@@ -207,7 +217,28 @@ MACRO_SYMBOLS = {
 }
 
 
+STOOQ_SYMBOLS = {"BTC-USD": "btcusd", "^IXIC": "^ndq", "^GSPC": "^spx", "DX-Y.NYB": "dx.f", "^TNX": "10yusy.b", "GC=F": "xauusd"}
+
+
+def _stooq_daily(symbol):
+    """stooq.com CSV (Date,Open,High,Low,Close,Volume) — bez klucza, bez rate limitu dla kilku wywołań."""
+    s = STOOQ_SYMBOLS.get(symbol, symbol)
+    txt = _get_text(f"https://stooq.com/q/d/l/?s={ur.quote(s)}&i=d")
+    out = []
+    for ln in txt.splitlines()[1:]:
+        p = ln.split(",")
+        if len(p) >= 5 and p[0][:4].isdigit():
+            try:
+                out.append((p[0], float(p[4])))
+            except ValueError:
+                pass
+    if len(out) < 20:
+        raise ValueError(f"stooq {s}: {len(out)} wierszy")
+    return out[-120:]
+
+
 def _yahoo_daily(symbol, rng="3mo"):
+    """Yahoo chart API — fallback (z współdzielonych IP GitHub łapie 429)."""
     url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ur.quote(symbol)}?range={rng}&interval=1d"
     req = ur.Request(url, headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/124.0 Safari/537.36", "Accept": "application/json"})
     with ur.urlopen(req, timeout=20, context=SSL_CTX) as r:
@@ -215,6 +246,16 @@ def _yahoo_daily(symbol, rng="3mo"):
     res = j["chart"]["result"][0]
     ts = res["timestamp"]; closes = res["indicators"]["quote"][0]["close"]
     return [(datetime.fromtimestamp(t, tz=timezone.utc).strftime("%Y-%m-%d"), c) for t, c in zip(ts, closes) if c is not None]
+
+
+def _daily_series(symbol):
+    """stooq → Yahoo. Rzuca ostatni błąd gdy oba padną."""
+    try:
+        return _stooq_daily(symbol)
+    except Exception as e1:
+        print(f"[macro] stooq {symbol} failed ({e1}) — Yahoo fallback")
+        time.sleep(1.5)
+        return _yahoo_daily(symbol)
 
 
 def _pearson(xs, ys):
@@ -235,7 +276,7 @@ def fetch_macro_context():
     corr(BTC,DXY) < -0.4 = dolar rządzi. Zwraca None gdy Yahoo padnie — cykl idzie dalej.
     """
     try:
-        btc = dict(_yahoo_daily("BTC-USD"))
+        btc = dict(_daily_series("BTC-USD"))
     except Exception as e:
         print(f"[macro] BTC-USD failed: {e}")
         FETCH_ERRORS.append(f"macro.BTC-USD: {type(e).__name__}: {str(e)[:160]}")
@@ -243,7 +284,7 @@ def fetch_macro_context():
     out = {"assets": {}, "as_of": max(btc.keys()) if btc else None}
     for key, (sym, name) in MACRO_SYMBOLS.items():
         try:
-            series = _yahoo_daily(sym)
+            series = _daily_series(sym)
             if len(series) < 6:
                 raise ValueError("za krótka seria")
             closes = [c for _, c in series]
@@ -257,6 +298,8 @@ def fetch_macro_context():
                 pairs.append(((sd[d1] / sd[d0] - 1), (btc[d1] / btc[d0] - 1)))
             pairs = pairs[-30:]
             corr = _pearson([p[0] for p in pairs], [p[1] for p in pairs])
+            if key == "US10Y" and last > 20:   # Yahoo ^TNX podaje yield×10; stooq podaje %
+                last, prev, prev5 = last / 10, prev / 10, prev5 / 10
             out["assets"][key] = {"name": name, "symbol": sym, "last": round(last, 3), "chg_1d": round((last / prev - 1) * 100, 2),
                                   "chg_5d": round((last / prev5 - 1) * 100, 2), "corr_30d": round(corr, 2) if corr is not None else None,
                                   "date": series[-1][0]}
