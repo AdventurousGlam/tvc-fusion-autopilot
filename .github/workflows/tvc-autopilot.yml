@@ -49,6 +49,13 @@ jobs:
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 paper_bot.py telegram-test || true
 
+      # Poranny shortlist — algorytmiczny screener MEXC (zastąpił Cowork task, który wymagał
+      # obudzonego Maca). Generuje raz dziennie po 05:00 UTC; poza tym oknem jest no-op.
+      # Nigdy nie wywraca cyklu (exit 0). Wynik trafia do fusion_latest.json przez auto_fusion.
+      - name: Crypto Picks (raz dziennie, MEXC screener + Telegram)
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
+        run: python3 auto_picks.py --telegram
+
       - name: Run auto_fusion (fresh algorytmiczne sygnały)
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 auto_fusion.py
@@ -68,7 +75,7 @@ jobs:
         run: |
           git config user.name "tvc-autopilot"
           git config user.email "autopilot@tvcfusion.local"
-          git add fusion_*.json paper_trades.db
+          git add fusion_*.json paper_trades.db crypto_picks.json 2>/dev/null || git add fusion_*.json paper_trades.db
           if git diff --cached --quiet; then
             echo "Brak zmian do commitu."
             exit 0
@@ -93,6 +100,7 @@ jobs:
               echo "Konflikt w rebase — auto-resolve na korzyść danych z tego przebiegu..."
               git checkout --theirs -- fusion_*.json 2>/dev/null || true
               git checkout --theirs -- paper_trades.db 2>/dev/null || true
+              git checkout --theirs -- crypto_picks.json 2>/dev/null || true
               git add -A
               if git rebase --continue; then
                 echo "Konflikt rozwiązany automatycznie."
