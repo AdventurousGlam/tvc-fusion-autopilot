@@ -184,7 +184,13 @@ def fetch_etf_flows():
             except Exception as e1:
                 # Cloudflare 403 dla IP datacenter → reader proxy (zwraca markdown tej samej tabeli)
                 print(f"[etf] {key} direct failed ({e1}) — próbuję przez r.jina.ai")
-                text = _get_text("https://r.jina.ai/" + url)
+                FETCH_ERRORS.append(f"etf.{key}.direct: {type(e1).__name__}: {str(e1)[:80]}")
+                try:
+                    text = _get_text("https://r.jina.ai/" + url)
+                except Exception as e2:
+                    FETCH_ERRORS.append(f"etf.{key}.jina: {type(e2).__name__}: {str(e2)[:80]}")
+                    time.sleep(2)
+                    text = _get_text("https://api.allorigins.win/raw?url=" + ur.quote(url, safe=""))
             series = _parse_farside_table(text)
             if not series:
                 raise ValueError("pusta tabela")
@@ -254,6 +260,7 @@ def _daily_series(symbol):
         return _stooq_daily(symbol)
     except Exception as e1:
         print(f"[macro] stooq {symbol} failed ({e1}) — Yahoo fallback")
+        FETCH_ERRORS.append(f"macro.stooq.{symbol}: {type(e1).__name__}: {str(e1)[:80]}")
         time.sleep(1.5)
         return _yahoo_daily(symbol)
 

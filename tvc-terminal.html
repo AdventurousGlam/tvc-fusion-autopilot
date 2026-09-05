@@ -1150,6 +1150,7 @@ const I18N = {
   me_via_fusion:      { pl: 'z auto-fusion, co 5 min',                    en: 'via auto-fusion, every 5 min' },
   me_desc:            { pl: '<strong>ETF</strong> = dzienne przepływy netto spot ETF (Farside, mln USD, sesje giełdowe) — to jest realny popyt instytucjonalny, nie narracja; ten sam strumień zasila sub-score On-Chain BTC/ETH w fusion. <strong>Makro</strong> = korelacja 30 sesji dziennych zwrotów BTC z Nasdaq, S&P, dolarem, 10-latkami i złotem: > +0.5 z NQ = crypto handluje jak beta na ryzyko i stopy rządzą; < −0.4 z DXY = dolar rządzi.', en: '<strong>ETF</strong> = daily net flows of spot ETFs (Farside, USD mln, trading sessions) — real institutional demand, not narrative; the same feed drives the BTC/ETH On-Chain sub-score in fusion. <strong>Macro</strong> = 30-session correlation of BTC daily returns with Nasdaq, S&P, dollar, 10Y and gold: > +0.5 with NQ = crypto trades as risk beta and rates rule; < −0.4 with DXY = dollar rules.' },
   me_no_data:         { pl: 'brak danych (Farside niedostępny)',           en: 'no data (Farside unavailable)' },
+  me_browser:         { pl: 'z przeglądarki',                              en: 'from browser' },
   me_sessions:        { pl: 'sesji',                                       en: 'sessions' },
   me_days:            { pl: 'dni',                                         en: 'days' },
   me_inflows:         { pl: 'napływów z rzędu',                            en: 'inflow streak' },
@@ -2083,7 +2084,7 @@ function render() {
       </section>
 
       <!-- MAKRO & ETF — Farside flows + korelacje z NQ/DXY/US10Y (server-side, z fusion json) -->
-      ${(data.etf || data.macro_context) ? `<div id="macro-etf-slot" class="hide-trading" style="grid-column: span 12; width: 100%;">${renderMacroEtf(data)}</div>` : ''}
+      <div id="macro-etf-slot" class="hide-trading" style="grid-column: span 12; width: 100%;">${renderMacroEtf(data)}</div>
 
       <!-- SMART MONEY — instytucje i wieloryby (Binance top traders, Hyperliquid, CFTC COT) -->
       <div id="smart-money-slot" class="hide-eod" style="grid-column: span 12; width: 100%;"></div>
@@ -3735,9 +3736,45 @@ function renderFlushRiskPanel() {
 //   etf: Farside BTC/ETH dzienne przepływy (mln USD), 60 sesji
 //   macro_context: NQ/SPX/DXY/US10Y/GOLD zmiana 1d/5d + korelacja 30 sesji z BTC + reżim makro
 // ═══════════════════════════════════════════════════════════════════════════
+// Fallback przeglądarkowy dla ETF: Farside blokuje IP GitHub (403), ale z Twojej przeglądarki przez
+// r.jina.ai (reader → markdown) działa. Ten sam parser co w auto_fusion, tylko w JS. Cache 30 min.
+const etfBrowser = { btc: null, eth: null, ts: 0 };
+function parseFarsideMarkdown(txt, days = 60) {
+  const rows = [];
+  for (const ln of txt.split('\n')) {
+    if (!ln.trim().startsWith('|')) continue;
+    const cells = ln.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
+    const m = cells[0].match(/^(\d{2}) (\w{3}) (\d{4})$/); if (!m) continue;
+    const raw = cells[cells.length - 1].replace(/,/g, ''); if (raw === '-' || raw === '') continue;
+    const neg = raw.startsWith('('); const v = parseFloat(raw.replace(/[()]/g, '')); if (isNaN(v)) continue;
+    const d = new Date(`${m[1]} ${m[2]} ${m[3]} UTC`); if (isNaN(d)) continue;
+    rows.push({ date: d.toISOString().slice(0, 10), total: neg ? -v : v });
+  }
+  return rows.slice(-days);
+}
+function etfStats(series) {
+  const vals = series.map(r => r.total); const last = vals[vals.length - 1];
+  let streak = 0; const sign = last > 0 ? 1 : last < 0 ? -1 : 0;
+  for (let i = vals.length - 1; i >= 0 && sign && vals[i] !== 0 && (vals[i] > 0) === (sign > 0); i--) streak++;
+  const sum = n => vals.slice(-n).reduce((a, b) => a + b, 0);
+  return { series, d1: last, d7: sum(5), d30: sum(21), cum_60d: sum(vals.length), streak: streak * sign, last_date: series[series.length - 1].date, source: 'browser' };
+}
+async function refreshEtfBrowser() {
+  if (Date.now() - etfBrowser.ts < 30 * 60_000) return;
+  for (const [k, u] of [['btc', 'https://farside.co.uk/bitcoin-etf-flow-all-data/'], ['eth', 'https://farside.co.uk/ethereum-etf-flow-all-data/']]) {
+    try { const r = await fetch('https://r.jina.ai/' + u); if (!r.ok) throw new Error('HTTP ' + r.status); const s = parseFarsideMarkdown(await r.text()); if (s.length) etfBrowser[k] = etfStats(s); }
+    catch (e) { console.warn('[etf] browser fallback', k, e.message); }
+  }
+  etfBrowser.ts = Date.now();
+  const slot = document.getElementById('macro-etf-slot'); if (slot && lastFusion) slot.innerHTML = renderMacroEtf(lastFusion);
+}
+
 function renderMacroEtf(data) {
-  const etf = data.etf, mc = data.macro_context;
-  if (!etf && !mc) return '';
+  // serwer (fusion json) ma pierwszeństwo; gdy runner nie dosięgnął Farside → dane z przeglądarki
+  const etf = { btc: data.etf?.btc || etfBrowser.btc, eth: data.etf?.eth || etfBrowser.eth };
+  if (!etf.btc && !etf.eth) etfBrowser.ts = 0;   // wymuś ponowną próbę przy następnym cyklu
+  const mc = data.macro_context;
+  if (!etf.btc && !etf.eth && !mc) return '';
   const M = v => `${v >= 0 ? '+' : '−'}$${Math.abs(v) >= 1000 ? (Math.abs(v) / 1000).toFixed(2) + 'B' : Math.abs(v).toFixed(0) + 'M'}`;
   const col = v => v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--text-dim)';
   const bars = series => { if (!series || !series.length) return ''; const s = series.slice(-30); const mx = Math.max(...s.map(x => Math.abs(x.total))) || 1; return `<div style="display:flex;align-items:flex-end;gap:2px;height:44px;margin:6px 0 2px">${s.map(x => { const h = Math.max(2, Math.abs(x.total) / mx * 40); return `<div title="${x.date}: ${M(x.total)}" style="flex:1;display:flex;flex-direction:column;justify-content:${x.total >= 0 ? 'flex-end' : 'flex-start'};height:44px"><div style="height:${h}px;background:${x.total >= 0 ? 'var(--green)' : 'var(--red)'};opacity:${x === s[s.length - 1] ? 1 : 0.65};border-radius:1px"></div></div>`; }).join('')}</div>`; };
@@ -3759,7 +3796,7 @@ function renderMacroEtf(data) {
     </div>`; })() : '';
   return `
     <section class="panel">
-      <div class="panel-head"><h3>🏛 ${t('me_title')}</h3><span class="meta">Farside · Yahoo · ${t('me_via_fusion')}</span></div>
+      <div class="panel-head"><h3>🏛 ${t('me_title')}</h3><span class="meta">Farside${(etf.btc?.source === 'browser' || etf.eth?.source === 'browser') ? ' (' + t('me_browser') + ')' : ''} · stooq/Yahoo · ${t('me_via_fusion')}</span></div>
       <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;line-height:1.5">${t('me_desc')}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:10px" class="of-grid3">${etfCard('btc', 'BTC')}${etfCard('eth', 'ETH')}${macroCard}</div>
     </section>`;
@@ -6313,6 +6350,9 @@ setTimeout(() => {
   setTimeout(refreshSmartMoney, 1500);
   setInterval(refreshSmartMoney, 300_000);
   // FLUSH RISK — co 5 min (po smart money, żeby mieć taśmę wielorybów), pierwszy raz po 4s
+  // ETF fallback z przeglądarki (Farside przez jina) — co 30 min
+  setTimeout(refreshEtfBrowser, 2500);
+  setInterval(refreshEtfBrowser, 30 * 60_000);
   // CYKL · DŁUGI TERMIN — co 60 min
   renderCyclePanel();
   setTimeout(refreshCycle, 6000);
