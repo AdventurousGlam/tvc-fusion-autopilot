@@ -35,6 +35,7 @@ except ImportError:
     SSL_CTX = ssl.create_default_context()
 
 UA = "Mozilla/5.0 tvc-auto-fusion/1.0"
+FETCH_ERRORS = []   # diagnostyka: trafia do fusion json (logi Actions wymagają admina)
 FUSION_DIR = Path.home() / "Claude" / "TVCFusion"
 
 # Ticker → Binance symbol
@@ -191,6 +192,7 @@ def fetch_etf_flows():
             print(f"[etf] {key.upper()} {series[-1]['date']}: {vals[-1]:+.1f}M · 5d {sum(vals[-5:]):+.0f}M · streak {streak * sign:+d}")
         except Exception as e:
             print(f"[etf] {key} fetch/parse failed: {e}")
+            FETCH_ERRORS.append(f"etf.{key}: {type(e).__name__}: {str(e)[:160]}")
             out[key] = None
     return out if (out["btc"] or out["eth"]) else None
 
@@ -236,6 +238,7 @@ def fetch_macro_context():
         btc = dict(_yahoo_daily("BTC-USD"))
     except Exception as e:
         print(f"[macro] BTC-USD failed: {e}")
+        FETCH_ERRORS.append(f"macro.BTC-USD: {type(e).__name__}: {str(e)[:160]}")
         return None
     out = {"assets": {}, "as_of": max(btc.keys()) if btc else None}
     for key, (sym, name) in MACRO_SYMBOLS.items():
@@ -259,6 +262,7 @@ def fetch_macro_context():
                                   "date": series[-1][0]}
         except Exception as e:
             print(f"[macro] {key} failed: {e}")
+            FETCH_ERRORS.append(f"macro.{key}: {type(e).__name__}: {str(e)[:160]}")
     a = out["assets"]
     nq, dxy, y10 = a.get("NQ", {}).get("corr_30d"), a.get("DXY", {}).get("corr_30d"), a.get("US10Y", {}).get("corr_30d")
     if nq is not None and nq > 0.5:
@@ -835,6 +839,7 @@ def generate_fusion():
         "macro_events": generate_macro_events(days_ahead=45),
         "etf": {k: etf_flows.get(k) for k in ("btc", "eth")} if etf_flows else None,
         "macro_context": macro_ctx,
+        "fetch_errors": FETCH_ERRORS,
         "conclusion": (
             f"Regime {regime}. Long risk {aggregate_risk:.1f}% · Short risk {aggregate_short_risk:.1f}% capital. "
             f"Top pick: {decisions[0]['ticker']} score {decisions[0]['score']} "
