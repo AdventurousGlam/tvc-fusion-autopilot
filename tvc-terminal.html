@@ -1144,6 +1144,29 @@ const I18N = {
   fr_top_flip:        { pl: 'Top traderzy Binance przeszli na short o',   en: 'Binance top traders flipped short at' },
   fr_range:           { pl: 'zakres',                                     en: 'range' },
   fr_oi_tip:          { pl: 'Zmiana Open Interest (Bybit perp). Spadek przy płaskiej cenie = dźwignia wychodzi = rynek traci paliwo.', en: 'Open Interest change (Bybit perp). Falling while price is flat = leverage leaving = market losing fuel.' },
+  // ─── CYKL · DŁUGI TERMIN ───
+  cy_title:           { pl: 'Cykl · długi termin',                       en: 'Cycle · long term' },
+  cy_desc:            { pl: 'Gdzie jesteśmy w cyklu, nie w tygodniu. <strong>Stablecoiny</strong> = suchy proch: rosnąca podaż to kapitał, który wszedł do systemu i czeka; spadająca = wychodzi. <strong>200W MA</strong> = historyczna linia hossa/bessa BTC (dna 2015, 2018, 2022 dokładnie na niej). <strong>Mayer</strong> = cena / 200D MA: > 2.4 historycznie przegrzanie, < 0.8 kapitulacja. Tygodnie na SUI &lt; 200 → MA częściowa.', en: 'Where we are in the cycle, not the week. <strong>Stablecoins</strong> = dry powder: rising supply is capital that entered the system and waits; falling = leaving. <strong>200W MA</strong> = BTC historical bull/bear line (2015, 2018, 2022 bottoms sat exactly on it). <strong>Mayer</strong> = price / 200D MA: > 2.4 historically overheated, < 0.8 capitulation. SUI has &lt; 200 weeks → partial MA.' },
+  cy_stables:         { pl: 'Podaż stablecoinów (USD)',                  en: 'Stablecoin supply (USD)' },
+  cy_stables_note:    { pl: 'DeFiLlama, wszystkie USD-pegged. Sparkline = 180 dni. Wzrost > $2B/30d = płynność wchodzi.', en: 'DeFiLlama, all USD-pegged. Sparkline = 180 days. Growth > $2B/30d = liquidity entering.' },
+  cy_liq_expanding:   { pl: '▲ Płynność wchodzi — paliwo dla ryzyka',    en: '▲ Liquidity entering — fuel for risk' },
+  cy_liq_contracting: { pl: '▼ Płynność wychodzi — kapitał opuszcza system', en: '▼ Liquidity leaving — capital exiting the system' },
+  cy_liq_flat:        { pl: '■ Płynność płasko — bez nowego paliwa',      en: '■ Liquidity flat — no new fuel' },
+  cy_liq_null:        { pl: '—',                                          en: '—' },
+  cy_structure:       { pl: 'Struktura długoterminowa per token',          en: 'Long-term structure per token' },
+  cy_structure_note:  { pl: 'Reżim: 🟢 cena nad 200D i 200W = struktura hossy · 🔴 pod obiema = bessa · 🟡 pomiędzy = przejście. Golden/Death cross = 50D vs 200D w ostatnich 60 dniach.', en: 'Regime: 🟢 price above 200D and 200W = bull structure · 🔴 below both = bear · 🟡 between = transition. Golden/Death cross = 50D vs 200D within last 60 days.' },
+  cy_regime:          { pl: 'Reżim',                                      en: 'Regime' },
+  cy_bull:            { pl: 'hossa',                                      en: 'bull' },
+  cy_bear:            { pl: 'bessa',                                      en: 'bear' },
+  cy_transition:      { pl: 'przejście',                                  en: 'transition' },
+  cy_partial:         { pl: 'częściowa',                                  en: 'partial' },
+  cy_overheated:      { pl: 'przegrzanie',                                en: 'overheated' },
+  cy_hot:             { pl: 'gorąco',                                     en: 'hot' },
+  cy_healthy:         { pl: 'zdrowo',                                     en: 'healthy' },
+  cy_below:           { pl: 'pod średnią',                                en: 'below avg' },
+  cy_capitulation:    { pl: 'kapitulacja',                                en: 'capitulation' },
+  cy_mayer_tip:       { pl: 'Mayer multiple = cena / 200-dniowa SMA. Historycznie: > 2.4 szczyty cykli, < 0.8 dna.', en: 'Mayer multiple = price / 200-day SMA. Historically: > 2.4 cycle tops, < 0.8 bottoms.' },
+  cy_200w_tip:        { pl: '200-tygodniowa SMA. Dna bessy BTC 2015, 2018 i 2022 zatrzymały się dokładnie na niej.', en: '200-week SMA. BTC bear-market bottoms in 2015, 2018 and 2022 stopped exactly on it.' },
   // ─── COMMAND CENTER (nowe sygnały) ───
   cc_flush_title:     { pl: 'WYSOKA kruchość rynku',                     en: 'HIGH market fragility' },
   cc_flush_cmd:       { pl: 'Brak nowych longów · trailing SL ciaśniej · rozmiar ×0.5 · czekaj na powrót do NISKI', en: 'No new longs · tighter trailing SL · size ×0.5 · wait for return to LOW' },
@@ -2094,6 +2117,9 @@ function render() {
         <div class="chart-container"><canvas id="breakdown-chart"></canvas></div>
       </section>
 
+      <!-- CYKL · DŁUGI TERMIN — stablecoiny (płynność) + 200D/200W MA + Mayer -->
+      <div id="cycle-slot" class="hide-trading" style="grid-column: span 12; width: 100%;"></div>
+
       <!-- P&L HISTORY — equity curve + trade stats -->
       <div id="pnl-history-slot" style="grid-column: span 12; width: 100%;"></div>
 
@@ -2110,7 +2136,7 @@ function render() {
   `;
 
   updatePriceCells();
-  try { renderSmartMoneyPanel(); updateSmartMoneyTags(); renderFlushRiskPanel(); renderOptionsPanel(); } catch (e) {}
+  try { renderSmartMoneyPanel(); updateSmartMoneyTags(); renderFlushRiskPanel(); renderOptionsPanel(); renderCyclePanel(); } catch (e) {}
   renderBreakdownChart();
   updateFngGauge();
   if (btcDominance != null) {
@@ -3681,6 +3707,120 @@ function renderFlushRiskPanel() {
       <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;line-height:1.5">${t('fr_desc')}</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:8px">${rows}</div>
       <div style="font-size:9.5px;color:var(--text-dim);margin-top:8px;line-height:1.5">${t('fr_note')}</div>
+    </section>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CYKL · DŁUGI TERMIN — gdzie jesteśmy w cyklu, nie w tygodniu
+//   Stablecoiny (DeFiLlama): łączna podaż USD-pegged + Δ7d/30d/90d = płynność wchodzi/wychodzi
+//   200W MA (Bybit weekly): historyczna linia hossa/bessa BTC (dna 2015/2018/2022 = 200W MA)
+//   200D MA/EMA + Mayer multiple (cena/200DMA): >2.4 przegrzanie, <0.8 kapitulacja
+//   Odświeżanie co 60 min. CoinMetrics (MVRV) blokuje CORS — pominięte.
+// ═══════════════════════════════════════════════════════════════════════════
+const cycleData = { stables: null, tokens: {}, ts: 0, err: {} };
+
+async function refreshCycle() {
+  try {
+    const [list, chart] = await Promise.all([
+      smFetchJson('https://stablecoins.llama.fi/stablecoins?includePrices=false'),
+      smFetchJson('https://stablecoins.llama.fi/stablecoincharts/all'),
+    ]);
+    const usd = list.peggedAssets.filter(a => a.pegType === 'peggedUSD');
+    const sum = k => usd.reduce((s, a) => s + (a[k]?.peggedUSD || 0), 0);
+    const series = chart.map(c => ({ t: +c.date * 1000, v: c.totalCirculatingUSD?.peggedUSD || 0 })).filter(x => x.v > 0);
+    const last = series[series.length - 1].v, at = d => (series[Math.max(0, series.length - 1 - d)] || series[0]).v;
+    const top = usd.sort((a, b) => (b.circulating?.peggedUSD || 0) - (a.circulating?.peggedUSD || 0)).slice(0, 3)
+      .map(a => ({ sym: a.symbol, v: a.circulating.peggedUSD, d7: a.circulating.peggedUSD - (a.circulatingPrevWeek?.peggedUSD || a.circulating.peggedUSD), d30: a.circulating.peggedUSD - (a.circulatingPrevMonth?.peggedUSD || a.circulating.peggedUSD) }));
+    cycleData.stables = { total: sum('circulating'), d7: sum('circulating') - sum('circulatingPrevWeek'), d30: sum('circulating') - sum('circulatingPrevMonth'), d90: last - at(90), d365: last - at(365), ath: Math.max(...series.map(x => x.v)), spark: series.slice(-180).map(x => x.v), top };
+    cycleData.err.stables = null;
+  } catch (e) { cycleData.err.stables = String(e.message || e); }
+  for (const tk of SM_TICKERS) {
+    try {
+      const [dj, wj] = await Promise.all([
+        smFetchJson(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${tk}USDT&interval=D&limit=420`),
+        smFetchJson(`https://api.bybit.com/v5/market/kline?category=linear&symbol=${tk}USDT&interval=W&limit=200`),
+      ]);
+      const d = dj.result.list.map(c => +c[4]).reverse(), w = wj.result.list.map(c => +c[4]).reverse();
+      const px = d[d.length - 1];
+      const sma = (arr, n) => arr.length >= n ? arr.slice(-n).reduce((a, b) => a + b, 0) / n : null;
+      const emaN = (arr, n) => { if (arr.length < n) return null; const k = 2 / (n + 1); let e = arr.slice(0, n).reduce((a, b) => a + b, 0) / n; for (const v of arr.slice(n)) e = v * k + e * (1 - k); return e; };
+      const ma200d = sma(d, 200), ema200d = emaN(d, 200), ma50d = sma(d, 50);
+      const ma200w = sma(w, 200), ma200wPartial = w.length < 200 ? sma(w, w.length) : null, weeks = w.length;
+      const ma20w = sma(w, 20);
+      // Golden/death cross 50D vs 200D w ostatnich 60 dniach
+      let cross = null;
+      for (let i = d.length - 60; i < d.length; i++) { const a = sma(d.slice(0, i), 50), b = sma(d.slice(0, i), 200), a1 = sma(d.slice(0, i + 1), 50), b1 = sma(d.slice(0, i + 1), 200); if (a && b && a1 && b1 && (a < b) !== (a1 < b1)) cross = { t: i, golden: a1 > b1, daysAgo: d.length - 1 - i }; }
+      cycleData.tokens[tk] = { px, ma200d, ema200d, ma50d, mayer: ma200d ? px / ma200d : null, ma200w, ma200wPartial, weeks, ma20w, cross, hi52: Math.max(...d.slice(-365)), lo52: Math.min(...d.slice(-365)) };
+    } catch (e) { cycleData.tokens[tk] = { error: String(e.message || e) }; }
+  }
+  cycleData.ts = Date.now();
+  renderCyclePanel();
+}
+
+function renderCyclePanel() {
+  const slot = document.getElementById('cycle-slot');
+  if (!slot) return;
+  const s = cycleData.stables;
+  const B = v => `$${(v / 1e9).toFixed(v >= 1e11 ? 0 : 1)}B`;
+  const sg = v => `<span style="color:${v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--text-dim)'}">${v >= 0 ? '+' : '−'}${B(Math.abs(v))}</span>`;
+  const spark = arr => { if (!arr || arr.length < 2) return ''; const lo = Math.min(...arr), hi = Math.max(...arr); const pts = arr.map((v, i) => `${(i / (arr.length - 1) * 100).toFixed(1)},${(30 - (v - lo) / ((hi - lo) || 1) * 28).toFixed(1)}`).join(' '); return `<svg viewBox="0 0 100 30" preserveAspectRatio="none" style="width:100%;height:30px"><polyline points="${pts}" fill="none" stroke="var(--gold)" stroke-width="1.2"/></svg>`; };
+  const liq = s ? (s.d30 > 2e9 ? 'expanding' : s.d30 < -2e9 ? 'contracting' : 'flat') : null;
+  const stablesHtml = s ? `
+    <div style="background:var(--bg-elev-2);border-radius:6px;padding:8px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline">
+        <span style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700">💵 ${t('cy_stables')}</span>
+        <span style="font-family:var(--mono);font-weight:900;font-size:15px">${B(s.total)} <span style="font-size:9px;color:${s.total >= s.ath * 0.995 ? 'var(--green)' : 'var(--text-dim)'};font-weight:600">${s.total >= s.ath * 0.995 ? 'ATH' : (s.total / s.ath * 100).toFixed(0) + '% ATH'}</span></span>
+      </div>
+      ${spark(s.spark)}
+      <div style="font-family:var(--mono);font-size:10.5px;display:flex;gap:10px;flex-wrap:wrap;margin-top:4px">
+        <span>7d ${sg(s.d7)}</span><span>30d ${sg(s.d30)}</span><span>90d ${sg(s.d90)}</span><span>1y ${sg(s.d365)}</span>
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:4px">${s.top.map(x => `${x.sym} ${B(x.v)} (30d ${sg(x.d30)})`).join(' · ')}</div>
+      <div style="margin-top:6px;font-size:11px;font-weight:700;color:${liq === 'expanding' ? 'var(--green)' : liq === 'contracting' ? 'var(--red)' : 'var(--text-muted)'}">${t('cy_liq_' + liq)}</div>
+      <div style="font-size:9.5px;color:var(--text-dim);margin-top:2px;line-height:1.4">${t('cy_stables_note')}</div>
+    </div>` : `<div style="background:var(--bg-elev-2);border-radius:6px;padding:8px;color:var(--text-dim);font-size:11px">${cycleData.err.stables || t('sm_loading')}</div>`;
+
+  const rows = SM_TICKERS.map(tk => {
+    const c = cycleData.tokens[tk];
+    if (!c) return `<tr><td style="padding:5px 6px;color:var(--gold);font-weight:800">${tk}</td><td colspan="6" style="color:var(--text-dim);padding:5px 6px">${t('sm_loading')}</td></tr>`;
+    if (c.error) return `<tr><td style="padding:5px 6px;color:var(--gold);font-weight:800">${tk}</td><td colspan="6" style="color:var(--text-dim);padding:5px 6px">${c.error}</td></tr>`;
+    const pct = (a, b) => a && b ? (a / b - 1) * 100 : null;
+    const cell = (ref, label) => { const p = pct(c.px, ref); if (p == null) return `<span style="color:var(--text-dim)">—</span>`; return `<span style="color:${p >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:700">${p >= 0 ? '+' : ''}${p.toFixed(1)}%</span><div style="font-size:9px;color:var(--text-dim)">${fmt(ref)}</div>`; };
+    const mayerCol = c.mayer == null ? 'var(--text-dim)' : c.mayer >= 2.4 ? 'var(--red)' : c.mayer >= 1.5 ? 'var(--amber)' : c.mayer < 0.8 ? 'var(--green)' : 'var(--text)';
+    const mayerTxt = c.mayer == null ? '' : c.mayer >= 2.4 ? t('cy_overheated') : c.mayer >= 1.5 ? t('cy_hot') : c.mayer < 0.8 ? t('cy_capitulation') : c.mayer < 1 ? t('cy_below') : t('cy_healthy');
+    const w200 = c.ma200w || c.ma200wPartial;
+    const structure = (c.px > (c.ma200d || 0) && c.px > (w200 || 0)) ? ['🟢 ' + t('cy_bull'), 'var(--green)'] : (c.px < (c.ma200d || Infinity) && c.px < (w200 || Infinity)) ? ['🔴 ' + t('cy_bear'), 'var(--red)'] : ['🟡 ' + t('cy_transition'), 'var(--amber)'];
+    return `<tr style="border-bottom:1px solid var(--border-soft)">
+      <td style="padding:5px 6px;color:var(--gold);font-weight:800;font-family:var(--mono)">${tk}<div style="font-size:9px;color:var(--text-muted);font-weight:500">${fmt(c.px)}</div></td>
+      <td style="padding:5px 6px;text-align:right;font-family:var(--mono)">${cell(c.ma200d)}</td>
+      <td style="padding:5px 6px;text-align:right;font-family:var(--mono)">${cell(c.ema200d)}</td>
+      <td style="padding:5px 6px;text-align:right;font-family:var(--mono)">${c.ma200w ? cell(c.ma200w) : c.ma200wPartial ? `${cell(c.ma200wPartial)}<div style="font-size:8.5px;color:var(--amber)">${c.weeks}W ${t('cy_partial')}</div>` : '—'}</td>
+      <td style="padding:5px 6px;text-align:right;font-family:var(--mono);color:${mayerCol};font-weight:800" title="${t('cy_mayer_tip')}">${c.mayer ? c.mayer.toFixed(2) : '—'}<div style="font-size:9px;font-weight:500">${mayerTxt}</div></td>
+      <td style="padding:5px 6px;text-align:center;font-size:10px">${c.cross ? `<span style="color:${c.cross.golden ? 'var(--green)' : 'var(--red)'};font-weight:700">${c.cross.golden ? '✚ Golden' : '✖ Death'}</span><div style="font-size:9px;color:var(--text-dim)">${c.cross.daysAgo}d ${t('ago_suffix')}</div>` : `<span style="color:var(--text-dim)">${c.ma50d && c.ma200d ? (c.ma50d > c.ma200d ? '50>200' : '50<200') : '—'}</span>`}</td>
+      <td style="padding:5px 6px;text-align:center;font-weight:700;color:${structure[1]};font-size:10.5px">${structure[0]}<div style="font-size:9px;color:var(--text-dim);font-weight:500">52w ${fmt(c.lo52)}–${fmt(c.hi52)}</div></td>
+    </tr>`;
+  }).join('');
+
+  slot.innerHTML = `
+    <section class="panel">
+      <div class="panel-head">
+        <h3>🧭 ${t('cy_title')}</h3>
+        <span class="meta">DeFiLlama · Bybit ${cycleData.ts ? '· ' + hhmm(cycleData.ts) : ''} · 60 min</span>
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;line-height:1.5">${t('cy_desc')}</div>
+      <div style="display:grid;grid-template-columns:2fr 3fr;gap:10px" class="of-grid">
+        ${stablesHtml}
+        <div style="background:var(--bg-elev-2);border-radius:6px;padding:8px;overflow-x:auto">
+          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700;margin-bottom:4px">📐 ${t('cy_structure')}</div>
+          <table style="width:100%;border-collapse:collapse;font-size:11px">
+            <thead><tr style="border-bottom:1px solid var(--border);color:var(--text-dim);font-size:9px;text-transform:uppercase">
+              <th style="text-align:left;padding:3px 6px">Token</th><th style="text-align:right;padding:3px 6px">vs 200D MA</th><th style="text-align:right;padding:3px 6px">vs 200D EMA</th><th style="text-align:right;padding:3px 6px" title="${t('cy_200w_tip')}">vs 200W MA</th><th style="text-align:right;padding:3px 6px" title="${t('cy_mayer_tip')}">Mayer</th><th style="text-align:center;padding:3px 6px">50/200</th><th style="text-align:center;padding:3px 6px">${t('cy_regime')}</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+          <div style="font-size:9.5px;color:var(--text-dim);margin-top:6px;line-height:1.4">${t('cy_structure_note')}</div>
+        </div>
+      </div>
     </section>`;
 }
 
@@ -6118,6 +6258,10 @@ setTimeout(() => {
   setTimeout(refreshSmartMoney, 1500);
   setInterval(refreshSmartMoney, 300_000);
   // FLUSH RISK — co 5 min (po smart money, żeby mieć taśmę wielorybów), pierwszy raz po 4s
+  // CYKL · DŁUGI TERMIN — co 60 min
+  renderCyclePanel();
+  setTimeout(refreshCycle, 6000);
+  setInterval(refreshCycle, 3600_000);
   renderOptionsPanel();
   refreshOptions().then(() => { renderFlushRiskPanel(); });   // opcje PRZED Flush Risk (składnik)
   setInterval(refreshOptions, 600_000);
