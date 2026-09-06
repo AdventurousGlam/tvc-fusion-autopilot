@@ -103,6 +103,7 @@ def fetch_universe():
             "funding": float(t.get("fundingRate") or 0) * 100,   # % per 8h
             "high24": float(t.get("high24Price") or 0), "low24": float(t.get("lower24Price") or 0),
             "created": (d.get("createTime") or 0) / 1000,
+            "contract_size": float(d.get("contractSize") or 1),   # holdVol jest w kontraktach (SOL = 0.1 SOL/kontrakt)
             "is_new": bool(d.get("isNew")),
             "max_lev": d.get("maxLeverage"),
         })
@@ -184,8 +185,23 @@ def analyze(row, k):
     # higher highs: 3 ostatnie domknięte szczyty tygodniowe rosną
     hh = all(max(c["h"] for c in done[-7 * (i + 1):len(done) - 7 * i]) > max(c["h"] for c in done[-7 * (i + 2):len(done) - 7 * (i + 1)]) for i in range(2)) if len(done) >= 21 else False
     lo5 = min(c["l"] for c in done[-5:])   # swing low 5 dni — inwalidacja dla trendów (20d low jest za daleko)
+    # ── Squeeze-setup inputs ──
+    # kompresja: zakres 5 dni vs zakres 20 dni (ciasno po szeroko = sprężyna)
+    last5 = done[-5:]
+    range5 = (max(c["h"] for c in last5) - min(c["l"] for c in last5)) / px * 100 if px else None
+    range20 = (hi20 - lo20) / px * 100 if px else None
+    # SFP bull daily: w ostatnich 5 domkniętych świecach knot pod minimum poprzednich 20, close z powrotem nad;
+    # ważny dopóki nie było domknięcia pod tym knotem
+    sfp_bull = None
+    for i in range(max(20, len(done) - 5), len(done)):
+        prior_lo = min(c["l"] for c in done[i - 20:i])
+        if done[i]["l"] < prior_lo and done[i]["c"] > prior_lo:
+            sfp_bull = {"day": i, "low": done[i]["l"], "level": prior_lo}
+    if sfp_bull and any(c["c"] < sfp_bull["low"] for c in done[sfp_bull["day"] + 1:]):
+        sfp_bull = None
     return {"px": px, "ema20": e20, "ema50": e50, "hi20": hi20, "lo20": lo20, "lo5": lo5, "rsi": rsi(closes[:-1]), "vol_ratio": vol_ratio, "hh": hh,
-            "dist_lo20": (px - lo20) / px * 100 if px else None, "dist_hi20": (hi20 - px) / px * 100 if px else None}
+            "dist_lo20": (px - lo20) / px * 100 if px else None, "dist_hi20": (hi20 - px) / px * 100 if px else None,
+            "range5": range5, "range20": range20, "sfp_bull": sfp_bull}
 
 
 # ─── Scoring per kategoria ───────────────────────────────────────────────────
@@ -216,6 +232,32 @@ def score_derivatives(r, a):
         # crowded long i cena nie idzie = ryzyko flushu (kandydat short / watch)
         return 15 + min(f, 0.3) * 120
     return None
+
+
+def score_squeeze(r, a):
+    """
+    SQUEEZE SETUP — potencjał, nie fakt. Odpowiednik Pump Risk z terminala na całe uniwersum MEXC:
+      paliwo:    funding ≤ −0.01%/8h (shorty płacą)                                    — wymagane
+      pozycje:   OI w USD / obrót 24h ≥ 0.6 (dużo trzymanych pozycji względem obrotu) — wymagane
+      sprężyna:  zakres 5d ≤ 45% zakresu 20d (kompresja)                                — 1 z 2
+      dołek:     SFP bull na dziennych w ostatnich 5 dniach                              — 1 z 2
+      cena:      nie spada > 3%/24h (squeeze nie zaczyna się w trakcie flushu)
+    """
+    if not a or a["range5"] is None or not r["turnover"]:
+        return None
+    f = r["funding"]
+    oi_usd = r["oi"] * r.get("contract_size", 1) * r["price"]
+    oi_ratio = oi_usd / r["turnover"]
+    if f > -0.01 or oi_ratio < 0.6 or r["r24"] < -3:
+        return None
+    compress = a["range20"] and a["range5"] <= 0.45 * a["range20"] and a["range5"] < 12
+    sfp = a["sfp_bull"] is not None
+    if not compress and not sfp:
+        return None
+    s = 20 + min(-f, 0.3) * 120 + min(oi_ratio, 3) * 8 + (12 if compress else 0) + (15 if sfp else 0)
+    if a["rsi"] is not None and a["rsi"] > 65:
+        s *= 0.7   # squeeze z wysokiego RSI = już po ruchu
+    return s
 
 
 def score_new_listing(r, a):
@@ -278,6 +320,18 @@ def build_pick(cat, r, a, mcap, score):
             thesis = (f"Funding {f:+.3f}%/8h — longi przepłacają, a cena nie idzie ({r['r24']:+.1f}% 24h). "
                       f"Crowded long = paliwo na flush; utrata {fmtp(lo)} uruchamia likwidacje.")
             support, resistance, inval = lo, hi, hi * 1.03
+    elif cat == "Squeeze setup":
+        direction = "long"
+        oi_ratio = r["oi"] * r.get("contract_size", 1) * px / r["turnover"] if r["turnover"] else 0
+        compress = a and a["range20"] and a["range5"] <= 0.45 * a["range20"]
+        sfp = a and a["sfp_bull"]
+        thesis = (f"Paliwo na squeeze: funding {f:+.3f}%/8h (shorty płacą), OI = {oi_ratio:.1f}× dziennego obrotu (dużo pozycji trzymanych)"
+                  f"{', zakres 5d ' + format(a['range5'], '.1f') + '% vs 20d ' + format(a['range20'], '.1f') + '% — sprężyna' if compress else ''}"
+                  f"{', SFP bull na dołku ' + fmtp(sfp['low']).__str__() + ' → odzyskane ' + fmtp(sfp['level']).__str__() if sfp else ''}. "
+                  f"To potencjał, nie sygnał: wejście dopiero na wybiciu nad {fmtp(hi)} lub CONFLUENCE_BUY w terminalu.")
+        lo5 = a["lo5"] if a else lo
+        support, resistance, inval = (sfp["low"] if sfp else lo5), hi, (sfp["low"] * 0.98 if sfp else lo5 * 0.97)
+        flags.append("setup, nie trigger — squeeze może nie nastąpić; stop pod dołkiem SFP/5d")
     elif cat == "New listing":
         age = (time.time() - r["created"]) / 86400
         direction = "watch" if r["r24"] < 0 else "long"
@@ -349,7 +403,7 @@ def generate(force=False, telegram=False):
     for r in sorted(liquid, key=lambda x: -x["r7"])[:25]: cands[r["symbol"]] = r
     for r in sorted(liquid, key=lambda x: -x["r24"])[:15]: cands[r["symbol"]] = r
     for r in sorted(liquid, key=lambda x: x["r7"])[:20]: cands[r["symbol"]] = r
-    for r in sorted(liquid, key=lambda x: x["funding"])[:10]: cands[r["symbol"]] = r
+    for r in sorted(liquid, key=lambda x: x["funding"])[:25]: cands[r["symbol"]] = r   # 25 (było 10): squeeze setup potrzebuje szerszej listy ujemnych fundingów
     for r in sorted(liquid, key=lambda x: -x["funding"])[:10]: cands[r["symbol"]] = r
     for r in liquid:
         if r["created"] and (time.time() - r["created"]) / 86400 <= NEW_LISTING_DAYS:
@@ -369,6 +423,7 @@ def generate(force=False, telegram=False):
             print(f"[picks] {sym} klines failed: {e}"); a = None
         time.sleep(0.15)
         for cat, fn in (("Momentum", lambda: score_momentum(r, a)), ("Derivatives", lambda: score_derivatives(r, a)),
+                        ("Squeeze setup", lambda: score_squeeze(r, a)),
                         ("New listing", lambda: score_new_listing(r, a)), ("Mean reversion", lambda: score_mean_reversion(r, a, mc))):
             s = fn()
             if s:
@@ -409,7 +464,7 @@ def _send_telegram(out):
     token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip(); chat = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
     if not token or not chat:
         return
-    icon = {"Momentum": "🚀", "Derivatives": "📊", "New listing": "🆕", "Mean reversion": "↩️"}
+    icon = {"Momentum": "🚀", "Derivatives": "📊", "Squeeze setup": "🧨", "New listing": "🆕", "Mean reversion": "↩️"}
     arrow = {"long": "▲", "short": "▼", "watch": "👀"}
     lines = [f"🎯 <b>Crypto Picks {out['date']}</b>", out["market_context"], ""]
     for p in out["picks"]:
