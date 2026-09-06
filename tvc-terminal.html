@@ -1239,6 +1239,17 @@ const I18N = {
   opt_implied:        { pl: 'implied',                                    en: 'implied' },
   opt_after:          { pl: 'po',                                         en: 'after' },
   opt_before:         { pl: 'przed',                                      en: 'before' },
+  // ─── PUMP RISK ───
+  pr_title:           { pl: 'Pump Risk · paliwo na squeeze',              en: 'Pump Risk · squeeze fuel' },
+  pr_none:            { pl: 'brak paliwa na squeeze',                     en: 'no squeeze fuel' },
+  pr_funding:         { pl: 'Shorty płacą — funding',                     en: 'Shorts paying — funding' },
+  pr_oi_build:        { pl: 'Shorty się budują: OI rośnie, cena nie',      en: 'Shorts building: OI up, price not' },
+  pr_crowd_short:     { pl: 'Tłum short, top traderzy long',              en: 'Crowd short, top traders long' },
+  pr_sfp:             { pl: 'SFP bull na dołku',                          en: 'Bullish SFP at lows' },
+  pr_whales:          { pl: 'Wieloryby HL otwierają longi netto',          en: 'HL whales opening net longs' },
+  pr_cheap_vol:       { pl: 'Tani vol — ruch niedowartościowany',          en: 'Cheap vol — move underpriced' },
+  cc_pump_title:      { pl: 'układ pod short squeeze',                     en: 'short-squeeze setup' },
+  cc_pump_cmd:        { pl: 'Nie shortuj · long tylko z CONFLUENCE_BUY lub reclaim poziomu · stop pod ostatnim swing low', en: 'Do not short · long only with CONFLUENCE_BUY or level reclaim · stop under last swing low' },
   // ─── CRYPTO PICKS ───
   picks_title:        { pl: 'Crypto Picks · poranny shortlist',          en: 'Crypto Picks · morning shortlist' },
   picks_setups:       { pl: 'setupów',                                   en: 'setups' },
@@ -3179,7 +3190,7 @@ function renderJournalPanel() {
     AGGRESSIVE_BUY: '🚀', AGGRESSIVE_SELL: '📉',
     MANUAL: '📝',
     WHALE_OPEN_LONG: '🐋▲', WHALE_CLOSE_LONG: '🐋✕', WHALE_OPEN_SHORT: '🐋▼', WHALE_CLOSE_SHORT: '🐋✕',
-    FLUSH_RISK_HIGH: '🌊',
+    FLUSH_RISK_HIGH: '🌊', PUMP_RISK_HIGH: '🚀',
   };
   const outcomeColors = {
     win: 'var(--green)', loss: 'var(--red)', breakeven: 'var(--amber)',
@@ -3683,8 +3694,41 @@ async function computeFlushRisk(tkr) {
 
   const score = Math.min(100, parts.reduce((s, p) => s + p.pts, 0));
   const level = score >= 55 ? 'high' : score >= 30 ? 'elevated' : 'low';
+
+  // ═══ PUMP RISK — lustro: warunki sprzyjające gwałtownemu wybiciu w górę (short squeeze) ═══
+  //   makro < 3h: 15 (event = ruch w obie strony) · funding ≤ −0.01: 10 / ≤ −0.03: 20 (shorty płacą)
+  //   OI ↑ ≥3%/8h przy cenie płaskiej lub spadającej: 15 (shorty się budują = paliwo)
+  //   tłum short a top traderzy long: 15 · CVD: cicha akumulacja spot / spot absorbuje: 10
+  //   kompresja: 10 (ciasny zakres: 5) · SFP bull na dołku (knot pod min 24h, close nad): 15
+  //   wieloryby HL netto open long > $5M: 10 · opcje: calle bid (skew < −3) 5, tani vol (DVOL < 25 pct) 5
+  const pp = [];
+  const padd = (key, pts, txt) => { if (pts > 0) pp.push({ key, pts, txt }); };
+  if (m1) padd('macro', 15, `${t('fr_macro')} ${m1.name.split(' — ')[0]} ${t('fr_in')} ${Math.max(0, Math.round((Date.parse(m1.ts_utc) - Date.now()) / 60000))} min`);
+  if (fundingNow <= -0.03) padd('funding', 20, `${t('pr_funding')} ${fundingNow.toFixed(3)}%/8h`);
+  else if (fundingNow <= -0.01) padd('funding', 10, `${t('pr_funding')} ${fundingNow.toFixed(3)}%/8h`);
+  if (oiChg8 >= 3 && chg8 < 1) padd('oi', 15, `${t('pr_oi_build')} (8h: OI +${oiChg8.toFixed(1)}% / ${t('fr_price')} ${chg8 >= 0 ? '+' : ''}${chg8.toFixed(1)}%)`);
+  if (b && b.globalRatio < 0.9 && b.topPosRatio > 1.2) padd('crowd', 15, `${t('pr_crowd_short')} (${t('sm_h_crowd')} ${b.globalRatio.toFixed(2)} / top ${b.topPosRatio.toFixed(2)})`);
+  const crAcc = [cr4, cr12].find(r => r && (r.key === 'flat_spot_accum' || r.key === 'spot_absorb'));
+  if (crAcc) padd('cvd', 10, `${t('cvd_' + crAcc.key)} (spot +$${(crAcc.w.spot / 1e6).toFixed(1)}M)`);
+  if (range8 < 1.5 && range24 > 4) padd('compress', 10, `${t('fr_compress')} (8h ${range8.toFixed(1)}%)`);
+  else if (range8 < 1.0) padd('compress', 5, `${t('fr_tight')} (8h ${range8.toFixed(1)}%)`);
+  // SFP bull: knot poniżej minimum poprzednich 24h, close z powrotem nad nim, w ostatnich 12h; ważny dopóki nie zamknięto pod knotem
+  let sfpB = null;
+  for (let i = k.length - 12; i < k.length; i++) { const prior = k.slice(Math.max(0, i - 24), i); if (prior.length < 12) continue; const pl = lo(prior); if (k[i].l < pl && k[i].c > pl) sfpB = { t: k[i].t, l: k[i].l, pl, idx: i }; }
+  if (sfpB && k.slice(sfpB.idx + 1).some(c => c.c < sfpB.l)) sfpB = null;
+  if (sfpB) padd('sfp', 15, `${t('pr_sfp')} ${hhmm(sfpB.t)} (${fmt(sfpB.l)} < ${fmt(sfpB.pl)})`);
+  if (wf.n && (wf.openLong - wf.closeLong) > 5e6) padd('whales', 10, `${t('pr_whales')} $${((wf.openLong - wf.closeLong) / 1e6).toFixed(0)}M`);
+  const od = optionsData[optSrc];
+  if (od && !od.error) {
+    if (od.week && od.week.skew < -3) padd('options', Math.round(5 * optW), `${optSrc !== tkr ? `[${optSrc}] ` : ''}🎭 ${t('opt_greed')} (skew ${od.week.skew.toFixed(1)})`);
+    if (od.pct30 < 25) padd('options', Math.round(5 * optW), `${optSrc !== tkr ? `[${optSrc}] ` : ''}🎭 ${t('pr_cheap_vol')} (DVOL ${od.pct30.toFixed(0)}. pct)`);
+  }
+  const pscore = Math.min(100, pp.reduce((s, p) => s + p.pts, 0));
+  const plevel = pscore >= 55 ? 'high' : pscore >= 30 ? 'elevated' : 'low';
+
   return { score, level, parts, ts: Date.now(),
-    m: { px, chg24, chg8, range24, range8, oiNow, oiChg8, oiChg24, vol6, volMax24, fundingNow, sfp, move1d: optionsData[optSrc]?.move1d ?? null, optSrc } };
+    pump: { score: pscore, level: plevel, parts: pp },
+    m: { px, chg24, chg8, range24, range8, oiNow, oiChg8, oiChg24, vol6, volMax24, fundingNow, sfp, sfpB, move1d: optionsData[optSrc]?.move1d ?? null, optSrc } };
 }
 
 async function refreshFlushRisk() {
@@ -3696,6 +3740,11 @@ async function refreshFlushRisk() {
         try { addJournalEntry({ ts: Date.now(), ticker: tkr, type: 'FLUSH_RISK_HIGH', severity: 'high', msg: `🌊 Flush Risk ${flushRisk[tkr].score}/100 — ${flushRisk[tkr].parts.map(p => p.txt).join(' · ')}`, price_at_alert: flushRisk[tkr].m.px, imbalance_at_alert: null, pressure_at_alert: null, confluence: false }); } catch (e) {}
       }
       _flushLastLevel[tkr] = flushRisk[tkr].level;
+      const pu = flushRisk[tkr].pump;
+      if (pu && pu.level === 'high' && _flushLastLevel['pump_' + tkr] !== 'high') {
+        try { addJournalEntry({ ts: Date.now(), ticker: tkr, type: 'PUMP_RISK_HIGH', severity: 'high', msg: `🚀 Pump Risk ${pu.score}/100 — ${pu.parts.map(p => p.txt).join(' · ')}`, price_at_alert: flushRisk[tkr].m.px, imbalance_at_alert: null, pressure_at_alert: null, confluence: false }); } catch (e) {}
+      }
+      if (pu) _flushLastLevel['pump_' + tkr] = pu.level;
     } catch (e) { flushRisk[tkr] = { error: String(e.message || e), ts: Date.now() }; }
   }
   renderFlushRiskPanel();
@@ -3713,7 +3762,12 @@ function updateFlushBadge() {
   const worst = items.reduce((a, b) => b.score > a.score ? b : a);
   const tkrs = SM_TICKERS.filter(tk => flushRisk[tk]?.level === 'high');
   const elev = SM_TICKERS.filter(tk => flushRisk[tk]?.level === 'elevated');
-  el.innerHTML = `<span onclick="scrollToFlush()" style="cursor:pointer;color:${flushColor(worst.level)};font-size:11px;font-weight:800;margin-left:10px;padding:2px 7px;border:1px solid ${flushColor(worst.level)};border-radius:4px" title="${t('fr_title')}">🌊 ${tkrs.length ? tkrs.join('/') + ' ' + t('fr_high') : elev.length ? elev.join('/') + ' ' + t('fr_elevated') : t('fr_low')}</span>`;
+  const pHigh = SM_TICKERS.filter(tk => flushRisk[tk]?.pump?.level === 'high');
+  const pElev = SM_TICKERS.filter(tk => flushRisk[tk]?.pump?.level === 'elevated');
+  const pWorst = items.reduce((a, b) => (b.pump?.score || 0) > (a.pump?.score || 0) ? b : a).pump || { level: 'low' };
+  const pCol = pWorst.level === 'high' ? 'var(--green)' : pWorst.level === 'elevated' ? 'var(--amber)' : 'var(--text-dim)';
+  el.innerHTML = `<span onclick="scrollToFlush()" style="cursor:pointer;color:${flushColor(worst.level)};font-size:11px;font-weight:800;margin-left:10px;padding:2px 7px;border:1px solid ${flushColor(worst.level)};border-radius:4px" title="${t('fr_title')}">🌊 ${tkrs.length ? tkrs.join('/') + ' ' + t('fr_high') : elev.length ? elev.join('/') + ' ' + t('fr_elevated') : t('fr_low')}</span>`
+    + `<span onclick="scrollToFlush()" style="cursor:pointer;color:${pCol};font-size:11px;font-weight:800;margin-left:6px;padding:2px 7px;border:1px solid ${pCol};border-radius:4px" title="${t('pr_title')}">🚀 ${pHigh.length ? pHigh.join('/') + ' ' + t('fr_high') : pElev.length ? pElev.join('/') + ' ' + t('fr_elevated') : t('fr_low')}</span>`;
 }
 function scrollToFlush() { const el = document.getElementById('flush-risk-slot'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 
@@ -3743,12 +3797,19 @@ function renderFlushRiskPanel() {
           ${m.move1d != null ? `<span title="${t('opt_move_tip')}">🎭 1σ 1d <b>±${m.move1d.toFixed(1)}%</b>${m.optSrc !== tk ? ` <span style="color:var(--text-dim)">(${m.optSrc})</span>` : ''}</span>` : ''}
         </div>
         ${f.parts.length ? f.parts.map(p => `<div style="display:flex;gap:6px;align-items:baseline"><span style="font-family:var(--mono);font-weight:800;color:${c};min-width:28px">+${p.pts}</span><span style="color:var(--text)">${p.txt}</span></div>`).join('') : `<div style="color:var(--text-dim);font-style:italic">${t('fr_none')}</div>`}
+        ${f.pump ? (() => { const pu = f.pump; const pc = pu.level === 'high' ? 'var(--green)' : pu.level === 'elevated' ? 'var(--amber)' : 'var(--text-dim)'; return `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;padding-top:6px;border-top:1px dashed var(--border)">
+          <span style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700">🚀 ${t('pr_title')}</span>
+          <span style="font-family:var(--mono);font-weight:900;color:${pc};font-size:13px">${pu.score}<span style="font-size:9px;color:var(--text-dim)">/100</span> ${flushLabel(pu.level)}</span>
+        </div>
+        <div style="height:5px;background:var(--bg);border-radius:3px;margin:4px 0 6px;overflow:hidden"><div style="width:${pu.score}%;height:100%;background:${pc}"></div></div>
+        ${pu.parts.length ? pu.parts.map(p => `<div style="display:flex;gap:6px;align-items:baseline"><span style="font-family:var(--mono);font-weight:800;color:${pc};min-width:28px">+${p.pts}</span><span style="color:var(--text)">${p.txt}</span></div>`).join('') : `<div style="color:var(--text-dim);font-style:italic">${t('pr_none')}</div>`}`; })() : ''}
       </div>`;
   }).join('');
   slot.innerHTML = `
     <section class="panel">
       <div class="panel-head">
-        <h3>🌊 ${t('fr_title')}</h3>
+        <h3>🌊 ${t('fr_title')} · 🚀 ${t('pr_title')}</h3>
         <span class="meta">${nm ? `${t('fr_next_macro')}: <span style="color:${nm.ms < 3 * 3600_000 ? 'var(--red)' : 'var(--gold)'};font-weight:700">${nm.ev.name.split(' — ')[0]}</span> ${t('fr_in')} ${nm.ms < 3600_000 ? Math.round(nm.ms / 60000) + ' min' : nm.ms < 86400_000 ? Math.round(nm.ms / 3600_000) + 'h' : Math.round(nm.ms / 86400_000) + 'd'} (${hhmm(Date.parse(nm.ev.ts_utc))} PL)` : `<span style="color:var(--text-dim)">${t('fr_no_macro')}</span>`}</span>
       </div>
       <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;line-height:1.5">${t('fr_desc')}</div>
@@ -3874,17 +3935,20 @@ function renderCvdPanel() {
 // Fallback przeglądarkowy dla ETF: Farside blokuje IP GitHub (403), ale z Twojej przeglądarki przez
 // r.jina.ai (reader → markdown) działa. Ten sam parser co w auto_fusion, tylko w JS. Cache 30 min.
 const etfBrowser = { btc: null, eth: null, ts: 0 };
+// Parser niezależny od formatu (jina raz oddaje tabelę z "|", raz tabulatory/nowe linie):
+// tokenizuje tekst, wiersz = data "DD Mon YYYY" + liczby aż do następnej daty; Total = ostatnia liczba wiersza.
 function parseFarsideMarkdown(txt, days = 60) {
-  const rows = [];
-  for (const ln of txt.split('\n')) {
-    if (!ln.trim().startsWith('|')) continue;
-    const cells = ln.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim());
-    const m = cells[0].match(/^(\d{2}) (\w{3}) (\d{4})$/); if (!m) continue;
-    const raw = cells[cells.length - 1].replace(/,/g, ''); if (raw === '-' || raw === '') continue;
-    const neg = raw.startsWith('('); const v = parseFloat(raw.replace(/[()]/g, '')); if (isNaN(v)) continue;
-    const d = new Date(`${m[1]} ${m[2]} ${m[3]} UTC`); if (isNaN(d)) continue;
-    rows.push({ date: d.toISOString().slice(0, 10), total: neg ? -v : v });
+  const toks = txt.replace(/\|/g, ' ').split(/\s+/).filter(Boolean);
+  const isNum = s => /^\(?-?[\d,]*\.?\d+\)?$/.test(s);
+  const rows = []; let cur = null;
+  const flush = () => { if (cur && cur.vals.length) { const raw = cur.vals[cur.vals.length - 1].replace(/,/g, ''); const neg = raw.startsWith('('); const v = parseFloat(raw.replace(/[()]/g, '')); if (!isNaN(v)) rows.push({ date: cur.date, total: neg ? -v : v }); } cur = null; };
+  for (let i = 0; i < toks.length; i++) {
+    if (/^\d{2}$/.test(toks[i]) && /^[A-Z][a-z]{2}$/.test(toks[i + 1] || '') && /^\d{4}$/.test(toks[i + 2] || '')) {
+      flush(); const d = new Date(`${toks[i]} ${toks[i + 1]} ${toks[i + 2]} UTC`); cur = isNaN(d) ? null : { date: d.toISOString().slice(0, 10), vals: [] }; i += 2; continue;
+    }
+    if (cur) { if (isNum(toks[i])) cur.vals.push(toks[i]); else if (toks[i] !== '-') flush(); }   // "-" = brak wartości, ignoruj; inne słowo (Total/Average) kończy wiersz
   }
+  flush();
   return rows.slice(-days);
 }
 function etfStats(series) {
@@ -3894,13 +3958,26 @@ function etfStats(series) {
   const sum = n => vals.slice(-n).reduce((a, b) => a + b, 0);
   return { series, d1: last, d7: sum(5), d30: sum(21), cum_60d: sum(vals.length), streak: streak * sign, last_date: series[series.length - 1].date, source: 'browser' };
 }
-async function refreshEtfBrowser() {
-  if (Date.now() - etfBrowser.ts < 30 * 60_000) return;
+async function refreshEtfBrowser(force = false) {
+  if (!force && Date.now() - etfBrowser.ts < 30 * 60_000) return;
+  let missing = false;
   for (const [k, u] of [['btc', 'https://farside.co.uk/bitcoin-etf-flow-all-data/'], ['eth', 'https://farside.co.uk/ethereum-etf-flow-all-data/']]) {
-    try { const r = await fetch('https://r.jina.ai/' + u); if (!r.ok) throw new Error('HTTP ' + r.status); const s = parseFarsideMarkdown(await r.text()); if (s.length) etfBrowser[k] = etfStats(s); }
-    catch (e) { console.warn('[etf] browser fallback', k, e.message); }
+    if (etfBrowser[k] && Date.now() - etfBrowser.ts < 30 * 60_000) continue;   // tylko brakujące
+    let ok = false;
+    for (let attempt = 1; attempt <= 3 && !ok; attempt++) {
+      try {
+        const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 20000);
+        const r = await fetch('https://r.jina.ai/' + u, { signal: ctl.signal }); clearTimeout(tm);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const s = parseFarsideMarkdown(await r.text());
+        if (!s.length) throw new Error('pusta tabela');
+        etfBrowser[k] = etfStats(s); ok = true;
+      } catch (e) { console.warn(`[etf] browser ${k} próba ${attempt}: ${e.message}`); if (attempt < 3) await new Promise(r => setTimeout(r, 4000 * attempt)); }
+    }
+    if (!ok) missing = true;
   }
   etfBrowser.ts = Date.now();
+  if (missing) setTimeout(() => refreshEtfBrowser(true), 120_000);   // brakujący klucz → ponów za 2 min
   const slot = document.getElementById('macro-etf-slot'); if (slot && lastFusion) slot.innerHTML = renderMacroEtf(lastFusion);
   // Most do serwera: runner GitHub nie dosięga Farside (403 z każdego proxy), Twoja przeglądarka tak.
   // Jeśli masz token Gist (🔑 w panelu Orderflow) → zapisujemy etf_flows.json, auto_fusion czyta go z Gist
@@ -4943,6 +5020,15 @@ function generateCommandCenterActions() {
         command: t('cc_flush_cmd'),
       });
     }
+    // 8b. PUMP RISK WYSOKI — squeeze setup: nie shortuj, long tylko z potwierdzeniem (prio 85)
+    if (fr && !fr.error && fr.pump && fr.pump.level === 'high') {
+      actions.push({
+        priority: 85, ticker, urgency: 'HIGH', icon: '🚀', color: 'var(--green)',
+        title: `${ticker}: Pump Risk ${fr.pump.score}/100 — ${t('cc_pump_title')}`,
+        reasoning: fr.pump.parts.map(p => `+${p.pts} ${p.txt}`).join(' · '),
+        command: t('cc_pump_cmd'),
+      });
+    }
     // 9. SMART MONEY przeciwne do otwartej pozycji (prio 65) — tylko gdy jest pozycja paper
     const openPos = (lastFusion.state?.open_positions || []).find(p => p.ticker === ticker);
     const smv = smVerdict(ticker);
@@ -5137,6 +5223,7 @@ function interpretTokenState(ticker) {
   if (fr && !fr.error) {
     if (fr.level === 'high') { score -= 2; reasoning.push(`🌊 Flush Risk ${fr.score}/100 WYSOKI — ${fr.parts.slice(0, 2).map(p => p.txt).join(' · ')}`); }
     else if (fr.level === 'elevated') { score -= 1; reasoning.push(`🌊 Flush Risk ${fr.score}/100 podwyższony`); }
+    if (fr.pump && fr.pump.level === 'high') { score += 1; reasoning.push(`🚀 Pump Risk ${fr.pump.score}/100 WYSOKI — ${fr.pump.parts.slice(0, 2).map(p => p.txt).join(' · ')}`); }
   }
   // 8. SMART MONEY — top traderzy Binance + wieloryby HL + COT (werdykt z 3 źródeł)
   const smv = smVerdict(ticker);
