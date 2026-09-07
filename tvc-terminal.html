@@ -1009,10 +1009,20 @@ const I18N = {
   fetch_error:        { pl: 'Nie mogę pobrać fusion data',         en: 'Cannot fetch fusion data' },
   loading_data:       { pl: 'Ładowanie danych fusion…',            en: 'Loading fusion data…' },
   // ─── SECTIONS ───
+  sec_decide:         { pl: '▸ DECYZJE',                           en: '▸ DECISIONS' },
+  sec_decide_sub:     { pl: 'sygnały fusion · pozycje i wejścia oczekujące · stan portfela na żywo · kliknij token, aby rozwinąć analizę', en: 'fusion signals · positions & pending entries · live portfolio state · click a token to expand analysis' },
+  sec_fuel:           { pl: '▸ PALIWO I RYZYKO',                   en: '▸ FUEL & RISK' },
+  sec_fuel_sub:       { pl: 'co może pęknąć lub wystrzelić · flush / pump risk · pump radar · crypto picks', en: 'what may break or launch · flush / pump risk · pump radar · crypto picks' },
+  sec_flows:          { pl: '▸ KTO KUPUJE',                        en: '▸ WHO IS BUYING' },
+  sec_flows_sub:      { pl: 'przepływy i pozycjonowanie · smart money · CVD · opcje · ETF i makro · wieloryby on-chain', en: 'flows & positioning · smart money · CVD · options · ETF & macro · on-chain whales' },
+  sec_learn:          { pl: '▸ WYNIKI I NAUKA',                    en: '▸ RESULTS & LEARNING' },
+  sec_learn_sub:      { pl: 'co działa · P&L · sub-score\'y · orderflow vs TA · dziennik decyzji', en: 'what works · P&L · sub-scores · orderflow vs TA · decision journal' },
+  nav_whales:         { pl: 'Wieloryby',          en: 'Whales' },
+  nav_mnews:          { pl: 'News',               en: 'News' },
   sec_now:            { pl: '▸ TERAZ',                             en: '▸ NOW' },
   sec_now_sub:        { pl: 'monitoring w czasie rzeczywistym · ta minuta · stan portfela na żywo', en: 'real-time monitoring · this minute · portfolio live state' },
   sec_context:        { pl: '▸ KONTEKST',                          en: '▸ CONTEXT' },
-  sec_context_sub:    { pl: 'świadomość rynku · strategia fusion · news · przepływ wielorybów · kliknij token aby rozwinąć analizę', en: 'market awareness · fusion strategy · news · whale flow · click token to expand analysis' },
+  sec_context_sub:    { pl: 'narracje · kalendarz katalizatorów · sentyment · cykl (stablecoiny, MA200)', en: 'narratives · catalyst calendar · sentiment · cycle (stablecoins, MA200)' },
   sec_planning:       { pl: '▸ PLANOWANIE',                        en: '▸ PLANNING' },
   sec_planning_sub:   { pl: 'strategia · kalendarz katalizatorów · sub-score\'y · dziennik decyzji · wnioski z przeszłości', en: 'strategy · catalyst calendar · sub-scores · decision journal · past learnings' },
   // ─── PANELS ───
@@ -2140,36 +2150,11 @@ function render() {
 
   document.getElementById('content').innerHTML = `
     <main>
-      <!-- ═══════════════════════════════════════════════════════════════ -->
-      <!-- SECTION 1: NOW · real-time monitoring (this minute)              -->
-      <!-- ═══════════════════════════════════════════════════════════════ -->
-      <div class="section-header hide-eod hide-morning" style="grid-column: span 12; display:flex;align-items:center;gap:10px;margin:2px 0 4px;padding:6px 10px;background:linear-gradient(90deg,rgba(52,211,153,0.15),transparent);border-left:4px solid var(--green);border-radius:4px">
-        <span style="font-size:14px;font-weight:900;color:var(--green);letter-spacing:0.03em">${t('sec_now')}</span>
-        <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:600">${t('sec_now_sub')}</span>
+      <!-- ═══ A · DECYZJE — sygnały fusion, pozycje, stan portfela ═══ -->
+      <div class="section-header " style="grid-column: span 12; display:flex;align-items:center;gap:10px;margin:2px 0 4px;padding:6px 10px;background:linear-gradient(90deg,rgba(52,211,153,0.15),transparent);border-left:4px solid var(--green);border-radius:4px">
+        <span style="font-size:14px;font-weight:900;color:var(--green);letter-spacing:0.03em">${t('sec_decide')}</span>
+        <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:600">${t('sec_decide_sub')}</span>
       </div>
-
-      <!-- PORTFOLIO HEALTH — live status wszystkich tokenów -->
-      <div id="portfolio-health-slot" class="hide-morning" style="grid-column: span 12; width: 100%;"></div>
-
-      <!-- FLUSH RISK — kruchość rynku per token (OI dywergencja, kompresja, makro, SFP, funding, wieloryby) -->
-      <div id="flush-risk-slot" style="grid-column: span 12; width: 100%;"></div>
-
-      <!-- CVD SPOT vs PERP — kto kupuje: gotówka czy dźwignia -->
-      <div id="cvd-slot" style="grid-column: span 12; width: 100%;"></div>
-
-      <!-- OPCJE — Deribit DVOL, skew, term structure, oczekiwany ruch (BTC/ETH) -->
-      <div id="options-slot" class="hide-trading" style="grid-column: span 12; width: 100%;"></div>
-
-      <!-- LIVE LIQUIDATIONS — Binance perp WS -->
-
-      <!-- ═══════════════════════════════════════════════════════════════ -->
-      <!-- SECTION 2: CONTEXT · market awareness (this hour/day)            -->
-      <!-- ═══════════════════════════════════════════════════════════════ -->
-      <div class="section-header" style="grid-column: span 12; display:flex;align-items:center;gap:10px;margin:10px 0 4px;padding:6px 10px;background:linear-gradient(90deg,rgba(96,165,250,0.15),transparent);border-left:4px solid var(--blue);border-radius:4px">
-        <span style="font-size:14px;font-weight:900;color:var(--blue);letter-spacing:0.03em">${t('sec_context')}</span>
-        <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:600">${t('sec_context_sub')}</span>
-      </div>
-
       <section class="panel p-8 hide-eod" id="sec-fusion">
         <div class="panel-head">
           <h3>${t('fusion_decisions')} · ${data.date || 'today'}</h3>
@@ -2252,18 +2237,39 @@ function render() {
           </div>
         </details>
         ` : ''}
+      </section>
 
-        <!-- MARKET NEWS — general crypto news bez ticker filter -->
-        <div class="panel-head" style="margin-top:14px">
-          <h3>${t('market_news')}</h3>
-          <span class="meta">${(state.news?._market || []).length} items · RSS feeds</span>
-        </div>
-        <div id="market-news-slot" style="max-height:300px;overflow-y:auto;padding-right:4px">
-          ${renderMarketNews(state.news?._market)}
-        </div>
+      <!-- PORTFOLIO HEALTH — live status wszystkich tokenów -->
+      <div id="portfolio-health-slot" class="hide-morning" style="grid-column: span 12; width: 100%;"></div>
 
+      <!-- ═══ B · PALIWO I RYZYKO — co może wystrzelić lub pęknąć ═══ -->
+      <div class="section-header " style="grid-column: span 12; display:flex;align-items:center;gap:10px;margin:10px 0 4px;padding:6px 10px;background:linear-gradient(90deg,rgba(251,146,60,0.15),transparent);border-left:4px solid #FB923C;border-radius:4px">
+        <span style="font-size:14px;font-weight:900;color:#FB923C;letter-spacing:0.03em">${t('sec_fuel')}</span>
+        <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:600">${t('sec_fuel_sub')}</span>
+      </div>
+      <!-- FLUSH / PUMP RISK — kruchość rynku per token -->
+      <div id="flush-risk-slot" style="grid-column: span 12; width: 100%;"></div>
+      <!-- PUMP RADAR — skan całego rynku pod krótkoterminowe pumpy -->
+      ${data.pump_radar ? `<div id="pump-radar-slot" class="hide-eod" style="grid-column: span 12; width: 100%;">${renderPumpRadar(data.pump_radar)}</div>` : ''}
+      <!-- CRYPTO PICKS — poranny shortlist (auto_picks.py) -->
+      ${data.crypto_picks ? `<div id="crypto-picks-slot" class="hide-eod" style="grid-column: span 12; width: 100%;">${renderCryptoPicks(data.crypto_picks)}</div>` : ''}
+
+      <!-- ═══ C · KTO KUPUJE — przepływy i pozycjonowanie ═══ -->
+      <div class="section-header " style="grid-column: span 12; display:flex;align-items:center;gap:10px;margin:10px 0 4px;padding:6px 10px;background:linear-gradient(90deg,rgba(34,211,238,0.15),transparent);border-left:4px solid var(--cyan);border-radius:4px">
+        <span style="font-size:14px;font-weight:900;color:var(--cyan);letter-spacing:0.03em">${t('sec_flows')}</span>
+        <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:600">${t('sec_flows_sub')}</span>
+      </div>
+      <!-- SMART MONEY — instytucje i wieloryby (Binance top traders, Hyperliquid, CFTC COT) -->
+      <div id="smart-money-slot" class="hide-eod" style="grid-column: span 12; width: 100%;"></div>
+      <!-- CVD SPOT vs PERP — kto kupuje: gotówka czy dźwignia -->
+      <div id="cvd-slot" style="grid-column: span 12; width: 100%;"></div>
+      <!-- OPCJE — Deribit DVOL, skew, term structure -->
+      <div id="options-slot" class="hide-trading" style="grid-column: span 12; width: 100%;"></div>
+      <!-- MAKRO & ETF — Farside flows + korelacje z NQ/DXY/US10Y (server-side, z fusion json) -->
+      <div id="macro-etf-slot" class="hide-trading" style="grid-column: span 12; width: 100%;">${renderMacroEtf(data)}</div>
+      <section class="panel p-12" id="sec-whales">
         <!-- LIVE WHALES — real-time whale detection (browser fetch, auto-refresh 30s) -->
-        <div class="panel-head" style="margin-top:14px">
+        <div class="panel-head">
           <h3>${t('live_whales')}</h3>
           <span class="meta" id="whales-refresh-meta">initializing…</span>
         </div>
@@ -2272,29 +2278,11 @@ function render() {
         </div>
       </section>
 
-      <!-- MAKRO & ETF — Farside flows + korelacje z NQ/DXY/US10Y (server-side, z fusion json) -->
-      <div id="macro-etf-slot" class="hide-trading" style="grid-column: span 12; width: 100%;">${renderMacroEtf(data)}</div>
-
-      <!-- SMART MONEY — instytucje i wieloryby (Binance top traders, Hyperliquid, CFTC COT) -->
-      <div id="smart-money-slot" class="hide-eod" style="grid-column: span 12; width: 100%;"></div>
-
-      <!-- CRYPTO PICKS — poranny shortlist z scheduled taska (crypto_picks.json → Gist) -->
-      ${data.crypto_picks ? `<div id="crypto-picks-slot" class="hide-eod" style="grid-column: span 12; width: 100%;">${renderCryptoPicks(data.crypto_picks)}</div>` : ''}
-      ${data.pump_radar ? `<div id="pump-radar-slot" class="hide-eod" style="grid-column: span 12; width: 100%;">${renderPumpRadar(data.pump_radar)}</div>` : ''}
-
-      <section class="panel p-6 hide-trading hide-eod" id="sec-news">
-        <div class="panel-head"><h3>${t('news_bias')}</h3><span class="meta">Market bias · Neutral</span></div>
-        <div class="narratives">${renderNarratives(data)}</div>
-      </section>
-
-      <!-- ═══════════════════════════════════════════════════════════════ -->
-      <!-- SECTION 3: PLANNING · strategy, calendar, past learnings         -->
-      <!-- ═══════════════════════════════════════════════════════════════ -->
-      <div class="section-header hide-trading" style="grid-column: span 12; display:flex;align-items:center;gap:10px;margin:10px 0 4px;padding:6px 10px;background:linear-gradient(90deg,rgba(167,139,250,0.15),transparent);border-left:4px solid var(--purple);border-radius:4px">
-        <span style="font-size:14px;font-weight:900;color:var(--purple);letter-spacing:0.03em">${t('sec_planning')}</span>
-        <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:600">${t('sec_planning_sub')}</span>
+      <!-- ═══ D · KONTEKST — narracje, kalendarz, sentyment, cykl ═══ -->
+      <div class="section-header hide-trading" style="grid-column: span 12; display:flex;align-items:center;gap:10px;margin:10px 0 4px;padding:6px 10px;background:linear-gradient(90deg,rgba(96,165,250,0.15),transparent);border-left:4px solid var(--blue);border-radius:4px">
+        <span style="font-size:14px;font-weight:900;color:var(--blue);letter-spacing:0.03em">${t('sec_context')}</span>
+        <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:600">${t('sec_context_sub')}</span>
       </div>
-
       <section class="panel p-8 hide-trading hide-eod" id="sec-calendar">
         <div class="panel-head"><h3>${t('catalyst_cal')}</h3><span class="meta">Auto-updates daily · nav ↔</span></div>
         <div id="catalyst-cal-slot">${renderCalendar(data.catalyst_calendar_this_week)}</div>
@@ -2323,25 +2311,36 @@ function render() {
         </div>
       </section>
 
+      <section class="panel p-6 hide-trading hide-eod" id="sec-news">
+        <div class="panel-head"><h3>${t('news_bias')}</h3><span class="meta">Market bias · Neutral</span></div>
+        <div class="narratives">${renderNarratives(data)}</div>
+      </section>
+
+      <section class="panel p-6 hide-trading" id="sec-market-news">
+        <!-- MARKET NEWS — general crypto news bez ticker filter -->
+        <div class="panel-head">
+          <h3>${t('market_news')}</h3>
+          <span class="meta">${(state.news?._market || []).length} items · RSS feeds</span>
+        </div>
+        <div id="market-news-slot" style="max-height:300px;overflow-y:auto;padding-right:4px">
+          ${renderMarketNews(state.news?._market)}
+        </div>
+      </section>
+
+      <div id="cycle-slot" class="hide-trading" style="grid-column: span 12; width: 100%;"></div>
+
+      <!-- ═══ E · WYNIKI I NAUKA — co działa, P&L, dziennik ═══ -->
+      <div class="section-header " style="grid-column: span 12; display:flex;align-items:center;gap:10px;margin:10px 0 4px;padding:6px 10px;background:linear-gradient(90deg,rgba(167,139,250,0.15),transparent);border-left:4px solid var(--purple);border-radius:4px">
+        <span style="font-size:14px;font-weight:900;color:var(--purple);letter-spacing:0.03em">${t('sec_learn')}</span>
+        <span style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:600">${t('sec_learn_sub')}</span>
+      </div>
+      <div id="performance-slot" style="grid-column: span 12; width: 100%;"></div>
+      <div id="pnl-history-slot" style="grid-column: span 12; width: 100%;"></div>
       <section class="panel p-12 hide-morning hide-trading">
         <div class="panel-head"><h3>${t('signal_breakdown')}</h3><span class="meta">OC · TA · News · Sent</span></div>
         <div class="chart-container"><canvas id="breakdown-chart"></canvas></div>
       </section>
-
-      <!-- CYKL · DŁUGI TERMIN — stablecoiny (płynność) + 200D/200W MA + Mayer -->
-      <div id="cycle-slot" class="hide-trading" style="grid-column: span 12; width: 100%;"></div>
-
-      <!-- P&L HISTORY — equity curve + trade stats -->
-      <div id="pnl-history-slot" style="grid-column: span 12; width: 100%;"></div>
-
-      <!-- CO DZIAŁA — analityka skuteczności po score/regime/kierunku/wyjściu (v0.3) -->
-      <div id="performance-slot" style="grid-column: span 12; width: 100%;"></div>
-
-      <!-- ORDERFLOW PAPER BOOK — auto-trading z sygnałów journalu vs księga TA -->
       <div id="orderflow-slot" style="grid-column: span 12; width: 100%;"></div>
-
-      <!-- DECISION JOURNAL — auto-log alerts, manual notes, CSV export
-           ALWAYS visible (no hide-* classes) — potrzebne w każdym preset dla outcomes -->
       <div id="journal-slot" style="grid-column: span 12; width: 100%;"></div>
     </main>
   `;
@@ -3485,12 +3484,16 @@ function applyPreset(preset) {
 }
 // ═══ NAV BAR — chipy do paneli; budowany po każdym render(), tylko istniejące i widoczne elementy ═══
 const NAV_ITEMS = [
-  // [id, ikona, klucz i18n]  — sekcje: NOW / CONTEXT / ANALYSIS / PLANNING
-  ['command-center-slot', '⚡', 'nav_cc'], ['portfolio-health-slot', '🌐', 'nav_portfolio'], ['flush-risk-slot', '🌊', 'nav_flush'], ['cvd-slot', '⚖️', 'nav_cvd'], ['options-slot', '🎭', 'nav_options'],
+  // [id, ikona, klucz i18n] — kolejność = kolejność sekcji: A DECYZJE / B PALIWO I RYZYKO / C KTO KUPUJE / D KONTEKST / E WYNIKI
+  ['command-center-slot', '⚡', 'nav_cc'], ['sec-fusion', '🧠', 'nav_fusion'], ['sec-positions', '📈', 'nav_positions'], ['portfolio-health-slot', '🌐', 'nav_portfolio'],
   'sep',
-  ['sec-fusion', '🧠', 'nav_fusion'], ['sec-positions', '📈', 'nav_positions'], ['macro-etf-slot', '🏛', 'nav_etf'], ['smart-money-slot', '🏦', 'nav_smart'], ['crypto-picks-slot', '🎯', 'nav_picks'], ['pump-radar-slot', '🚀', 'nav_radar'], ['sec-news', '📰', 'nav_news'],
+  ['flush-risk-slot', '🌊', 'nav_flush'], ['pump-radar-slot', '🚀', 'nav_radar'], ['crypto-picks-slot', '🎯', 'nav_picks'],
   'sep',
-  ['sec-calendar', '📅', 'nav_calendar'], ['cycle-slot', '🧭', 'nav_cycle'], ['pnl-history-slot', '💹', 'nav_pnl'], ['performance-slot', '🔬', 'nav_perf'], ['orderflow-slot', '📓', 'nav_orderflow'], ['journal-slot', '📝', 'nav_journal'],
+  ['smart-money-slot', '🏦', 'nav_smart'], ['cvd-slot', '⚖️', 'nav_cvd'], ['options-slot', '🎭', 'nav_options'], ['macro-etf-slot', '🏛', 'nav_etf'], ['sec-whales', '🐋', 'nav_whales'],
+  'sep',
+  ['sec-calendar', '📅', 'nav_calendar'], ['sec-news', '📰', 'nav_news'], ['sec-market-news', '🗞', 'nav_mnews'], ['cycle-slot', '🧭', 'nav_cycle'],
+  'sep',
+  ['performance-slot', '🔬', 'nav_perf'], ['pnl-history-slot', '💹', 'nav_pnl'], ['orderflow-slot', '📓', 'nav_orderflow'], ['journal-slot', '📝', 'nav_journal'],
 ];
 function buildPanelNav() {
   const nav = document.getElementById('panel-nav'); if (!nav) return;
