@@ -7616,9 +7616,16 @@ function renderTokenChart(ticker, ohlc) {
         // wykresie < 140px, rysujemy ją we WŁASNEJ skali: ramka ±p% wycentrowana na
         // bieżącej cenie, stała wysokość. Na 5m/15m/1h (gdzie pasuje) — jak dotąd,
         // wprost na skali wykresu (linie stref biegną przez cały wykres).
-        let maxPct = 0;
-        for (const m of [latest.bidMap, latest.askMap]) for (const k in m) maxPct = Math.max(maxPct, Math.abs(parseFloat(k)));
-        maxPct = Math.min(3, Math.max(0.2, maxPct));
+        // Zakres ramki: najmniejsze ±p%, które obejmuje 85% notionalu po każdej stronie
+        // (a nie skrajne, rzadkie poziomy ±3%) — wtedy ramka pokazuje to, co jest blisko ceny.
+        const coverPct = (map) => {
+          const rows = Object.entries(map).map(([k, v]) => [Math.abs(parseFloat(k)), v]).sort((a, b) => a[0] - b[0]);
+          const total = rows.reduce((a, r) => a + r[1], 0); let acc = 0;
+          for (const [pct, v] of rows) { acc += v; if (acc >= total * 0.85) return pct; }
+          return rows.length ? rows[rows.length - 1][0] : 0;
+        };
+        let maxPct = Math.max(coverPct(latest.bidMap), coverPct(latest.askMap));
+        maxPct = Math.min(3, Math.max(0.3, maxPct * 1.1));
         const spanPx = Math.abs(yScale.getPixelForValue(latest.mid * (1 + maxPct / 100)) - yScale.getPixelForValue(latest.mid * (1 - maxPct / 100)));
         const aligned = spanPx >= 140;
         const stripH = Math.min(240, Math.max(120, chartH * 0.5));
