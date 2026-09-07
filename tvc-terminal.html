@@ -1027,6 +1027,22 @@ const I18N = {
   win_rate:           { pl: 'Win rate',                            en: 'Win rate' },
   total_pnl:          { pl: 'Razem PnL',                           en: 'Total PnL' },
   no_positions:       { pl: 'Brak otwartych pozycji.',             en: 'No open positions.' },
+  pending_title:      { pl: '⏳ Wejścia oczekujące',                 en: '⏳ Pending entries' },
+  pending_hint:       { pl: 'v0.4: sygnał jest, ale cena rozciągnięta / pod oporem — bot czeka na pullback do strefy. Realizacja, gdy cena dotknie limitu; wygasa po 24h.', en: 'v0.4: signal is on, but price is extended / under resistance — bot waits for a pullback into the zone. Fills when price touches the limit; expires after 24h.' },
+  pending_limit:      { pl: 'limit',                                 en: 'limit' },
+  pending_zone:       { pl: 'strefa',                                en: 'zone' },
+  pending_until:      { pl: 'do',                                    en: 'until' },
+  eq_title:           { pl: 'Jakość wejścia',                        en: 'Entry quality' },
+  eq_ok:              { pl: 'OK — wejście po rynku',                 en: 'OK — market entry' },
+  eq_wait:            { pl: 'CZEKAJ — wejście oczekujące w strefie', en: 'WAIT — pending entry in zone' },
+  eq_skip:            { pl: 'POMIŃ — brak sensownego setupu',        en: 'SKIP — no viable setup' },
+  eq_flag_extended:   { pl: 'rozciągnięta (pogoń)',                  en: 'extended (chasing)' },
+  eq_flag_under_resistance: { pl: 'tuż pod oporem',                  en: 'right under resistance' },
+  eq_flag_low_rr:     { pl: 'R:R < 1.5',                             en: 'R:R < 1.5' },
+  eq_flag_wide_sl:    { pl: 'SL > 6% od struktury',                  en: 'SL > 6% to structure' },
+  eq_flag_weekend:    { pl: 'weekend',                               en: 'weekend' },
+  perf_by_context:    { pl: 'Wg kontekstu wejścia',                  en: 'By entry context' },
+  perf_hint_context:  { pl: 'v0.4: każdy trade ma tagi (rozciągnięta / pod oporem / weekend / sesja / makro 24h). Tu widać, w jakim kontekście bot zarabia, a w jakim traci — i co wyłączyć.', en: 'v0.4: every trade is tagged (extended / under resistance / weekend / session / macro 24h). Shows where the bot earns and where it loses — and what to switch off.' },
   tx_history:         { pl: '📜 Historia transakcji',               en: '📜 Transaction History' },
   click_expand:       { pl: 'kliknij aby rozwinąć ▾',              en: 'click to expand ▾' },
   legend_label:       { pl: 'Legenda',                             en: 'Legend' },
@@ -2151,6 +2167,16 @@ function render() {
             <div><div style="font-size:8.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700">${t('total_pnl')}</div><div style="font-family:var(--mono);font-size:13px;font-weight:800;color:${totalPnl > 0 ? 'var(--green)' : totalPnl < 0 ? 'var(--red)' : 'var(--text-dim)'};margin-top:2px">${fmtUsdSigned(totalPnl)}</div></div>
           </div>
         ` : `<div class="no-positions">${t('no_positions')}</div>`}
+        ${(state.pending_positions || []).length ? `
+          <div style="margin-top:10px;padding:8px 10px;background:var(--bg-elev-2);border-radius:6px;border-left:3px solid var(--amber)">
+            <div style="font-size:9.5px;color:var(--amber);text-transform:uppercase;letter-spacing:0.06em;font-weight:800;margin-bottom:6px" title="${t('pending_hint')}">${t('pending_title')} · ${state.pending_positions.length}</div>
+            ${state.pending_positions.map(p => `<div style="display:flex;justify-content:space-between;gap:8px;font-family:var(--mono);font-size:10.5px;padding:3px 0;border-bottom:1px dashed var(--border-soft)">
+              <span><b>${p.ticker}</b> <span style="color:${p.direction === 'short' ? 'var(--red)' : 'var(--green)'}">${(p.direction || 'long').toUpperCase()}</span></span>
+              <span>${t('pending_limit')} <b>${fmt(p.entry_price)}</b> · ${t('pending_zone')} ${fmt(p.entry_zone_low)}–${fmt(p.entry_zone_high)}</span>
+              <span style="color:var(--text-dim)">SL ${fmt(p.sl_price)} · TP1 ${fmt(p.tp1_price)}${p.rr ? ' · R:R ' + p.rr : ''} · ${t('pending_until')} ${p.pending_until ? new Date(p.pending_until).toLocaleString(_lang === 'en' ? 'en-US' : 'pl-PL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+            </div>`).join('')}
+            <div style="font-size:9.5px;color:var(--text-dim);margin-top:5px">${t('pending_hint')}</div>
+          </div>` : ''}
 
         <!-- TRANSACTION HISTORY — closed positions expandable -->
         ${(state.recent_closed || []).length > 0 ? `
@@ -5543,6 +5569,7 @@ function renderPerformancePanel() {
         ${table(t('perf_by_exit'), perf.by_exit, t('perf_hint_exit'))}
         ${table(t('perf_by_ticker'), perf.by_ticker)}
         ${table(t('perf_by_version'), perf.by_version, t('perf_hint_version'))}
+        ${perf.by_context ? table(t('perf_by_context'), perf.by_context, t('perf_hint_context')) : ''}
       </div>
       <div style="font-size:9.5px;color:var(--text-dim);margin-top:8px">${t('perf_footer')}</div>
     </section>`;
@@ -7331,6 +7358,13 @@ function renderInfoCards(ticker, dec, openPos) {
         <div class="setup-level tp1"><div class="k">TP1</div><div class="v">${fmt(dec.tp1)}</div></div>
         <div class="setup-level tp2"><div class="k">TP2</div><div class="v">${fmt(dec.tp2)}</div></div>
       </div>
+      ${dec.entry_quality ? (() => { const eq = dec.entry_quality; const v = eq.verdict || 'ok'; const col = v === 'ok' ? 'var(--green)' : v === 'wait' ? 'var(--amber)' : 'var(--red)';
+        const lv = dec.levels || {}; const lvl = l => `${fmt(l.price)}<span style="color:var(--text-dim)"> (${(l.labels || []).join('+')})</span>`;
+        return `<div style="margin-top:8px;padding:7px 10px;background:var(--bg-elev-2);border-radius:5px;border-left:3px solid ${col};font-size:11px;line-height:1.5">
+          <div><strong style="color:${col}">${t('eq_title')}: ${t('eq_' + v)}</strong>${(eq.flags || []).length ? ` <span style="color:var(--text-muted)">· ${eq.flags.map(f => t('eq_flag_' + f)).join(' · ')}</span>` : ''}</div>
+          <div style="color:var(--text-muted);font-family:var(--mono);font-size:10px;margin-top:2px">${eq.note || ''}</div>
+          ${lv.supports ? `<div style="color:var(--text-muted);font-size:10px;margin-top:4px"><span style="color:var(--green)">S:</span> ${(lv.supports || []).slice(0, 3).map(lvl).join(' · ')}<br><span style="color:var(--red)">R:</span> ${(lv.resistances || []).slice(0, 3).map(lvl).join(' · ')}</div>` : ''}
+        </div>`; })() : ''}
       <div style="margin-top:8px;font-size:11px;color:var(--text-muted);line-height:1.5">
         <strong style="color:var(--gold)">Direction:</strong> ${(dec.direction || 'long').toUpperCase()}
         · <strong style="color:var(--gold)">Size:</strong> ${dec.size_pct || 0}% capital
@@ -7830,7 +7864,13 @@ function renderTokenChart(ticker, ohlc) {
         addLabel({ y, side: 'left', prio: 3, color, bold: true, text: `${label} ${fmt(price)}` });
       };
       if (dec.entry_low && dec.entry_high) {
-        drawLevel((dec.entry_low + dec.entry_high) / 2, '#F5B841', 'ENTRY');
+        // v0.4: strefa wejścia ze struktury — pasek + etykieta na górnej krawędzi
+        const yZl = yScale.getPixelForValue(dec.entry_low), yZh = yScale.getPixelForValue(dec.entry_high);
+        if (!isNaN(yZl) && !isNaN(yZh)) {
+          ctx.fillStyle = 'rgba(245,184,65,0.13)';
+          ctx.fillRect(chartArea.left, Math.min(yZl, yZh), chartArea.right - chartArea.left, Math.abs(yZl - yZh));
+        }
+        drawLevel(dec.entry_high, '#F5B841', dec.entry_quality?.verdict === 'wait' ? '⏳ ENTRY' : 'ENTRY');
       }
       drawLevel(dec.sl, '#F87171', 'SL');
       drawLevel(dec.tp1, '#34D399', 'TP1');

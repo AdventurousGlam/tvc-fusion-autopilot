@@ -82,6 +82,16 @@ MAX_NEW_TRADES_PER_DAY = 3     # bezpiecznik anty-overtrading (Sep 1: 14 trade'�
 # (panel "Co działa → wg wersji"), ale nie zaśmiecają nagłówka.
 # excluded=1 → trade wykluczony ze wszystkich statystyk (np. sl_rescan_bug, patrz db_init).
 STATS_SINCE = "2026-09-02T19:00:00"   # deploy bramek v0.3 (commit c890e34)
+
+# v0.4 — JAKOŚĆ WEJŚCIA (entry_quality z auto_fusion, patrz compute_levels tam).
+#   verdict 'ok'   → wejście po cenie rynkowej TERAZ (strefa obejmuje cenę),
+#   verdict 'wait' → WEJŚCIE OCZEKUJĄCE: pozycja status='pending' z limitem na górnej
+#                    krawędzi strefy (long) / dolnej (short); realizuje się, gdy cena
+#                    dotknie strefy w ciągu PENDING_TTL_H, inaczej wygasa,
+#   verdict 'skip' → brak wejścia (R:R < 1.5, SL za daleko od struktury, weekend dla altów).
+# SUI 05.09: bot wszedł po 0.8104 po +3% dnia, 6% pod MA200D — v0.4 dałoby 'wait'
+# ze strefą 0.782–0.789 (pullback do EMA21 1h) i TP1 przy high7d, TP2 przy MA200D.
+PENDING_TTL_H = 24.0
 STATS_WHERE = "status='closed' AND opened_at >= ? AND COALESCE(excluded,0)=0"
 
 # --- ccxt lazy import (bot still runs `init` without it) ---------------
@@ -169,6 +179,11 @@ def db_init():
     # v0.4 migrations
     _migrate_add_column(conn, "positions", "sl_since", "INTEGER")   # ms epoch ostatniej zmiany SL
     _migrate_add_column(conn, "positions", "excluded", "INTEGER DEFAULT 0")
+    _migrate_add_column(conn, "positions", "context_tags", "TEXT")      # v0.4: 'extended,weekend,…' (audyt: co działa w jakim kontekście)
+    _migrate_add_column(conn, "positions", "entry_zone_low", "REAL")
+    _migrate_add_column(conn, "positions", "entry_zone_high", "REAL")
+    _migrate_add_column(conn, "positions", "pending_until", "TEXT")
+    _migrate_add_column(conn, "positions", "rr", "REAL")
     conn.commit()
     _migrate_sl_rescan_bug(conn)
     conn.close()
@@ -527,6 +542,80 @@ def _macro_blackout(data, now_utc):
     return None
 
 
+def _context_tags(flags, now_utc, data):
+    """Tagi kontekstu wejścia — do audytu 'co działa' (WR wg kontekstu w panelu)."""
+    tags = list(flags or [])
+    if now_utc.weekday() in (5, 6) and "weekend" not in tags:
+        tags.append("weekend")
+    h = now_utc.hour
+    tags.append("us_session" if 13 <= h < 21 else "eu_session" if 7 <= h < 13 else "asia_session")
+    # makro w ciągu 24h (nie w blackoucie, ale blisko)
+    try:
+        for ev in data.get("macro_events") or []:
+            if int(ev.get("tier", 2)) != 1:
+                continue
+            ts = datetime.fromisoformat(str(ev.get("ts_utc")).replace("Z", "+00:00"))
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+            if 0 < (ts - now_utc).total_seconds() < 24 * 3600:
+                tags.append("macro_24h")
+                break
+    except Exception:
+        pass
+    return tags
+
+
+def _cancel_pending(conn, pid, reason):
+    conn.execute("UPDATE positions SET status='cancelled', hit_or_miss=?, closed_at=?, excluded=1 WHERE id=?",
+                 (reason, datetime.now(timezone.utc).isoformat(), pid))
+    conn.commit()
+    print(f"[pending] #{pid} anulowane: {reason}")
+
+
+def _notify_pending(ticker, direction, limit_px, zone_low, zone_high, sl, tp1, note):
+    try:
+        _telegram_send(f"⏳ <b>OCZEKUJĄCE {direction.upper()} {ticker}</b> limit {_fmt_px(limit_px)} "
+                       f"(strefa {_fmt_px(zone_low)}–{_fmt_px(zone_high)})\nSL {_fmt_px(sl)} · TP1 {_fmt_px(tp1)}\n{note}")
+    except Exception as e:
+        print(f"[telegram] pending notify failed: {e}")
+
+
+def _fill_pending(conn):
+    """v0.4 — realizacja wejść oczekujących: long wypełnia się, gdy low świecy ≤ limit;
+    short, gdy high ≥ limit. Po TTL — wygasa (poza statystykami)."""
+    rows = conn.execute("SELECT * FROM positions WHERE status='pending'").fetchall()
+    now = datetime.now(timezone.utc)
+    for r in rows:
+        try:
+            until = datetime.fromisoformat(r["pending_until"]) if r["pending_until"] else None
+            if until and until.tzinfo is None:
+                until = until.replace(tzinfo=timezone.utc)
+        except Exception:
+            until = None
+        try:
+            ohlc = _fetch_klines_binance(r["ticker"], r["opened_at"], "5m")
+        except Exception as e:
+            print(f"[pending] {r['ticker']}: klines failed ({e})")
+            continue
+        limit_px = float(r["entry_price"])
+        direction = (r["direction"] or "long").lower()
+        fill_ts = None
+        for ts, _o, h, l, _c, _v in ohlc or []:
+            if (direction == "long" and l <= limit_px) or (direction == "short" and h >= limit_px):
+                fill_ts = ts
+                break
+        if fill_ts:
+            fill_dt = datetime.fromtimestamp(fill_ts / 1000, tz=timezone.utc).isoformat()
+            conn.execute("UPDATE positions SET status='open', opened_at=?, sl_since=?, pending_until=NULL WHERE id=?",
+                         (fill_dt, fill_ts, r["id"]))
+            conn.commit()
+            print(f"[fill] {direction.upper()} {r['ticker']} @ {limit_px:.4f} (oczekujące zrealizowane {fill_dt[:16]})")
+            _notify_open(r["ticker"], direction, limit_px, r["size_usd"], r["sl_price"], r["tp1_price"],
+                         r["tp2_price"], r["fusion_score"], r["regime"])
+        elif until and now > until:
+            _cancel_pending(conn, r["id"], "expired")
+
+
 def cmd_open(args):
     db_init()
     path, fmt = find_fusion_input()
@@ -624,14 +713,19 @@ def cmd_open(args):
         # niezależnie od daty otwarcia (nie tylko "dziś"), żeby nie trzymać
         # jednocześnie long+short na tym samym tokenie.
         existing_any = conn.execute(
-            "SELECT * FROM positions WHERE ticker=? AND status='open' ORDER BY opened_at DESC LIMIT 1",
+            "SELECT * FROM positions WHERE ticker=? AND status IN ('open','pending') ORDER BY opened_at DESC LIMIT 1",
             (ticker,),
         ).fetchone()
 
         if existing_any and existing_any["direction"] == direction:
-            # ta sama strona już otwarta — nic do zrobienia
+            # ta sama strona już otwarta / oczekująca — nic do zrobienia
             skipped += 1
             continue
+
+        if existing_any and existing_any["status"] == "pending":
+            # przeciwny sygnał → oczekujące wejście traci sens, anuluj (bez PnL, poza statystykami)
+            _cancel_pending(conn, existing_any["id"], "cancelled_flip")
+            existing_any = None
 
         if existing_any and existing_any["direction"] != direction:
             if not dec.get("choch_override"):
@@ -681,8 +775,51 @@ def cmd_open(args):
                   f"(${pnl_usd:+.2f}) — opening new {direction} (CHoCH override)")
             _notify_close(ticker, old_dir, old_entry, flip_price, pnl_pct, pnl_usd, "flip_choch")
 
-        entry_price = _mid_entry(dec.get("entry_low"), dec.get("entry_high"), ticker, ex)
-        if entry_price == 0.0:
+        # v0.4 — JAKOŚĆ WEJŚCIA (filtr lokalizacji)
+        eq = dec.get("entry_quality") or {}
+        verdict = eq.get("verdict") or "ok"
+        flags = list(eq.get("flags") or [])
+        if verdict == "skip":
+            print(f"[skip] {ticker} {direction.upper()} — entry_quality=skip ({', '.join(flags) or 'brak flag'}): {eq.get('note', '')}")
+            skipped += 1
+            continue
+        zone_low = dec.get("entry_low"); zone_high = dec.get("entry_high")
+        if verdict == "wait" and zone_low and zone_high:
+            # Wejście oczekujące — limit na krawędzi strefy od strony ceny
+            limit_px = float(zone_high) if direction == "long" else float(zone_low)
+            size_pct_requested = float(dec.get("size_pct", 0))
+            size_pct = min(size_pct_requested, SHORT_SIZE_CAP_PCT if direction == "short" else LONG_SIZE_CAP_PCT)
+            size_usd = PAPER_CAPITAL * (size_pct / 100)
+            sources = dec.get("sources", {})
+            conn.execute(
+                """INSERT INTO positions (
+                    date, ticker, exchange, action, direction, fusion_score, regime,
+                    onchain_score, technical_score, news_score, momentum_score, sentiment_score,
+                    entry_price, size_pct, size_usd, sl_price, tp1_price, tp2_price,
+                    status, thesis, invalidation, risk_flag, onchain_data_thin, opened_at,
+                    context_tags, entry_zone_low, entry_zone_high, pending_until, rr
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (trade_date, ticker, EXCHANGE_ID, dec.get("action"), direction, dec.get("score"), regime,
+                 sources.get("onchain"), sources.get("technical"), sources.get("news"), sources.get("momentum"), sources.get("sentiment"),
+                 limit_px, size_pct, size_usd, dec.get("sl"), dec.get("tp1"), dec.get("tp2"),
+                 "pending", dec.get("risk_flag", ""), dec.get("invalidation_note", ""), dec.get("risk_flag", ""),
+                 1 if dec.get("onchain_data_thin") else 0, now_utc.isoformat(),
+                 ",".join(_context_tags(flags, now_utc, data)), float(zone_low), float(zone_high),
+                 (now_utc + timedelta(hours=PENDING_TTL_H)).isoformat(), (dec.get("levels") or {}).get("rr")),
+            )
+            opened_today += 1
+            print(f"[pending] {direction.upper()} {ticker} limit @ {limit_px:.4f} (strefa {zone_low}–{zone_high}) "
+                  f"TTL {PENDING_TTL_H:.0f}h · {eq.get('note', '')}")
+            _notify_pending(ticker, direction, limit_px, zone_low, zone_high, dec.get("sl"), dec.get("tp1"), eq.get("note", ""))
+            continue
+
+        # verdict 'ok' → wejście po cenie rynkowej TERAZ (nie środek strefy — ta bywa 5 min stara)
+        try:
+            entry_price = _fetch_current_price(ticker)
+        except Exception as e:
+            print(f"[warn] {ticker} live price failed ({e}) — fallback na środek strefy")
+            entry_price = _mid_entry(dec.get("entry_low"), dec.get("entry_high"), ticker, ex)
+        if not entry_price:
             skipped += 1
             continue
 
@@ -722,6 +859,9 @@ def cmd_open(args):
             1 if dec.get("onchain_data_thin") else 0,
             datetime.now(timezone.utc).isoformat(),
             None,
+            ",".join(_context_tags(flags, now_utc, data)),
+            float(zone_low) if zone_low else None, float(zone_high) if zone_high else None,
+            (dec.get("levels") or {}).get("rr"),
         )
         conn.execute(
             """INSERT INTO positions (
@@ -730,8 +870,8 @@ def cmd_open(args):
                 entry_price, size_pct, size_usd, sl_price, tp1_price, tp2_price,
                 status, exit_price, exit_date, pnl_pct, pnl_usd, hit_or_miss,
                 thesis, invalidation, risk_flag, onchain_data_thin,
-                opened_at, closed_at
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                opened_at, closed_at, context_tags, entry_zone_low, entry_zone_high, rr
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             row,
         )
         opened += 1
@@ -742,6 +882,13 @@ def cmd_open(args):
               f"score {dec.get('score')}")
         _notify_open(ticker, direction, entry_price, size_usd, dec.get("sl"), dec.get("tp1"),
                      dec.get("tp2"), dec.get("score"), regime, bool(dec.get("choch_override")))
+
+    # v0.4 — oczekujące bez sygnału: jeśli fusion przestał dawać BUY/SELL w kierunku
+    # pendingu (HOLD/WATCH albo odwrotny kierunek), wejście oczekujące traci podstawę.
+    dir_now = {d.get("ticker"): _direction_from_action(d.get("action")) for d in data.get("decisions", [])}
+    for pr in conn.execute("SELECT id, ticker, direction FROM positions WHERE status='pending'").fetchall():
+        if dir_now.get(pr["ticker"]) != pr["direction"]:
+            _cancel_pending(conn, pr["id"], "signal_gone")
 
     conn.commit()
     conn.close()
@@ -866,6 +1013,7 @@ def _snapshot_equity(conn, open_rows):
 def cmd_check(args):
     db_init()
     conn = db()
+    _fill_pending(conn)   # v0.4 — najpierw realizacja wejść oczekujących
     open_rows = conn.execute("SELECT * FROM positions WHERE status='open'").fetchall()
 
     # Equity snapshot (regardless czy są open positions czy nie)
@@ -1635,6 +1783,14 @@ def _compute_performance_breakdown(conn):
         "by_direction": bucketize(lambda r: (r.get("direction") or "long").upper(), ["LONG", "SHORT"]),
         "by_exit": bucketize(lambda r: exit_labels.get(r.get("hit_or_miss"), str(r.get("hit_or_miss")))),
         "by_ticker": bucketize(lambda r: r.get("ticker") or "?"),
+        # v0.4 — WR wg kontekstu wejścia (tagi z entry_quality + sesja + weekend + makro 24h);
+        # trade może mieć kilka tagów, więc sumy nie muszą się zgadzać z "all".
+        "by_context": [{"label": tag, **agg(rs)} for tag, rs in sorted(
+            ((tag, [r for r in rows if tag in (r.get("context_tags") or "").split(",")])
+             for tag in sorted({t for r in rows for t in (r.get("context_tags") or "").split(",") if t})),
+            key=lambda x: -len(x[1]))] + (
+            [{"label": "bez_tagów (pre-v0.4)", **agg([r for r in rows if not r.get("context_tags")])}]
+            if any(not r.get("context_tags") for r in rows) else []),
         "trend": {"last7": agg(last7) if last7 else None, "prev7": agg(prev7) if prev7 else None},
         "by_version": [
             {"label": "v0.2 (przed bramkami, archiwum)", **agg([r for r in all_rows if r["opened_at"] < v03_since and not (r.get("excluded") or 0)])},
@@ -1687,6 +1843,9 @@ def cmd_upload(args):
     conn = db()
     open_positions = [dict(r) for r in conn.execute(
         "SELECT * FROM positions WHERE status='open' ORDER BY opened_at DESC"
+    ).fetchall()]
+    pending_positions = [dict(r) for r in conn.execute(
+        "SELECT * FROM positions WHERE status='pending' ORDER BY opened_at DESC"
     ).fetchall()]
     recent_closed = [dict(r) for r in conn.execute(
         "SELECT * FROM positions WHERE status='closed' AND COALESCE(excluded,0)=0 ORDER BY closed_at DESC LIMIT 20"
@@ -1741,6 +1900,7 @@ def cmd_upload(args):
     fusion_data["state"] = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "open_positions": open_positions,
+        "pending_positions": pending_positions,
         "recent_closed": recent_closed,
         "total_pnl_usd": round(total_pnl, 2),
         "cumulative_win_rate": round(win_rate, 1),

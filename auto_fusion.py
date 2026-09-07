@@ -694,6 +694,202 @@ def generate_catalyst_calendar():
     return events[:20]
 
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v0.4 — POZIOMY ZE STRUKTURY + JAKOŚĆ WEJŚCIA
+# Do 07.09.2026 entry/SL/TP były czystym % od bieżącej ceny (entry = cena ±1.5%,
+# SL −5%, TP1 +6%), przeliczanym co 5 min — "wejście" jechało razem z ceną, nie
+# wiedziało, że 6% wyżej stoi MA200D, ani że token jest +4% 24h (pogoń).
+# Przykład: SUI 05–07.09 — entry 0.8224 tuż pod MA200D 0.85, R:R do oporu ≈0.5.
+# Teraz: entry = strefa przy najbliższym wsparciu, SL POD strukturą, TP = najbliższe
+# opory, a entry_quality mówi botowi: ok (wejdź teraz) / wait (złóż wejście oczekujące
+# w strefie) / skip (nie ma sensu).
+# ═══════════════════════════════════════════════════════════════════════════
+EXTENDED_ATR_MULT = 1.0     # cena > EMA21(1h) + 1.0×ATR(1h) → rozciągnięta, czekaj na pullback
+EXTENDED_CHG24_PCT = 4.0    # |24h| > 4% → pogoń
+MIN_RR = 1.5                # R:R do najbliższego oporu poniżej tego = skip
+MAX_SL_PCT = 6.0            # SL pod strukturą dalej niż 6% = struktura za daleko, skip
+MIN_SL_PCT = 1.2            # SL nie bliżej niż 1.2% (szum 1h)
+WEEKEND_SKIP_TICKERS = ("SOL", "XRP", "SUI")   # alty: brak nowych wejść sob/niedz (płynność)
+LEVEL_CLUSTER_PCT = 0.5     # poziomy bliżej niż 0.5% sklejamy w jeden (touches++)
+
+
+def _atr(klines, n=14):
+    """ATR (średni prawdziwy zakres) w jednostkach ceny; klines Binance [ts,o,h,l,c,...]."""
+    if not klines or len(klines) < n + 1:
+        return 0.0
+    trs = []
+    for i in range(1, len(klines)):
+        h, l, pc = float(klines[i][2]), float(klines[i][3]), float(klines[i - 1][4])
+        trs.append(max(h - l, abs(h - pc), abs(l - pc)))
+    return sum(trs[-n:]) / n
+
+
+def _ema(values, n):
+    if not values:
+        return 0.0
+    k = 2 / (n + 1)
+    e = values[0]
+    for v in values:
+        e = v * k + e * (1 - k)
+    return e
+
+
+def _cluster_levels(levels, price):
+    """levels: [(price, weight, label)] → sklejone {price, touches, labels} posortowane po cenie."""
+    levels = sorted(levels, key=lambda x: x[0])
+    out = []
+    for lp, w, lab in levels:
+        if out and abs(lp - out[-1]["price"]) / price * 100 < LEVEL_CLUSTER_PCT:
+            c = out[-1]
+            tot = c["touches"] + w
+            c["price"] = (c["price"] * c["touches"] + lp * w) / tot
+            c["touches"] = tot
+            if lab not in c["labels"]:
+                c["labels"].append(lab)
+        else:
+            out.append({"price": lp, "touches": w, "labels": [lab]})
+    return out
+
+
+def compute_levels(ticker, direction, price, change_24h, klines_d, klines_1h):
+    """
+    Zwraca dict: entry_low/high, sl, tp1, tp2, rr, atr_pct, supports, resistances,
+    entry_quality {verdict: ok|wait|skip, flags: [...], note}.
+    Poziomy: swing high/low 1h (ostatnie ~200h) i dzienne (60 dni), MA50D/MA200D,
+    EMA21 1h, high/low 7d. Wszystko sklejone w klastry ±0.5%.
+    """
+    if not price or price <= 0 or direction not in ("long", "short"):
+        return None
+    closes_1h = [float(k[4]) for k in klines_1h] if klines_1h else []
+    closes_d = [float(k[4]) for k in klines_d] if klines_d else []
+    atr = _atr(klines_1h) or price * 0.01
+    atr_pct = atr / price * 100
+    ema21 = _ema(closes_1h[-60:], 21) if len(closes_1h) >= 21 else price
+
+    raw = []
+    for s in detect_swing_points(klines_1h, lookback=3) if klines_1h else []:
+        raw.append((s["price"], 1.0, f"swing1h_{s['type']}"))
+    for s in detect_swing_points(klines_d[-60:], lookback=2) if klines_d else []:
+        raw.append((s["price"], 2.0, f"swingD_{s['type']}"))
+    if len(closes_d) >= 200:
+        raw.append((sum(closes_d[-200:]) / 200, 2.5, "MA200D"))
+    if len(closes_d) >= 50:
+        raw.append((sum(closes_d[-50:]) / 50, 1.5, "MA50D"))
+    if klines_d and len(klines_d) >= 7:
+        raw.append((max(float(k[2]) for k in klines_d[-7:]), 1.5, "high7d"))
+        raw.append((min(float(k[3]) for k in klines_d[-7:]), 1.5, "low7d"))
+    raw.append((ema21, 1.0, "EMA21_1h"))
+    levels = _cluster_levels(raw, price)
+    gap = max(atr * 0.25, price * 0.0015)   # poziom "przy cenie" nie liczy się jako wsparcie/opór
+    supports = [l for l in levels if l["price"] < price - gap]
+    resistances = [l for l in levels if l["price"] > price + gap]
+    supports.sort(key=lambda l: -l["price"])       # najbliższe najpierw
+    resistances.sort(key=lambda l: l["price"])
+
+    flags = []
+    extended_up = price > ema21 + EXTENDED_ATR_MULT * atr or (change_24h or 0) > EXTENDED_CHG24_PCT
+    extended_down = price < ema21 - EXTENDED_ATR_MULT * atr or (change_24h or 0) < -EXTENDED_CHG24_PCT
+    wd = datetime.now(timezone.utc).weekday()
+    if wd in (5, 6):
+        flags.append("weekend")
+
+    def _pick(levels_list, entry, min_dist):
+        # TP: pojedynczy swing 1h (touches 1.0) to szum — liczy się tylko, gdy jest ≥2 ATR
+        # od wejścia; poziomy z wagą ≥1.5 (dzienne swingi, MA, high/low 7d, klastry) od min_dist.
+        for l in levels_list:
+            d = abs(l["price"] - entry)
+            if d >= min_dist and (l["touches"] >= 1.5 or d >= 2.0 * atr):
+                return l
+        return None
+
+    if direction == "long":
+        s1 = supports[0] if supports else None
+        if extended_up:
+            flags.append("extended")
+            # Strefa pullbacku: między wsparciem (lub EMA21) a EMA21 + 0.3 ATR — nie gonimy
+            zone_high = min(price - 0.2 * atr, ema21 + 0.3 * atr)
+            zone_low = max(s1["price"], price * 0.94) if s1 else ema21 - 0.5 * atr
+            if zone_low > zone_high:
+                zone_low = zone_high - 0.6 * atr
+        else:
+            zone_high = price * 1.003
+            zone_low = max(s1["price"], price * 0.975) if s1 else price * 0.985
+        entry_mid = (zone_low + zone_high) / 2
+        sl_struct = (s1["price"] - max(0.5 * atr, price * 0.003)) if s1 else zone_low - 1.0 * atr
+        sl = min(sl_struct, entry_mid * (1 - MIN_SL_PCT / 100))
+        sl_pct = (entry_mid - sl) / entry_mid * 100
+        risk = entry_mid - sl
+        r1 = _pick(resistances, entry_mid, max(1.0 * atr, risk * 0.8))
+        r2 = _pick([r for r in resistances if not r1 or r["price"] > r1["price"]], entry_mid, 0) if r1 else None
+        tp1 = r1["price"] * 0.998 if r1 else entry_mid + 2.0 * risk
+        tp2 = r2["price"] * 0.998 if r2 else max(tp1 + 1.0 * risk, entry_mid + 3.0 * risk)
+        near_res = resistances[0] if resistances else None
+        if near_res and (near_res["price"] - price) / price * 100 < 1.0 and near_res["touches"] >= 1.5:
+            flags.append("under_resistance")
+            if "extended" not in flags:
+                # Tuż pod oporem: nie kupuj w opór — czekaj na zejście w stronę wsparcia
+                zone_high = min(price - 0.3 * atr, (s1["price"] + 0.5 * atr) if s1 else price - 0.3 * atr)
+                zone_low = min(zone_low, zone_high - 0.4 * atr)
+                entry_mid = (zone_low + zone_high) / 2
+                risk = entry_mid - sl
+    else:
+        r1 = resistances[0] if resistances else None
+        if extended_down:
+            flags.append("extended")
+            zone_low = max(price + 0.2 * atr, ema21 - 0.3 * atr)
+            zone_high = min(r1["price"], price * 1.06) if r1 else ema21 + 0.5 * atr
+            if zone_high < zone_low:
+                zone_high = zone_low + 0.6 * atr
+        else:
+            zone_low = price * 0.997
+            zone_high = min(r1["price"], price * 1.025) if r1 else price * 1.015
+        entry_mid = (zone_low + zone_high) / 2
+        sl_struct = (r1["price"] + max(0.5 * atr, price * 0.003)) if r1 else zone_high + 1.0 * atr
+        sl = max(sl_struct, entry_mid * (1 + MIN_SL_PCT / 100))
+        sl_pct = (sl - entry_mid) / entry_mid * 100
+        risk = sl - entry_mid
+        s1 = _pick(supports, entry_mid, max(1.0 * atr, risk * 0.8))
+        s2 = _pick([x for x in supports if not s1 or x["price"] < s1["price"]], entry_mid, 0) if s1 else None
+        tp1 = s1["price"] * 1.002 if s1 else entry_mid - 2.0 * risk
+        tp2 = s2["price"] * 1.002 if s2 else min(tp1 - 1.0 * risk, entry_mid - 3.0 * risk)
+        near_sup = supports[0] if supports else None
+        if near_sup and (price - near_sup["price"]) / price * 100 < 1.0 and near_sup["touches"] >= 1.5:
+            flags.append("under_resistance")   # dla shorta: "nad wsparciem" — ta sama flaga, ten sam sens
+            if "extended" not in flags:
+                zone_low = max(price + 0.3 * atr, (r1["price"] - 0.5 * atr) if r1 else price + 0.3 * atr)
+                zone_high = max(zone_high, zone_low + 0.4 * atr)
+                entry_mid = (zone_low + zone_high) / 2
+                risk = sl - entry_mid
+
+    rr = abs(tp1 - entry_mid) / max(1e-12, abs(entry_mid - sl))
+    if rr < MIN_RR:
+        flags.append("low_rr")
+    if sl_pct > MAX_SL_PCT:
+        flags.append("wide_sl")
+
+    if "low_rr" in flags or "wide_sl" in flags or ("weekend" in flags and ticker in WEEKEND_SKIP_TICKERS):
+        verdict = "skip"
+    elif "extended" in flags or "under_resistance" in flags:
+        verdict = "wait"
+    else:
+        verdict = "ok"
+
+    fmtp = lambda v: round(v, 6 if price < 1 else 4 if price < 100 else 2)
+    nm = lambda l: (l["labels"][0] + ("+" if len(l["labels"]) > 1 else "")) if l else "—"
+    note = (f"R:R {rr:.1f} · SL {sl_pct:.1f}% pod {nm(s1) if direction == 'long' else nm(r1)} · "
+            f"TP1 {nm(r1) if direction == 'long' else nm(s1)} · ATR1h {atr_pct:.2f}%"
+            + (f" · {', '.join(flags)}" if flags else ""))
+    return {
+        "entry_low": fmtp(zone_low), "entry_high": fmtp(zone_high), "sl": fmtp(sl),
+        "tp1": fmtp(tp1), "tp2": fmtp(tp2), "rr": round(rr, 2), "atr_pct": round(atr_pct, 3),
+        "ema21_1h": fmtp(ema21),
+        "supports": [{"price": fmtp(l["price"]), "touches": round(l["touches"], 1), "labels": l["labels"]} for l in supports[:4]],
+        "resistances": [{"price": fmtp(l["price"]), "touches": round(l["touches"], 1), "labels": l["labels"]} for l in resistances[:4]],
+        "entry_quality": {"verdict": verdict, "flags": flags, "note": note},
+    }
+
+
 def detect_regime(btc_price_data, fng, btc_dominance):
     """
     Regime detection:
@@ -751,9 +947,11 @@ def generate_fusion():
 
     decisions = []
     for ticker in ["BTC", "ETH", "SOL", "XRP", "SUI"]:
-        klines = fetch_klines(ticker)  # daily, 30 candles — trend/momentum baseline
+        klines_d220 = fetch_klines(ticker, limit=220) or []   # v0.4: 220 dni → MA200D/MA50D + swingi dzienne
+        klines = klines_d220[-30:] if klines_d220 else fetch_klines(ticker)  # daily, 30 candles — trend/momentum baseline
         daily_ta_score = compute_ta_score(klines)
-        klines_1h = fetch_klines(ticker, interval="1h", limit=50)  # ~2 dni godzinowych — kontekst dla struktury
+        klines_1h_200 = fetch_klines(ticker, interval="1h", limit=200) or []  # v0.4: ~8 dni → swingi 1h, ATR, EMA21
+        klines_1h = klines_1h_200[-50:] if klines_1h_200 else fetch_klines(ticker, interval="1h", limit=50)
         short_term_score = compute_short_term_momentum(klines_1h)
         klines_15m = fetch_klines(ticker, interval="15m", limit=100)  # ~25h, 15-min świece
 
@@ -811,9 +1009,19 @@ def generate_fusion():
             size = compute_size(65, regime, ticker)  # syntetyczny bullish score do sizing
             choch_override = True
 
-        # Entry/SL/TP dynamiczne (proste %-based) — mirrored dla short: SL powyżej
-        # entry, TP poniżej entry (odwrotnie niż long)
-        if size > 0 and direction == "long":
+        # v0.4 — Entry/SL/TP ze STRUKTURY (wsparcia/opory 1h+D, MA200D, EMA21, ATR),
+        # nie z % od ceny. Patrz compute_levels(). Fallback na stare % tylko gdy brak danych.
+        levels = None
+        if size > 0 and direction in ("long", "short"):
+            try:
+                levels = compute_levels(ticker, direction, current_price,
+                                        prices.get(ticker, {}).get("change_24h", 0), klines_d220, klines_1h_200)
+            except Exception as e:
+                FETCH_ERRORS.append(f"levels.{ticker}: {type(e).__name__}: {e}")
+                levels = None
+        if levels:
+            entry_low, entry_high, sl, tp1, tp2 = levels["entry_low"], levels["entry_high"], levels["sl"], levels["tp1"], levels["tp2"]
+        elif size > 0 and direction == "long":
             entry_low = round(current_price * 0.985, 4)
             entry_high = round(current_price * 1.015, 4)
             sl = round(current_price * 0.95, 4)
@@ -850,10 +1058,12 @@ def generate_fusion():
             "sources": sources,
             "onchain_data_thin": False,
             "market_structure": {"1h": ms_1h, "15m": ms_15m},
+            "levels": ({k: levels[k] for k in ("rr", "atr_pct", "ema21_1h", "supports", "resistances")} if levels else None),
+            "entry_quality": (levels["entry_quality"] if levels else None),
             "choch_override": choch_override,
             "risk_flag": f"Auto-generated {datetime.now().strftime('%H:%M')}. TA {ta_score}/100 (daily {daily_ta_score} · 1h momo {short_term_score} · {ms_note}). Current ${current_price:.2f} ({prices[ticker]['change_24h']:+.2f}% 24h)."
                          + (" ⚡ CHoCH OVERRIDE — 1h change of character, wchodzi mimo regime/score." if choch_override else ""),
-            "invalidation_note": f"SL @ ${sl}" if sl else "Not entered",
+            "invalidation_note": (f"SL @ ${sl}" + (f" · {levels['entry_quality']['note']}" if levels else "")) if sl else "Not entered",
         })
 
     # Sort by score descending
