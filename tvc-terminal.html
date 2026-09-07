@@ -1042,6 +1042,10 @@ const I18N = {
   eq_flag_wide_sl:    { pl: 'SL > 6% od struktury',                  en: 'SL > 6% to structure' },
   eq_flag_weekend:    { pl: 'weekend',                               en: 'weekend' },
   perf_by_context:    { pl: 'Wg kontekstu wejścia',                  en: 'By entry context' },
+  layers_title:       { pl: 'Warstwy (bot)',                          en: 'Layers (bot)' },
+  layers_agree:       { pl: 'zgoda',                                  en: 'agree' },
+  layers_veto:        { pl: 'VETO',                                   en: 'VETO' },
+  layers_hint:        { pl: 'Smart Money (wieloryby HL) · CVD spot 4h (Binance taker) · Flush/Pump lite (OI+funding HL, kompresja, SFP). Bot wchodzi tylko przy zgodzie ≥2/3 i bez veta. Liczone na serwerze co 5 min — mogą różnić się od paneli live w terminalu.', en: 'Smart Money (HL whales) · spot CVD 4h (Binance taker) · Flush/Pump lite (HL OI+funding, compression, SFP). Bot enters only with ≥2/3 agreement and no veto. Computed server-side every 5 min — may differ from live panels.' },
   perf_hint_context:  { pl: 'v0.4: każdy trade ma tagi (rozciągnięta / pod oporem / weekend / sesja / makro 24h). Tu widać, w jakim kontekście bot zarabia, a w jakim traci — i co wyłączyć.', en: 'v0.4: every trade is tagged (extended / under resistance / weekend / session / macro 24h). Shows where the bot earns and where it loses — and what to switch off.' },
   tx_history:         { pl: '📜 Historia transakcji',               en: '📜 Transaction History' },
   click_expand:       { pl: 'kliknij aby rozwinąć ▾',              en: 'click to expand ▾' },
@@ -1352,6 +1356,26 @@ const I18N = {
   nav_etf:            { pl: 'ETF & makro',        en: 'ETF & macro' },
   nav_smart:          { pl: 'Smart Money',        en: 'Smart Money' },
   nav_picks:          { pl: 'Picks',              en: 'Picks' },
+  nav_radar:          { pl: 'Pump Radar',         en: 'Pump Radar' },
+  pr_title:           { pl: '🚀 Pump Radar — paliwo · wieloryby · katalizator · zapłon', en: '🚀 Pump Radar — fuel · whales · catalyst · ignition' },
+  pr_sub:             { pl: 'Skan całego rynku perpów (Hyperliquid + MEXC) co 5 min. To NIE są sygnały wejścia — to lista tokenów, w których coś się dzieje przed ruchem. Każdy alert jest mierzony (+1h/+4h/+24h), żeby wiedzieć, które składniki mają edge.', en: 'Whole perp market scan (Hyperliquid + MEXC) every 5 min. These are NOT entry signals — a list of tokens where something is happening before the move. Every alert is measured (+1h/+4h/+24h) so we learn which components carry edge.' },
+  pr_track:           { pl: 'Track record', en: 'Track record' },
+  pr_alerts:          { pl: 'alertów', en: 'alerts' },
+  pr_hit:             { pl: 'trafień', en: 'hits' },
+  pr_avg:             { pl: 'śr.', en: 'avg' },
+  pr_none:            { pl: 'Nic nie przekracza progu WATCH (35). Poniżej najbliżsi kandydaci.', en: 'Nothing above the WATCH threshold (35). Nearest candidates below.' },
+  pr_near:            { pl: 'Blisko progu', en: 'Near threshold' },
+  pr_recent:          { pl: 'Ostatnie alerty i co się po nich stało', en: 'Recent alerts and what happened after' },
+  pr_part_oi_surge:   { pl: 'OI↑ cena stoi', en: 'OI↑ price flat' },
+  pr_part_oi_build_4h:{ pl: 'OI↑ 4h', en: 'OI↑ 4h' },
+  pr_part_funding:    { pl: 'funding ujemny', en: 'negative funding' },
+  pr_part_whales:     { pl: 'wieloryby kupują', en: 'whales buying' },
+  pr_part_listing:    { pl: 'listing', en: 'listing' },
+  pr_part_compression:{ pl: 'kompresja', en: 'compression' },
+  pr_part_ignition:   { pl: 'zapłon wolumenu', en: 'volume ignition' },
+  pr_part_late:       { pl: 'późno (już po ruchu)', en: 'late (already moved)' },
+  pr_by_part:         { pl: 'Skuteczność wg składnika', en: 'Hit rate by component' },
+  pr_stale:           { pl: 'Radar nie odświeżył się w tym cyklu (runner nie dosięgnął źródeł?) — dane mogą być stare.', en: 'Radar did not refresh this cycle (runner could not reach sources?) — data may be stale.' },
   nav_news:           { pl: 'News',               en: 'News' },
   nav_calendar:       { pl: 'Kalendarz',          en: 'Calendar' },
   nav_cycle:          { pl: 'Cykl',               en: 'Cycle' },
@@ -2256,6 +2280,7 @@ function render() {
 
       <!-- CRYPTO PICKS — poranny shortlist z scheduled taska (crypto_picks.json → Gist) -->
       ${data.crypto_picks ? `<div id="crypto-picks-slot" class="hide-eod" style="grid-column: span 12; width: 100%;">${renderCryptoPicks(data.crypto_picks)}</div>` : ''}
+      ${data.pump_radar ? `<div id="pump-radar-slot" class="hide-eod" style="grid-column: span 12; width: 100%;">${renderPumpRadar(data.pump_radar)}</div>` : ''}
 
       <section class="panel p-6 hide-trading hide-eod" id="sec-news">
         <div class="panel-head"><h3>${t('news_bias')}</h3><span class="meta">Market bias · Neutral</span></div>
@@ -3463,7 +3488,7 @@ const NAV_ITEMS = [
   // [id, ikona, klucz i18n]  — sekcje: NOW / CONTEXT / ANALYSIS / PLANNING
   ['command-center-slot', '⚡', 'nav_cc'], ['portfolio-health-slot', '🌐', 'nav_portfolio'], ['flush-risk-slot', '🌊', 'nav_flush'], ['cvd-slot', '⚖️', 'nav_cvd'], ['options-slot', '🎭', 'nav_options'],
   'sep',
-  ['sec-fusion', '🧠', 'nav_fusion'], ['sec-positions', '📈', 'nav_positions'], ['macro-etf-slot', '🏛', 'nav_etf'], ['smart-money-slot', '🏦', 'nav_smart'], ['crypto-picks-slot', '🎯', 'nav_picks'], ['sec-news', '📰', 'nav_news'],
+  ['sec-fusion', '🧠', 'nav_fusion'], ['sec-positions', '📈', 'nav_positions'], ['macro-etf-slot', '🏛', 'nav_etf'], ['smart-money-slot', '🏦', 'nav_smart'], ['crypto-picks-slot', '🎯', 'nav_picks'], ['pump-radar-slot', '🚀', 'nav_radar'], ['sec-news', '📰', 'nav_news'],
   'sep',
   ['sec-calendar', '📅', 'nav_calendar'], ['cycle-slot', '🧭', 'nav_cycle'], ['pnl-history-slot', '💹', 'nav_pnl'], ['performance-slot', '🔬', 'nav_perf'], ['orderflow-slot', '📓', 'nav_orderflow'], ['journal-slot', '📝', 'nav_journal'],
 ];
@@ -4364,6 +4389,49 @@ const PICK_CATS = [
   { key: 'New listing',    icon: '🆕', color: 'var(--gold)' },
   { key: 'Mean reversion', icon: '↩️', color: 'var(--amber)' },
 ];
+function renderPumpRadar(pr) {
+  if (!pr || !Array.isArray(pr.top)) return '';
+  const loc = _lang === 'en' ? 'en-US' : 'pl-PL';
+  const gen = pr.generated_at ? new Date(pr.generated_at) : null;
+  const ageMin = gen ? (Date.now() - gen.getTime()) / 60000 : null;
+  const st = pr.stats || {}; const A = st.all || {};
+  const pct = v => v == null ? '—' : `<span style="color:${v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--text-dim)'}">${v >= 0 ? '+' : ''}${Number(v).toFixed(1)}%</span>`;
+  const usd = v => !v ? '—' : `$${Math.abs(v) >= 1e6 ? (v / 1e6).toFixed(1) + 'M' : (v / 1e3).toFixed(0) + 'K'}`;
+  const partChip = (k, v) => `<span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:9.5px;font-weight:700;margin:1px 3px 1px 0;background:${v < 0 ? 'var(--red-soft)' : 'var(--bg-elev-3)'};color:${v < 0 ? 'var(--red)' : k === 'ignition' ? 'var(--amber)' : k === 'listing' ? 'var(--purple)' : k === 'whales' ? 'var(--cyan)' : 'var(--text)'}" title="${k}">${t('pr_part_' + k) === 'pr_part_' + k ? k : t('pr_part_' + k)} ${v > 0 ? '+' : ''}${v}</span>`;
+  const row = s => `<tr style="border-bottom:1px solid var(--border-soft)">
+      <td style="padding:5px 6px;font-weight:800;font-family:var(--mono)">${s.ticker}<div style="font-size:8.5px;color:var(--text-dim);font-weight:600">${s.src}${s.hl ? '+HL' : ''}</div></td>
+      <td style="padding:5px 6px;text-align:center"><span style="font-family:var(--mono);font-size:14px;font-weight:800;color:${s.level === 'HIGH' ? 'var(--green)' : s.level === 'WATCH' ? 'var(--amber)' : 'var(--text-dim)'}">${s.score}</span><div style="font-size:8.5px;font-weight:800;color:${s.level === 'HIGH' ? 'var(--green)' : s.level === 'WATCH' ? 'var(--amber)' : 'var(--text-dim)'}">${s.level === 'none' ? '' : s.level}</div></td>
+      <td style="padding:5px 6px;font-family:var(--mono);font-size:10.5px">$${fmt(s.price)}<div style="font-size:9px">24h ${pct(s.r24)} · 1h ${pct(s.px_1h)}</div></td>
+      <td style="padding:5px 6px;font-family:var(--mono);font-size:10.5px">OI 1h ${pct(s.oi_1h)}<div style="font-size:9px;color:var(--text-muted)">4h ${pct(s.oi_4h)} · ${usd(s.oi_usd)}</div></td>
+      <td style="padding:5px 6px;font-family:var(--mono);font-size:10.5px;color:${s.funding_8h < 0 ? 'var(--green)' : 'var(--text-muted)'}">${s.funding_8h != null ? (s.funding_8h >= 0 ? '+' : '') + Number(s.funding_8h).toFixed(3) + '%' : '—'}</td>
+      <td style="padding:5px 6px;font-family:var(--mono);font-size:10.5px;color:${s.whale_net_1h > 0 ? 'var(--cyan)' : s.whale_net_1h < 0 ? 'var(--red)' : 'var(--text-dim)'}">${s.whale_net_1h ? (s.whale_net_1h > 0 ? '+' : '−') + usd(Math.abs(s.whale_net_1h)) : '—'}${s.whale_wallets ? `<div style="font-size:9px;color:var(--text-dim)">${s.whale_wallets} portf.</div>` : ''}</td>
+      <td style="padding:5px 6px">${Object.entries(s.parts || {}).map(([k, v]) => partChip(k, v)).join('')}${(s.tags || []).map(x => `<span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:9.5px;margin:1px 3px 1px 0;background:var(--purple-soft);color:var(--purple);font-weight:700">${x}</span>`).join('')}</td>
+    </tr>`;
+  const head = `<tr style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em"><th style="text-align:left;padding:4px 6px">Token</th><th style="padding:4px 6px">Score</th><th style="text-align:left;padding:4px 6px">Cena</th><th style="text-align:left;padding:4px 6px">OI</th><th style="text-align:left;padding:4px 6px">Funding 8h</th><th style="text-align:left;padding:4px 6px">🐋 1h</th><th style="text-align:left;padding:4px 6px">Składniki</th></tr>`;
+  const table = rows => `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px">${head}${rows.map(row).join('')}</table></div>`;
+  const statBox = (label, a) => `<div style="padding:6px 10px;background:var(--bg-elev-2);border-radius:6px;min-width:150px"><div style="font-size:8.5px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700">${label}</div><div style="font-family:var(--mono);font-size:11px;margin-top:2px">${a.n || 0} ${t('pr_alerts')} · 1h: <b style="color:${(a.hit_1h || 0) >= 40 ? 'var(--green)' : 'var(--text)'}">${a.hit_1h != null ? a.hit_1h + '%' : '—'}</b> (${t('pr_avg')} ${a.avg_1h != null ? (a.avg_1h >= 0 ? '+' : '') + a.avg_1h + '%' : '—'}) · 4h: <b>${a.hit_4h != null ? a.hit_4h + '%' : '—'}</b> (${a.avg_4h != null ? (a.avg_4h >= 0 ? '+' : '') + a.avg_4h + '%' : '—'})</div></div>`;
+  const byPart = Object.entries(st.by_part || {}).filter(([, a]) => a.n >= 3).sort((a, b) => (b[1].hit_1h || 0) - (a[1].hit_1h || 0));
+  const recent = (pr.recent_alerts || []).slice(0, 12);
+  return `
+    <section class="panel p-12" style="border-left:3px solid var(--purple)">
+      <div class="panel-head">
+        <h3>${t('pr_title')}</h3>
+        <span class="meta">${pr.universe_n || 0} perpów · ${gen ? gen.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' }) : '—'}${ageMin != null && ageMin > 20 ? ` · <span style="color:var(--amber)">${Math.round(ageMin)} min</span>` : ''}</span>
+      </div>
+      <div style="font-size:10.5px;color:var(--text-muted);margin-bottom:8px;line-height:1.45">${t('pr_sub')}${ageMin != null && ageMin > 20 ? `<div style="color:var(--amber);margin-top:4px">⚠ ${t('pr_stale')}</div>` : ''}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">${statBox(t('pr_track') + ' · ' + (pr.hit_def || ''), A)}${st.high ? statBox('HIGH', st.high) : ''}${st.watch ? statBox('WATCH', st.watch) : ''}</div>
+      ${pr.top.length ? table(pr.top) : `<div class="no-positions">${t('pr_none')}</div>`}
+      ${(pr.near || []).length ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:10px;color:var(--text-dim);font-weight:700;text-transform:uppercase;letter-spacing:0.05em">${t('pr_near')} (${pr.near.length})</summary><div style="margin-top:6px">${table(pr.near)}</div></details>` : ''}
+      ${recent.length ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-size:10px;color:var(--text-dim);font-weight:700;text-transform:uppercase;letter-spacing:0.05em">${t('pr_recent')} (${recent.length})</summary>
+        <div style="overflow-x:auto;margin-top:6px"><table style="width:100%;border-collapse:collapse;font-size:10.5px;font-family:var(--mono)">
+          <tr style="font-size:9px;color:var(--text-dim)"><th style="text-align:left;padding:3px 6px">Kiedy</th><th style="text-align:left;padding:3px 6px">Token</th><th style="padding:3px 6px">Score</th><th style="padding:3px 6px">+1h</th><th style="padding:3px 6px">+4h</th><th style="padding:3px 6px">+24h</th><th style="padding:3px 6px">max</th><th style="text-align:left;padding:3px 6px">Składniki</th></tr>
+          ${recent.map(a => `<tr style="border-bottom:1px solid var(--border-soft)"><td style="padding:3px 6px;color:var(--text-dim)">${new Date(a.ts * 1000).toLocaleString(loc, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td><td style="padding:3px 6px;font-weight:800">${a.ticker}</td><td style="padding:3px 6px;text-align:center;color:${a.level === 'HIGH' ? 'var(--green)' : 'var(--amber)'}">${a.score}</td><td style="padding:3px 6px;text-align:center">${pct(a.fwd_1h)}</td><td style="padding:3px 6px;text-align:center">${pct(a.fwd_4h)}</td><td style="padding:3px 6px;text-align:center">${pct(a.fwd_24h)}</td><td style="padding:3px 6px;text-align:center">${pct(a.max_fwd_pct)}</td><td style="padding:3px 6px">${Object.keys(a.parts || {}).filter(k => k !== 'late').join(' · ')}${(a.tags || []).length ? ' · ' + a.tags.join(' · ') : ''}</td></tr>`).join('')}
+        </table></div></details>` : ''}
+      ${byPart.length ? `<div style="margin-top:8px;font-size:10px;color:var(--text-muted)"><b style="color:var(--text)">${t('pr_by_part')}:</b> ${byPart.map(([k, a]) => `${t('pr_part_' + k) === 'pr_part_' + k ? k : t('pr_part_' + k)} <b style="color:${(a.hit_1h || 0) >= 40 ? 'var(--green)' : 'var(--text)'}">${a.hit_1h != null ? a.hit_1h + '%' : '—'}</b> (n=${a.n})`).join(' · ')}</div>` : ''}
+      ${(pr.errors || []).length ? `<div style="margin-top:6px;font-size:9px;color:var(--text-dim)">⚠ ${pr.errors.slice(0, 4).join(' · ')}</div>` : ''}
+    </section>`;
+}
+
 function renderCryptoPicks(cp) {
   if (!cp || !Array.isArray(cp.picks)) return '';
   const stale = cp.age_days != null && cp.age_days >= 1;
@@ -7364,6 +7432,11 @@ function renderInfoCards(ticker, dec, openPos) {
           <div><strong style="color:${col}">${t('eq_title')}: ${t('eq_' + v)}</strong>${(eq.flags || []).length ? ` <span style="color:var(--text-muted)">· ${eq.flags.map(f => t('eq_flag_' + f)).join(' · ')}</span>` : ''}</div>
           <div style="color:var(--text-muted);font-family:var(--mono);font-size:10px;margin-top:2px">${eq.note || ''}</div>
           ${lv.supports ? `<div style="color:var(--text-muted);font-size:10px;margin-top:4px"><span style="color:var(--green)">S:</span> ${(lv.supports || []).slice(0, 3).map(lvl).join(' · ')}<br><span style="color:var(--red)">R:</span> ${(lv.resistances || []).slice(0, 3).map(lvl).join(' · ')}</div>` : ''}
+        </div>`; })() : ''}
+      ${dec.layers ? (() => { const L = dec.layers; const ag = L.agree || 0; const col = L.veto ? 'var(--red)' : ag >= 2 ? 'var(--green)' : 'var(--amber)';
+        return `<div style="margin-top:6px;padding:7px 10px;background:var(--bg-elev-2);border-radius:5px;border-left:3px solid ${col};font-size:11px;line-height:1.5" title="${t('layers_hint')}">
+          <strong style="color:${col}">${t('layers_title')}: ${L.veto ? t('layers_veto') + ' ' + L.veto : t('layers_agree') + ' ' + ag + '/3'}</strong>
+          <div style="color:var(--text-muted);font-family:var(--mono);font-size:10px;margin-top:2px">${L.note || ''}</div>
         </div>`; })() : ''}
       <div style="margin-top:8px;font-size:11px;color:var(--text-muted);line-height:1.5">
         <strong style="color:var(--gold)">Direction:</strong> ${(dec.direction || 'long').toUpperCase()}

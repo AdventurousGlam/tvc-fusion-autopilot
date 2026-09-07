@@ -890,6 +890,250 @@ def compute_levels(ticker, direction, price, change_24h, klines_d, klines_1h):
     }
 
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v0.4 krok 3 — WARSTWY W DECYZJI BOTA
+# Smart Money (wieloryby Hyperliquid), CVD spot (Binance taker buy vs sell),
+# Flush/Pump Risk lite (OI/funding HL + kompresja/SFP z Binance 1h) — do teraz
+# liczone tylko w przeglądarce (werdykt na ekranie), bot ich nie widział.
+# Tu: liczone na runnerze co cykl, zapisywane w decyzji jako `layers`, paper_bot
+# wymaga zgody ≥2/3 warstw i respektuje veto (Flush high / wieloryby mocno przeciwnie).
+# Cache (layers_cache.json — celowo NIE fusion_*.json, żeby find_fusion_input go nie brał):
+#   - wieloryby odświeżane co 30 min (leaderboard + 30× clearinghouseState),
+#   - seria OI z HL zapisywana co cykl (HL nie daje historii OI) → Δ4h/Δ24h.
+# ═══════════════════════════════════════════════════════════════════════════
+HL_INFO = "https://api.hyperliquid.xyz/info"
+HL_LEADERBOARD = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
+LAYERS_CACHE = FUSION_DIR / "layers_cache.json"
+SM_REFRESH_MIN = 30
+SM_TICKERS = ["BTC", "ETH", "SOL", "XRP", "SUI"]
+
+
+def _post_json(url, payload, timeout=20):
+    req = ur.Request(url, data=json.dumps(payload).encode(), headers={"User-Agent": UA, "Content-Type": "application/json"})
+    with ur.urlopen(req, timeout=timeout, context=SSL_CTX) as r:
+        return json.loads(r.read())
+
+
+def _load_layers_cache():
+    try:
+        return json.loads(LAYERS_CACHE.read_text())
+    except Exception:
+        return {}
+
+
+def _save_layers_cache(c):
+    try:
+        LAYERS_CACHE.write_text(json.dumps(c, separators=(",", ":")))
+    except Exception as e:
+        FETCH_ERRORS.append(f"layers.cache.save: {e}")
+
+
+def fetch_hl_ctx():
+    """Funding (godzinowy) + OI (USD) per coin z Hyperliquid metaAndAssetCtxs."""
+    meta, ctxs = _post_json(HL_INFO, {"type": "metaAndAssetCtxs"})
+    out = {}
+    for u, c in zip(meta.get("universe", []), ctxs):
+        name = u.get("name")
+        if name in SM_TICKERS:
+            px = float(c.get("markPx") or 0)
+            out[name] = {"funding_h": float(c.get("funding") or 0) * 100,   # % na godzinę
+                         "oi_usd": float(c.get("openInterest") or 0) * px, "mark": px}
+    return out
+
+
+def fetch_hl_whales():
+    """Top-30 portfeli wg tygodniowego PnL (equity $5M–$400M, vlm tyg. >$10M), bez
+    market-makerów (>12 pozycji) i hedgerów (≥3 pozycje jedna strona, PnL < −4% księgi).
+    Ta sama logika co panel Smart Money w terminalu."""
+    lb = _get_json(HL_LEADERBOARD, timeout=40)
+    rows = []
+    for r in lb.get("leaderboardRows", []):
+        w = next((x[1] for x in r.get("windowPerformances", []) if x[0] == "week"), {}) or {}
+        v = float(r.get("accountValue") or 0)
+        if 5e6 <= v <= 4e8 and float(w.get("vlm") or 0) > 1e7:
+            rows.append((float(w.get("pnl") or 0), r.get("ethAddress"), v))
+    rows.sort(key=lambda x: -x[0])
+    agg = {t: {"long_usd": 0.0, "short_usd": 0.0, "n_long": 0, "n_short": 0} for t in SM_TICKERS}
+    wallets = 0
+    for _pnl, addr, _v in rows[:30]:
+        try:
+            st = _post_json(HL_INFO, {"type": "clearinghouseState", "user": addr}, timeout=15)
+        except Exception:
+            continue
+        ps = [p.get("position", {}) for p in st.get("assetPositions", [])]
+        ps = [p for p in ps if float(p.get("szi") or 0) != 0]
+        if len(ps) > 12:
+            continue
+        book = sum(abs(float(p.get("positionValue") or 0)) for p in ps)
+        bpnl = sum(float(p.get("unrealizedPnl") or 0) for p in ps)
+        sides = {("L" if float(p.get("szi")) > 0 else "S") for p in ps}
+        if len(ps) >= 3 and len(sides) == 1 and book and bpnl / book * 100 < -4:
+            continue
+        wallets += 1
+        for p in ps:
+            coin = p.get("coin")
+            if coin not in agg:
+                continue
+            val = abs(float(p.get("positionValue") or 0))
+            if float(p.get("szi")) > 0:
+                agg[coin]["long_usd"] += val; agg[coin]["n_long"] += 1
+            else:
+                agg[coin]["short_usd"] += val; agg[coin]["n_short"] += 1
+    for t, a in agg.items():
+        tot = a["long_usd"] + a["short_usd"]
+        a["net"] = round((a["long_usd"] - a["short_usd"]) / tot, 3) if tot else 0.0
+        a["total_usd"] = round(tot)
+        a["verdict"] = ("long" if a["net"] >= 0.3 and tot >= 5e6 else
+                        "short" if a["net"] <= -0.3 and tot >= 5e6 else "neutral")
+    return {"ts": int(time.time()), "wallets": wallets, "agg": agg, "addrs": [a for _p, a, _v in rows[:30]]}
+
+
+def fetch_layers_inputs():
+    """Zbiera wejścia dla warstw: HL ctx (funding/OI) + wieloryby (cache 30 min) + seria OI."""
+    cache = _load_layers_cache()
+    now = int(time.time())
+    try:
+        ctx = fetch_hl_ctx()
+    except Exception as e:
+        FETCH_ERRORS.append(f"layers.hl_ctx: {type(e).__name__}: {e}")
+        ctx = {}
+    oi = cache.get("oi", {})
+    for t, c in ctx.items():
+        ser = [x for x in oi.get(t, []) if now - x[0] < 26 * 3600]
+        ser.append([now, round(c["oi_usd"])])
+        oi[t] = ser
+    cache["oi"] = oi
+    sm = cache.get("sm")
+    if not sm or now - int(sm.get("ts", 0)) > SM_REFRESH_MIN * 60:
+        try:
+            sm = fetch_hl_whales()
+            cache["sm"] = sm
+        except Exception as e:
+            FETCH_ERRORS.append(f"layers.hl_whales: {type(e).__name__}: {e}")
+    _save_layers_cache(cache)
+    return {"ctx": ctx, "oi": oi, "sm": sm or {}}
+
+
+def _oi_change_pct(series, hours, now=None):
+    now = now or int(time.time())
+    if not series or len(series) < 2:
+        return None
+    cur = series[-1][1]
+    target = now - hours * 3600
+    past = min(series, key=lambda x: abs(x[0] - target))
+    if abs(past[0] - target) > hours * 3600 * 0.5 or not past[1]:
+        return None
+    return round((cur - past[1]) / past[1] * 100, 2)
+
+
+def compute_layers(ticker, direction, price, change_24h, klines_1h, inputs):
+    """Zwraca dict layers: smart_money, cvd, flush, pump, agree, veto, note.
+    klines_1h: Binance spot 1h ([ts,o,h,l,c,v,closeTs,quoteVol,trades,takerBuyBase,takerBuyQuote])."""
+    if not klines_1h:
+        return None
+    ctx = (inputs.get("ctx") or {}).get(ticker, {})
+    sm_all = (inputs.get("sm") or {}).get("agg", {})
+    sm = sm_all.get(ticker)
+    oi_ser = (inputs.get("oi") or {}).get(ticker, [])
+    oi4 = _oi_change_pct(oi_ser, 4)
+    oi24 = _oi_change_pct(oi_ser, 24)
+    funding = ctx.get("funding_h")   # % / h
+
+    # ── CVD spot 4h (Binance taker): delta = 2·takerBuyQuote − quoteVol ──
+    last4 = klines_1h[-4:]
+    try:
+        qv = sum(float(k[7]) for k in last4)
+        delta = sum(2 * float(k[10]) - float(k[7]) for k in last4)
+        ratio = delta / qv if qv else 0.0
+    except (IndexError, ValueError, TypeError):
+        ratio = 0.0
+    px4 = (float(klines_1h[-1][4]) / float(klines_1h[-5][4]) - 1) * 100 if len(klines_1h) >= 5 else 0.0
+    oi_up = oi4 is not None and oi4 > 2.0
+    oi_flat = oi4 is None or abs(oi4) <= 1.0
+    if ratio > 0.08 and px4 > 0.5 and oi_up:
+        cvd = "confirmed_up"
+    elif ratio > 0.08 and px4 > 0.5:
+        cvd = "spot_led_up"
+    elif ratio > 0.08 and abs(px4) <= 0.5:
+        cvd = "flat_spot_accum"
+    elif px4 > 1.0 and ratio < 0.03 and oi_up:
+        cvd = "lev_pump"
+    elif ratio < -0.08 and px4 < -0.5 and oi_up:
+        cvd = "confirmed_down"
+    elif ratio < -0.08 and px4 < -0.5:
+        cvd = "spot_led_down"
+    elif ratio < -0.08 and px4 >= -0.5:
+        cvd = "spot_distrib"
+    elif abs(px4) > 1.0 and oi_up and abs(ratio) < 0.03:
+        cvd = "flat_lev_only"
+    else:
+        cvd = "neutral"
+
+    # ── Flush / Pump lite ──
+    highs = [float(k[2]) for k in klines_1h]; lows = [float(k[3]) for k in klines_1h]; closes = [float(k[4]) for k in klines_1h]
+    atr = _atr(klines_1h) or price * 0.01
+    rng8 = (max(highs[-8:]) - min(lows[-8:])) if len(highs) >= 8 else atr * 8
+    compressed = rng8 < 3.0 * atr
+    sfp_bear = sfp_bull = False
+    n = len(klines_1h)
+    if n >= 40:
+        for j in range(n - 12, n):
+            prior_hi = max(highs[j - 20:j]); prior_lo = min(lows[j - 20:j])
+            later = closes[j + 1:] or [closes[j]]
+            if highs[j] > prior_hi and closes[j] < prior_hi and max(later) <= highs[j]:
+                sfp_bear = True
+            if lows[j] < prior_lo and closes[j] > prior_lo and min(later) >= lows[j]:
+                sfp_bull = True
+    fl = {}; pu = {}
+    if oi24 is not None and oi24 >= 3 and (change_24h or 0) <= 0.5:
+        fl["oi_divergence"] = 20 if (change_24h or 0) < 0 else 12
+    if oi24 is not None and oi24 >= 3:
+        pu["oi_build"] = 15
+    if compressed:
+        fl["compression"] = 15; pu["compression"] = 10
+    if sfp_bear: fl["sfp_bear"] = 15
+    if sfp_bull: pu["sfp_bull"] = 15
+    # funding HL jest GODZINOWY w %: neutral ≈ 0.00125%/h (= 0.01%/8h)
+    if funding is not None:
+        if funding >= 0.006: fl["funding"] = 15       # ≈ 0.05%/8h — tłok w longach
+        elif funding >= 0.0025: fl["funding"] = 10    # ≈ 0.02%/8h
+        if funding <= -0.004: pu["funding"] = 20      # ≈ −0.03%/8h — shorty płacą, paliwo na squeeze
+        elif funding <= -0.00125: pu["funding"] = 10
+    if sm and sm.get("total_usd", 0) >= 5e6:
+        if sm["net"] <= -0.3: fl["whales_short"] = 10
+        if sm["net"] >= 0.3: pu["whales_long"] = 10
+    if cvd == "lev_pump": fl["cvd_lev_pump"] = 10
+    if cvd in ("flat_spot_accum", "spot_led_up"): pu["cvd_accum"] = 10
+    if cvd == "flat_lev_only": fl["cvd_flat_lev"] = 5
+    fs = min(100, sum(fl.values())); ps = min(100, sum(pu.values()))
+    lvl = lambda v: "high" if v >= 55 else "elevated" if v >= 30 else "low"
+    flush = {"score": fs, "level": lvl(fs), "parts": fl}
+    pump = {"score": ps, "level": lvl(ps), "parts": pu}
+
+    # ── Zgoda warstw z kierunkiem ──
+    agree = 0; conf = []; veto = None
+    if direction == "long":
+        if sm and sm["verdict"] == "long": agree += 1; conf.append("sm")
+        if cvd in ("confirmed_up", "spot_led_up", "flat_spot_accum"): agree += 1; conf.append("cvd")
+        if flush["level"] == "low": agree += 1; conf.append("flush")
+        if flush["level"] == "high": veto = "flush_high"
+        elif sm and sm["verdict"] == "short" and sm["net"] <= -0.5 and sm["total_usd"] >= 1e7: veto = "whales_short"
+    elif direction == "short":
+        if sm and sm["verdict"] == "short": agree += 1; conf.append("sm")
+        if cvd in ("confirmed_down", "spot_led_down", "spot_distrib", "lev_pump"): agree += 1; conf.append("cvd")
+        if pump["level"] == "low": agree += 1; conf.append("pump")
+        if pump["level"] == "high": veto = "pump_high"
+        elif sm and sm["verdict"] == "long" and sm["net"] >= 0.5 and sm["total_usd"] >= 1e7: veto = "whales_long"
+    note = (f"SM {sm['verdict']} ({sm['net']:+.2f}, ${sm['total_usd']/1e6:.0f}M)" if sm else "SM n/a") + \
+           f" · CVD {cvd} ({ratio:+.2f}, OI4h {oi4 if oi4 is not None else '?'}%)" + \
+           f" · Flush {fs} {flush['level']} · Pump {ps} {pump['level']}" + \
+           (f" · fund {funding:+.4f}%/h" if funding is not None else "") + \
+           (f" · VETO {veto}" if veto else "") + (f" · zgoda {agree}/3 [{','.join(conf)}]" if direction else "")
+    return {"smart_money": sm, "cvd": {"read": cvd, "ratio_4h": round(ratio, 3), "px_4h": round(px4, 2), "oi_4h": oi4, "oi_24h": oi24},
+            "funding_h": funding, "flush": flush, "pump": pump, "agree": agree, "confirms": conf, "veto": veto, "note": note}
+
+
 def detect_regime(btc_price_data, fng, btc_dominance):
     """
     Regime detection:
@@ -944,6 +1188,12 @@ def generate_fusion():
 
     regime = detect_regime(prices.get("BTC"), fng, dom)
     print(f"[regime] {regime}")
+
+    try:
+        layer_inputs = fetch_layers_inputs()
+        print(f"[layers] HL ctx {len(layer_inputs.get('ctx') or {})} coins · whales {(layer_inputs.get('sm') or {}).get('wallets', 0)} portfeli")
+    except Exception as e:
+        FETCH_ERRORS.append(f"layers.inputs: {type(e).__name__}: {e}"); layer_inputs = {}
 
     decisions = []
     for ticker in ["BTC", "ETH", "SOL", "XRP", "SUI"]:
@@ -1019,6 +1269,10 @@ def generate_fusion():
             except Exception as e:
                 FETCH_ERRORS.append(f"levels.{ticker}: {type(e).__name__}: {e}")
                 levels = None
+        try:
+            layers = compute_layers(ticker, direction, current_price, prices.get(ticker, {}).get("change_24h", 0), klines_1h_200, layer_inputs)
+        except Exception as e:
+            FETCH_ERRORS.append(f"layers.{ticker}: {type(e).__name__}: {e}"); layers = None
         if levels:
             entry_low, entry_high, sl, tp1, tp2 = levels["entry_low"], levels["entry_high"], levels["sl"], levels["tp1"], levels["tp2"]
         elif size > 0 and direction == "long":
@@ -1060,6 +1314,7 @@ def generate_fusion():
             "market_structure": {"1h": ms_1h, "15m": ms_15m},
             "levels": ({k: levels[k] for k in ("rr", "atr_pct", "ema21_1h", "supports", "resistances")} if levels else None),
             "entry_quality": (levels["entry_quality"] if levels else None),
+            "layers": layers,
             "choch_override": choch_override,
             "risk_flag": f"Auto-generated {datetime.now().strftime('%H:%M')}. TA {ta_score}/100 (daily {daily_ta_score} · 1h momo {short_term_score} · {ms_note}). Current ${current_price:.2f} ({prices[ticker]['change_24h']:+.2f}% 24h)."
                          + (" ⚡ CHoCH OVERRIDE — 1h change of character, wchodzi mimo regime/score." if choch_override else ""),
@@ -1099,6 +1354,7 @@ def generate_fusion():
         "short_blocked_by_regime": [] if regime in ("TRENDING_DOWN", "TRENDING_DOWN_VOLATILE", "CRASH") else [f"Regime {regime} — shorty bez CHoCH override dozwolone tylko w TRENDING_DOWN/CRASH. Token ze świeżym bearish CHoCH na 1h omija ten gate (patrz choch_override w decyzji)."],
         "catalyst_calendar_this_week": generate_catalyst_calendar(),
         "crypto_picks": load_crypto_picks(),
+        "pump_radar": load_pump_radar(),
         "macro_events": generate_macro_events(days_ahead=45),
         "etf": {k: etf_flows.get(k) for k in ("btc", "eth")} if etf_flows else None,
         "macro_context": macro_ctx,
@@ -1120,6 +1376,19 @@ def generate_fusion():
     os.system(f"python3 {FUSION_DIR}/paper_bot.py upload")
 
     print(f"[done] Fusion {fusion['date']} generated + uploaded")
+
+
+def load_pump_radar():
+    """pump_radar.json z pump_radar.py (krok w workflow przed auto_fusion). Zwraca None gdy brak/stary (>30 min)."""
+    try:
+        p = FUSION_DIR / "pump_radar.json"
+        d = json.loads(p.read_text())
+        ts = datetime.fromisoformat(d["generated_at"].replace("Z", "+00:00"))
+        if (datetime.now(timezone.utc) - ts).total_seconds() > 30 * 60:
+            return None
+        return d
+    except Exception:
+        return None
 
 
 def load_crypto_picks():

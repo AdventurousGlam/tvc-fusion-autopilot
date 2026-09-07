@@ -56,6 +56,22 @@ jobs:
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 auto_picks.py --telegram
 
+      # Pump Radar — skan całego rynku perpów (HL + MEXC) pod krótkoterminowe pumpy:
+      # OI surge / funding / kompresja / wieloryby HL / zapłon wolumenu / listingi.
+      # radar_cache.json (serie cen/OI, fills) żyje w actions/cache, nie w repo — za duży
+      # na commit co 5 min. Wyniki (pump_radar.json, alerty z track recordem) są commitowane.
+      - name: Pump Radar cache (restore)
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/home-clone/Claude/TVCFusion/radar_cache.json
+          key: radar-cache-${{ github.run_id }}
+          restore-keys: |
+            radar-cache-
+
+      - name: Pump Radar (skan rynku + track record + Telegram przy HIGH)
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
+        run: python3 pump_radar.py --telegram
+
       - name: Run auto_fusion (fresh algorytmiczne sygnały)
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 auto_fusion.py
@@ -75,7 +91,8 @@ jobs:
         run: |
           git config user.name "tvc-autopilot"
           git config user.email "autopilot@tvcfusion.local"
-          git add fusion_*.json paper_trades.db crypto_picks.json 2>/dev/null || git add fusion_*.json paper_trades.db
+          git add fusion_*.json paper_trades.db
+          for f in crypto_picks.json layers_cache.json pump_radar.json pump_radar_alerts.json; do [ -e "$f" ] && git add "$f"; done; true
           if git diff --cached --quiet; then
             echo "Brak zmian do commitu."
             exit 0
@@ -101,6 +118,7 @@ jobs:
               git checkout --theirs -- fusion_*.json 2>/dev/null || true
               git checkout --theirs -- paper_trades.db 2>/dev/null || true
               git checkout --theirs -- crypto_picks.json 2>/dev/null || true
+              git checkout --theirs -- layers_cache.json pump_radar.json pump_radar_alerts.json 2>/dev/null || true
               git add -A
               if git rebase --continue; then
                 echo "Konflikt rozwiązany automatycznie."
