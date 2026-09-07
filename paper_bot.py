@@ -77,6 +77,13 @@ MIN_HOLD_MINUTES = 240         # nie flipuj pozycji młodszej niż 4h (anty ping
 REOPEN_COOLDOWN_MINUTES = 120  # po zamknięciu tickera 2h przerwy przed nowym wejściem
 MAX_NEW_TRADES_PER_DAY = 3     # bezpiecznik anty-overtrading (Sep 1: 14 trade'ów/dzień)
 
+# v0.4 — STATYSTYKI. Nagłówkowe WR/PnL liczone tylko od wdrożenia bramek v0.3;
+# trade'y v0.2 (ping-pong CHoCH, 29.08–02.09) zostają w bazie jako archiwum
+# (panel "Co działa → wg wersji"), ale nie zaśmiecają nagłówka.
+# excluded=1 → trade wykluczony ze wszystkich statystyk (np. sl_rescan_bug, patrz db_init).
+STATS_SINCE = "2026-09-02T19:00:00"   # deploy bramek v0.3 (commit c890e34)
+STATS_WHERE = "status='closed' AND opened_at >= ? AND COALESCE(excluded,0)=0"
+
 # --- ccxt lazy import (bot still runs `init` without it) ---------------
 
 def get_exchange():
@@ -159,9 +166,51 @@ def db_init():
     # v0.2 migrations (idempotent)
     _migrate_add_column(conn, "positions", "direction", "TEXT DEFAULT 'long'")
     _migrate_add_column(conn, "positions", "sentiment_score", "INTEGER")
+    # v0.4 migrations
+    _migrate_add_column(conn, "positions", "sl_since", "INTEGER")   # ms epoch ostatniej zmiany SL
+    _migrate_add_column(conn, "positions", "excluded", "INTEGER DEFAULT 0")
     conn.commit()
+    _migrate_sl_rescan_bug(conn)
     conn.close()
     print(f"[init] db ready at {DB_PATH}")
+
+
+def _migrate_sl_rescan_bug(conn):
+    """Jednorazowa migracja danych (idempotentna przez meta key).
+    Bug (do 07.09.2026): cmd_check skanował świece od opened_at z AKTUALNYM SL.
+    Gdy trailing podniósł SL na breakeven (+0.1%), następny cykl znajdował starą
+    świecę sprzed podniesienia z low <= nowy SL i zamykał pozycję wstecznie na
+    +0.10% — mimo że realnie była +1.5% i więcej. Sygnatura: hit_sl, pnl_pct == +0.10%,
+    zamknięcie < 60 min od otwarcia. Takie trade'y oznaczamy sl_rescan_bug i wykluczamy
+    ze statystyk (wyniku nie rekonstruujemy — nie wiemy, gdzie realnie by wyszły)."""
+    try:
+        conn.row_factory = sqlite3.Row
+        if conn.execute("SELECT value FROM meta WHERE key='mig_sl_rescan_v1'").fetchone():
+            return
+    except sqlite3.OperationalError:
+        return  # brak tabeli meta (świeża baza) — nie ma czego migrować
+    rows = conn.execute(
+        "SELECT id, opened_at, closed_at FROM positions WHERE status='closed' AND hit_or_miss='hit_sl' "
+        "AND pnl_pct IS NOT NULL AND ABS(pnl_pct - 0.1) < 0.005"
+    ).fetchall()
+    hit = []
+    for r in rows:
+        try:
+            o = datetime.fromisoformat(r["opened_at"].replace("Z", "+00:00"))
+            c = datetime.fromisoformat(r["closed_at"].replace("Z", "+00:00"))
+            if o.tzinfo is None: o = o.replace(tzinfo=timezone.utc)
+            if c.tzinfo is None: c = c.replace(tzinfo=timezone.utc)
+            if (c - o).total_seconds() < 3600:
+                hit.append(r["id"])
+        except Exception:
+            continue
+    if hit:
+        conn.executemany("UPDATE positions SET hit_or_miss='sl_rescan_bug', excluded=1 WHERE id=?",
+                         [(i,) for i in hit])
+    conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('mig_sl_rescan_v1', ?)",
+                 (f"{datetime.now(timezone.utc).isoformat()} ids={hit}",))
+    conn.commit()
+    print(f"[migrate] sl_rescan_bug: oznaczono {len(hit)} trade'ów {hit}")
 
 
 def _direction_from_action(action: str) -> str | None:
@@ -350,7 +399,7 @@ def _notify_close(ticker, direction, entry, exit_price, pnl_pct, pnl_usd, reason
     """Telegram: zamknięcie pozycji. No-op bez sekretów; nigdy nie rzuca wyjątku."""
     try:
         icon = {"hit_tp1": "🎯 TP1", "hit_tp2": "🎯🎯 TP2", "hit_sl": "🛑 SL",
-                "hit_trailing_sl": "📈🛑 Trailing SL", "flip_choch": "🔁 Flip",
+                "hit_trailing_sl": "📈🛑 Trailing SL", "flip_choch": "🔁 Flip", "sl_rescan_bug": "🐛 SL re-scan",
                 "manual_close": "✋ Manual"}.get(reason, reason)
         res = "✅" if pnl_usd > 0 else "❌" if pnl_usd < 0 else "➖"
         _telegram_send(
@@ -425,7 +474,7 @@ def _maybe_daily_digest_inner(conn):
         return
     since = (now - timedelta(hours=24)).isoformat()
     closed = [dict(r) for r in conn.execute(
-        "SELECT * FROM positions WHERE status='closed' AND closed_at >= ?", (since,)).fetchall()]
+        "SELECT * FROM positions WHERE status='closed' AND closed_at >= ? AND COALESCE(excluded,0)=0", (since,)).fetchall()]
     opened = [dict(r) for r in conn.execute(
         "SELECT * FROM positions WHERE opened_at >= ?", (since,)).fetchall()]
     open_now = [dict(r) for r in conn.execute("SELECT * FROM positions WHERE status='open'").fetchall()]
@@ -727,6 +776,17 @@ TRAILING_TRIGGER = 3.0    # +3% profit → start trailing
 TRAILING_DISTANCE = 1.5   # SL follows 1.5% below current price
 
 
+def _now_ms() -> int:
+    return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+
+def _iso_to_ms(iso: str) -> int:
+    d = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=timezone.utc)
+    return int(d.timestamp() * 1000)
+
+
 def _update_trailing_sl(conn, row, current_price):
     """
     Update SL na row jeśli warunki trailing spełnione.
@@ -743,8 +803,8 @@ def _update_trailing_sl(conn, row, current_price):
         breakeven_sl = entry * 1.001  # entry + 0.1%
         if profit_pct >= BREAKEVEN_TRIGGER and current_sl < breakeven_sl:
             conn.execute(
-                "UPDATE positions SET sl_price = ? WHERE id = ?",
-                (breakeven_sl, row["id"])
+                "UPDATE positions SET sl_price = ?, sl_since = ? WHERE id = ?",
+                (breakeven_sl, _now_ms(), row["id"])
             )
             return (breakeven_sl, f"breakeven+ (profit {profit_pct:+.2f}%)")
 
@@ -753,8 +813,8 @@ def _update_trailing_sl(conn, row, current_price):
             trailing_sl = current_price * (1 - TRAILING_DISTANCE / 100)
             if trailing_sl > current_sl:
                 conn.execute(
-                    "UPDATE positions SET sl_price = ? WHERE id = ?",
-                    (trailing_sl, row["id"])
+                    "UPDATE positions SET sl_price = ?, sl_since = ? WHERE id = ?",
+                    (trailing_sl, _now_ms(), row["id"])
                 )
                 return (trailing_sl, f"trailing +{profit_pct:.1f}% profit, SL={trailing_sl:.4f}")
 
@@ -762,12 +822,12 @@ def _update_trailing_sl(conn, row, current_price):
         profit_pct = (entry - current_price) / entry * 100
         breakeven_sl = entry * 0.999
         if profit_pct >= BREAKEVEN_TRIGGER and (current_sl > breakeven_sl or current_sl == 0):
-            conn.execute("UPDATE positions SET sl_price = ? WHERE id = ?", (breakeven_sl, row["id"]))
+            conn.execute("UPDATE positions SET sl_price = ?, sl_since = ? WHERE id = ?", (breakeven_sl, _now_ms(), row["id"]))
             return (breakeven_sl, f"SHORT breakeven+ (profit {profit_pct:+.2f}%)")
         if profit_pct >= TRAILING_TRIGGER:
             trailing_sl = current_price * (1 + TRAILING_DISTANCE / 100)
             if trailing_sl < current_sl or current_sl == 0:
-                conn.execute("UPDATE positions SET sl_price = ? WHERE id = ?", (trailing_sl, row["id"]))
+                conn.execute("UPDATE positions SET sl_price = ?, sl_since = ? WHERE id = ?", (trailing_sl, _now_ms(), row["id"]))
                 return (trailing_sl, f"SHORT trailing +{profit_pct:.1f}% profit")
 
     return None
@@ -777,7 +837,7 @@ def _snapshot_equity(conn, open_rows):
     """Zapisz current equity state do equity_snapshots table."""
     now_iso = datetime.now(timezone.utc).isoformat()
     realized = conn.execute(
-        "SELECT COALESCE(SUM(pnl_usd), 0) FROM positions WHERE status='closed'"
+        "SELECT COALESCE(SUM(pnl_usd), 0) FROM positions WHERE status='closed' AND COALESCE(excluded,0)=0"
     ).fetchone()[0] or 0
     unrealized = 0
     exposure = 0
@@ -831,6 +891,13 @@ def cmd_check(args):
         sl = float(r["sl_price"] or 0)
         tp1 = float(r["tp1_price"] or 0)
         tp2 = float(r["tp2_price"] or 0)
+        # v0.4 — SL obowiązuje tylko dla świec otwartych PO ostatniej zmianie SL.
+        # Bez tego podniesiony (breakeven/trailing) SL "trafiał" w stare świece sprzed
+        # podniesienia i zamykał wygrane pozycje wstecznie na +0.1% (sl_rescan_bug).
+        try:
+            sl_since_ms = int(r["sl_since"]) if r["sl_since"] else _iso_to_ms(r["opened_at"])
+        except Exception:
+            sl_since_ms = 0
 
         exit_price = None
         exit_ts = None
@@ -841,7 +908,7 @@ def cmd_check(args):
             if direction == "long":
                 # LONG: SL = price falls to SL (low <= sl). TP = price rises to TP (high >= tp).
                 # Check SL first (conservative — if SL and TP hit same candle, assume SL first).
-                if sl and l <= sl:
+                if sl and l <= sl and ts >= sl_since_ms:
                     exit_price = sl; exit_ts = ts; hit_or_miss = "hit_sl"; break
                 if tp2 and h >= tp2:
                     exit_price = tp2; exit_ts = ts; hit_or_miss = "hit_tp2"; break
@@ -850,7 +917,7 @@ def cmd_check(args):
             else:  # SHORT
                 # SHORT: SL = price rises to SL (high >= sl). TP = price falls to TP (low <= tp).
                 # Check SL first (conservative).
-                if sl and h >= sl:
+                if sl and h >= sl and ts >= sl_since_ms:
                     exit_price = sl; exit_ts = ts; hit_or_miss = "hit_sl"; break
                 if tp2 and l <= tp2:
                     exit_price = tp2; exit_ts = ts; hit_or_miss = "hit_tp2"; break
@@ -926,14 +993,13 @@ def cmd_eod(args):
         "SELECT COUNT(*) AS n FROM positions WHERE status='open'"
     ).fetchone()["n"]
     total_pnl = conn.execute(
-        "SELECT COALESCE(SUM(pnl_usd),0) AS pnl FROM positions WHERE status='closed'"
+        f"SELECT COALESCE(SUM(pnl_usd),0) AS pnl FROM positions WHERE {STATS_WHERE}", (STATS_SINCE,)
     ).fetchone()["pnl"]
     total_closed = conn.execute(
-        "SELECT COUNT(*) AS n FROM positions WHERE status='closed'"
+        f"SELECT COUNT(*) AS n FROM positions WHERE {STATS_WHERE}", (STATS_SINCE,)
     ).fetchone()["n"]
     wins = conn.execute(
-        "SELECT COUNT(*) AS n FROM positions "
-        "WHERE status='closed' AND hit_or_miss IN ('hit_tp1','hit_tp2')"
+        f"SELECT COUNT(*) AS n FROM positions WHERE {STATS_WHERE} AND pnl_usd > 0", (STATS_SINCE,)
     ).fetchone()["n"]
 
     win_rate = (wins / total_closed * 100) if total_closed else 0.0
@@ -1438,7 +1504,8 @@ def _compute_equity_stats(conn):
     try:
         # Closed positions stats
         closed = conn.execute(
-            "SELECT pnl_usd, pnl_pct, hit_or_miss FROM positions WHERE status='closed' AND pnl_usd IS NOT NULL"
+            f"SELECT pnl_usd, pnl_pct, hit_or_miss FROM positions WHERE {STATS_WHERE} AND pnl_usd IS NOT NULL "
+            "ORDER BY closed_at", (STATS_SINCE,)
         ).fetchall()
         if not closed:
             return {}
@@ -1516,10 +1583,14 @@ def _compute_performance_breakdown(conn):
     regime, kierunku, typie wyjścia i wersji bramek. To ten sam audyt, który
     wykrył degradację v0.2 — teraz liczony automatycznie co cykl, żeby spadek
     jakości było widać po 2 dniach, nie po 40 stratnych trade'ach."""
-    rows = [dict(r) for r in conn.execute(
+    all_rows = [dict(r) for r in conn.execute(
         "SELECT * FROM positions WHERE status='closed' AND closed_at IS NOT NULL ORDER BY closed_at"
     ).fetchall()]
-    if not rows:
+    # v0.4 — bucketowanie tylko po trade'ach v0.3+ i niewykluczonych; pełna historia
+    # (v0.2 ping-pong CHoCH, sl_rescan_bug) zostaje wyłącznie w by_version/excluded.
+    rows = [r for r in all_rows if r["opened_at"] >= STATS_SINCE and not (r.get("excluded") or 0)]
+    excluded_rows = [r for r in all_rows if (r.get("excluded") or 0)]
+    if not all_rows:
         return {}
 
     def agg(rs):
@@ -1545,16 +1616,20 @@ def _compute_performance_breakdown(conn):
         return ">=70" if s >= 70 else "60-69" if s >= 60 else "50-59" if s >= 50 else "<50"
 
     exit_labels = {"hit_tp2": "TP2", "hit_tp1": "TP1", "hit_trailing_sl": "Trailing SL",
-                   "hit_sl": "SL", "flip_choch": "Flip CHoCH", "manual_close": "Manual"}
+                   "hit_sl": "SL", "flip_choch": "Flip CHoCH", "manual_close": "Manual",
+                   "sl_rescan_bug": "SL re-scan bug (wykluczone)"}
     now = datetime.now(timezone.utc)
     cut7 = (now - timedelta(days=7)).isoformat()
     cut14 = (now - timedelta(days=14)).isoformat()
     last7 = [r for r in rows if r["closed_at"] >= cut7]
     prev7 = [r for r in rows if cut14 <= r["closed_at"] < cut7]
-    v03_since = "2026-09-02T19:00:00"  # deploy bramek v0.3 (commit c890e34)
+    v03_since = STATS_SINCE
+    empty = {"n": 0, "wins": 0, "wr": 0, "pnl": 0, "avg_pnl_pct": 0, "pf": None}
     return {
         "computed_at": now.isoformat(),
-        "all": agg(rows),
+        "stats_since": STATS_SINCE,
+        "excluded": {"n": len(excluded_rows), "reason": "sl_rescan_bug"},
+        "all": agg(rows) if rows else empty,
         "by_score": bucketize(score_bucket, [">=70", "60-69", "50-59", "<50"]),
         "by_regime": bucketize(lambda r: r.get("regime") or "?"),
         "by_direction": bucketize(lambda r: (r.get("direction") or "long").upper(), ["LONG", "SHORT"]),
@@ -1562,8 +1637,9 @@ def _compute_performance_breakdown(conn):
         "by_ticker": bucketize(lambda r: r.get("ticker") or "?"),
         "trend": {"last7": agg(last7) if last7 else None, "prev7": agg(prev7) if prev7 else None},
         "by_version": [
-            {"label": "v0.2 (przed bramkami)", **agg([r for r in rows if r["opened_at"] < v03_since])},
-            {"label": "v0.3 (bramki)", **agg([r for r in rows if r["opened_at"] >= v03_since])},
+            {"label": "v0.2 (przed bramkami, archiwum)", **agg([r for r in all_rows if r["opened_at"] < v03_since and not (r.get("excluded") or 0)])},
+            {"label": "v0.3+ (bramki)", **(agg(rows) if rows else empty)},
+            {"label": "wykluczone (sl_rescan_bug)", **(agg(excluded_rows) if excluded_rows else empty)},
         ],
     }
 
@@ -1613,14 +1689,16 @@ def cmd_upload(args):
         "SELECT * FROM positions WHERE status='open' ORDER BY opened_at DESC"
     ).fetchall()]
     recent_closed = [dict(r) for r in conn.execute(
-        "SELECT * FROM positions WHERE status='closed' ORDER BY closed_at DESC LIMIT 20"
+        "SELECT * FROM positions WHERE status='closed' AND COALESCE(excluded,0)=0 ORDER BY closed_at DESC LIMIT 20"
     ).fetchall()]
-    total_pnl = sum((r.get("pnl_usd") or 0) for r in recent_closed)
-    # v0.3 — wygrana = dodatni PnL (spójnie z panelem P&L History). Wcześniej liczono
-    # tylko hit_tp*, więc terminal pokazywał "WIN RATE 0%" mimo zyskownych trade'ów
-    # zamkniętych trailing stopem / ręcznie.
-    wins = sum(1 for r in recent_closed if (r.get("pnl_usd") or 0) > 0)
-    win_rate = (wins / len(recent_closed) * 100) if recent_closed else 0.0
+    # v0.4 — nagłówek (PnL / WR / liczba) liczony od bramek v0.3 i bez wykluczonych,
+    # a nie z "ostatnich 20" (które były zdominowane przez ping-pong CHoCH z 01–02.09).
+    stat_rows = [dict(r) for r in conn.execute(
+        f"SELECT pnl_usd FROM positions WHERE {STATS_WHERE}", (STATS_SINCE,)).fetchall()]
+    total_pnl = sum((r.get("pnl_usd") or 0) for r in stat_rows)
+    # v0.3 — wygrana = dodatni PnL (spójnie z panelem P&L History).
+    wins = sum(1 for r in stat_rows if (r.get("pnl_usd") or 0) > 0)
+    win_rate = (wins / len(stat_rows) * 100) if stat_rows else 0.0
     equity_history = _get_equity_history(conn, days=30)
     equity_stats = _compute_equity_stats(conn)
     performance = _compute_performance_breakdown(conn)
@@ -1666,7 +1744,8 @@ def cmd_upload(args):
         "recent_closed": recent_closed,
         "total_pnl_usd": round(total_pnl, 2),
         "cumulative_win_rate": round(win_rate, 1),
-        "cumulative_closed": len(recent_closed),
+        "cumulative_closed": len(stat_rows),
+        "stats_since": STATS_SINCE,
         "paper_capital": PAPER_CAPITAL,
         "news": news_by_token,
         "whales_live": whales_by_token,
