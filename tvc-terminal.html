@@ -4138,14 +4138,18 @@ function renderCvdPanel() {
 //   macro_context: NQ/SPX/DXY/US10Y/GOLD zmiana 1d/5d + korelacja 30 sesji z BTC + reżim makro
 // ═══════════════════════════════════════════════════════════════════════════
 // Fallback przeglądarkowy dla ETF: Farside blokuje IP GitHub (403), przeglądarka pobiera przez CORS proxy.
-// Multi-proxy: corsproxy.io → allorigins → jina (fallback). Parser obsługuje HTML i markdown.
+// Proxy chains: HTML_PROXIES for Farside (jina reader OK), JSON_PROXIES for APIs (jina mangles JSON).
 const etfBrowser = { btc: null, eth: null, ts: 0 };
-const CORS_PROXIES = [
-  url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-  url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
-  url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+const HTML_PROXIES = [
   url => `https://r.jina.ai/${url}`,
+  url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  url => `https://thingproxy.freeboard.io/fetch/${url}`,
 ];
+const JSON_PROXIES = [
+  url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  url => `https://thingproxy.freeboard.io/fetch/${url}`,
+];
+const CORS_PROXIES = HTML_PROXIES; // backward compat
 // Markdown/text tokenizer (legacy jina format + plain text)
 function parseFarsideMarkdown(txt, days = 60) {
   const toks = txt.replace(/\|/g, ' ').split(/\s+/).filter(Boolean);
@@ -4207,7 +4211,7 @@ async function refreshEtfBrowser(force = false) {
     for (const mkProxy of CORS_PROXIES) {
       if (ok) break;
       try {
-        const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 15000);
+        const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 25000);
         const r = await fetch(mkProxy(u), { signal: ctl.signal }); clearTimeout(tm);
         if (!r.ok) throw new Error('HTTP ' + r.status);
         const s = parseFarsideData(await r.text());
@@ -4236,9 +4240,9 @@ const macroBrowser = { ctx: null, ts: 0 };
 const MACRO_SYMS = { NQ: ['^IXIC', 'Nasdaq Composite'], SPX: ['^GSPC', 'S&P 500'], DXY: ['DX-Y.NYB', 'Dollar Index'], US10Y: ['^TNX', 'US 10Y yield'], GOLD: ['GC=F', 'Gold futures'] };
 async function yahooChart(sym) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=3mo&interval=1d`;
-  for (const mkProxy of CORS_PROXIES) {
+  for (const mkProxy of JSON_PROXIES) {
     try {
-      const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 12000);
+      const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 20000);
       const r = await fetch(mkProxy(url), { signal: ctl.signal }); clearTimeout(tm);
       if (!r.ok) continue;
       const txt = await r.text();
