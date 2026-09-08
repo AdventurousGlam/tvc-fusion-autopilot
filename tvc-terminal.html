@@ -4137,11 +4137,15 @@ function renderCvdPanel() {
 //   etf: Farside BTC/ETH dzienne przepływy (mln USD), 60 sesji
 //   macro_context: NQ/SPX/DXY/US10Y/GOLD zmiana 1d/5d + korelacja 30 sesji z BTC + reżim makro
 // ═══════════════════════════════════════════════════════════════════════════
-// Fallback przeglądarkowy dla ETF: Farside blokuje IP GitHub (403), ale z Twojej przeglądarki przez
-// r.jina.ai (reader → markdown) działa. Ten sam parser co w auto_fusion, tylko w JS. Cache 30 min.
+// Fallback przeglądarkowy dla ETF: Farside blokuje IP GitHub (403), przeglądarka pobiera przez CORS proxy.
+// Multi-proxy: corsproxy.io → allorigins → jina (fallback). Parser obsługuje HTML i markdown.
 const etfBrowser = { btc: null, eth: null, ts: 0 };
-// Parser niezależny od formatu (jina raz oddaje tabelę z "|", raz tabulatory/nowe linie):
-// tokenizuje tekst, wiersz = data "DD Mon YYYY" + liczby aż do następnej daty; Total = ostatnia liczba wiersza.
+const CORS_PROXIES = [
+  url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+  url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  url => `https://r.jina.ai/${url}`,
+];
+// Markdown/text tokenizer (legacy jina format + plain text)
 function parseFarsideMarkdown(txt, days = 60) {
   const toks = txt.replace(/\|/g, ' ').split(/\s+/).filter(Boolean);
   const isNum = s => /^\(?-?[\d,]*\.?\d+\)?$/.test(s);
@@ -4151,10 +4155,40 @@ function parseFarsideMarkdown(txt, days = 60) {
     if (/^\d{2}$/.test(toks[i]) && /^[A-Z][a-z]{2}$/.test(toks[i + 1] || '') && /^\d{4}$/.test(toks[i + 2] || '')) {
       flush(); const d = new Date(`${toks[i]} ${toks[i + 1]} ${toks[i + 2]} UTC`); cur = isNaN(d) ? null : { date: d.toISOString().slice(0, 10), vals: [] }; i += 2; continue;
     }
-    if (cur) { if (isNum(toks[i])) cur.vals.push(toks[i]); else if (toks[i] !== '-') flush(); }   // "-" = brak wartości, ignoruj; inne słowo (Total/Average) kończy wiersz
+    if (cur) { if (isNum(toks[i])) cur.vals.push(toks[i]); else if (toks[i] !== '-') flush(); }
   }
   flush();
   return rows.slice(-days);
+}
+// HTML table parser (corsproxy/allorigins return raw HTML)
+function parseFarsideHTML(txt, days = 60) {
+  try {
+    const doc = new DOMParser().parseFromString(txt, 'text/html');
+    const trs = doc.querySelectorAll('tr');
+    const isNum = s => /^\(?-?[\d,]*\.?\d+\)?$/.test(s.trim());
+    const parsed = [];
+    for (const tr of trs) {
+      const cells = [...tr.querySelectorAll('td,th')].map(td => td.textContent.trim());
+      const rowTxt = cells.join(' ');
+      const dm = rowTxt.match(/(\d{1,2})\s+([A-Z][a-z]{2})\s+(\d{4})/);
+      if (!dm) continue;
+      const d = new Date(`${dm[1]} ${dm[2]} ${dm[3]} UTC`);
+      if (isNaN(d)) continue;
+      const nums = cells.filter(c => isNum(c));
+      if (!nums.length) continue;
+      const raw = nums[nums.length - 1].replace(/,/g, '');
+      const neg = raw.startsWith('(');
+      const v = parseFloat(raw.replace(/[()]/g, ''));
+      if (!isNaN(v)) parsed.push({ date: d.toISOString().slice(0, 10), total: neg ? -v : v });
+    }
+    if (parsed.length > 5) return parsed.slice(-days);
+  } catch (e) {}
+  return [];
+}
+// Combined parser: try HTML first, then markdown tokenizer
+function parseFarsideData(txt, days = 60) {
+  if (txt.includes('<t')) { const h = parseFarsideHTML(txt, days); if (h.length) return h; }
+  return parseFarsideMarkdown(txt, days);
 }
 function etfStats(series) {
   const vals = series.map(r => r.total); const last = vals[vals.length - 1];
@@ -4167,54 +4201,66 @@ async function refreshEtfBrowser(force = false) {
   if (!force && Date.now() - etfBrowser.ts < 30 * 60_000) return;
   let missing = false;
   for (const [k, u] of [['btc', 'https://farside.co.uk/bitcoin-etf-flow-all-data/'], ['eth', 'https://farside.co.uk/ethereum-etf-flow-all-data/']]) {
-    if (etfBrowser[k] && Date.now() - etfBrowser.ts < 30 * 60_000) continue;   // tylko brakujące
+    if (etfBrowser[k] && Date.now() - etfBrowser.ts < 30 * 60_000) continue;
     let ok = false;
-    for (let attempt = 1; attempt <= 3 && !ok; attempt++) {
+    for (const mkProxy of CORS_PROXIES) {
+      if (ok) break;
       try {
-        const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 20000);
-        const r = await fetch('https://r.jina.ai/' + u, { signal: ctl.signal }); clearTimeout(tm);
+        const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 15000);
+        const r = await fetch(mkProxy(u), { signal: ctl.signal }); clearTimeout(tm);
         if (!r.ok) throw new Error('HTTP ' + r.status);
-        const s = parseFarsideMarkdown(await r.text());
+        const s = parseFarsideData(await r.text());
         if (!s.length) throw new Error('pusta tabela');
         etfBrowser[k] = etfStats(s); ok = true;
-      } catch (e) { console.warn(`[etf] browser ${k} próba ${attempt}: ${e.message}`); if (attempt < 3) await new Promise(r => setTimeout(r, 4000 * attempt)); }
+        console.log(`[etf] ${k} OK via ${mkProxy('').split('/')[2]}, ${s.length} rows`);
+      } catch (e) { console.warn(`[etf] ${k} ${mkProxy('').split('/')[2]}: ${e.message}`); }
     }
     if (!ok) missing = true;
   }
   etfBrowser.ts = Date.now();
-  if (missing) setTimeout(() => refreshEtfBrowser(true), 120_000);   // brakujący klucz → ponów za 2 min
+  if (missing) setTimeout(() => refreshEtfBrowser(true), 120_000);
   const slot = document.getElementById('macro-etf-slot'); if (slot && lastFusion) slot.innerHTML = renderMacroEtf(lastFusion);
-  // Most do serwera: runner GitHub nie dosięga Farside (403 z każdego proxy), Twoja przeglądarka tak.
-  // Jeśli masz token Gist (🔑 w panelu Orderflow) → zapisujemy etf_flows.json, auto_fusion czyta go z Gist
-  // i On-Chain sub-score BTC/ETH liczy się z prawdziwych przepływów. Bez tokenu: tylko panel.
+  // Gist bridge: jeśli masz token → zapisz etf_flows.json dla auto_fusion
   if ((etfBrowser.btc || etfBrowser.eth) && ofGistToken()) {
     try {
-      const payload = { ts: Date.now(), source: 'browser/jina', btc: etfBrowser.btc, eth: etfBrowser.eth };
+      const payload = { ts: Date.now(), source: 'browser/proxy', btc: etfBrowser.btc, eth: etfBrowser.eth };
       await fetch(`https://api.github.com/gists/${OF_GIST_ID}`, { method: 'PATCH', headers: { 'Authorization': `Bearer ${ofGistToken()}`, 'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json' },
         body: JSON.stringify({ files: { 'etf_flows.json': { content: JSON.stringify(payload) } } }) });
     } catch (e) { console.warn('[etf] gist push', e.message); }
   }
 }
 
-// ─── MAKRO z przeglądarki: Yahoo przez jina (Yahoo 429 i stooq pusty z runnerów GitHub) ───
+// ─── MAKRO z przeglądarki: Yahoo przez CORS proxy (multi-fallback) ───
 const macroBrowser = { ctx: null, ts: 0 };
 const MACRO_SYMS = { NQ: ['^IXIC', 'Nasdaq Composite'], SPX: ['^GSPC', 'S&P 500'], DXY: ['DX-Y.NYB', 'Dollar Index'], US10Y: ['^TNX', 'US 10Y yield'], GOLD: ['GC=F', 'Gold futures'] };
-async function yahooViaJina(sym) {
-  const r = await fetch(`https://r.jina.ai/https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=3mo&interval=1d`, { headers: { 'Accept': 'application/json' } });
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  const j = await r.json(); const inner = JSON.parse(j.data.content);
-  const res = inner.chart.result[0]; const ts = res.timestamp, cl = res.indicators.quote[0].close;
-  return ts.map((t, i) => [new Date(t * 1000).toISOString().slice(0, 10), cl[i]]).filter(x => x[1] != null);
+async function yahooChart(sym) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=3mo&interval=1d`;
+  for (const mkProxy of CORS_PROXIES) {
+    try {
+      const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 12000);
+      const r = await fetch(mkProxy(url), { signal: ctl.signal }); clearTimeout(tm);
+      if (!r.ok) continue;
+      const txt = await r.text();
+      let data;
+      try { data = JSON.parse(txt); } catch { continue; }
+      // jina wraps in {data:{content:"..."}}
+      if (data.data?.content) try { data = JSON.parse(data.data.content); } catch { continue; }
+      const res = data.chart?.result?.[0]; if (!res) continue;
+      const ts = res.timestamp, cl = res.indicators.quote[0].close;
+      return ts.map((t, i) => [new Date(t * 1000).toISOString().slice(0, 10), cl[i]]).filter(x => x[1] != null);
+    } catch (e) { continue; }
+  }
+  throw new Error('all proxies failed for ' + sym);
 }
 function pearson(xs, ys) { const n = xs.length; if (n < 10) return null; const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n; let sxy = 0, sxx = 0, syy = 0; for (let i = 0; i < n; i++) { sxy += (xs[i] - mx) * (ys[i] - my); sxx += (xs[i] - mx) ** 2; syy += (ys[i] - my) ** 2; } return sxx && syy ? sxy / Math.sqrt(sxx * syy) : null; }
 async function refreshMacroBrowser() {
   if (Date.now() - macroBrowser.ts < 60 * 60_000) return;
   try {
-    const btc = Object.fromEntries(await yahooViaJina('BTC-USD'));
+    const btc = Object.fromEntries(await yahooChart('BTC-USD'));
     const assets = {};
     for (const [k, [sym, name]] of Object.entries(MACRO_SYMS)) {
       try {
-        const s = await yahooViaJina(sym); if (s.length < 6) continue;
+        const s = await yahooChart(sym); if (s.length < 6) continue;
         let last = s[s.length - 1][1], prev = s[s.length - 2][1], prev5 = s[s.length - 6][1];
         if (k === 'US10Y' && last > 20) { last /= 10; prev /= 10; prev5 /= 10; }
         const sd = Object.fromEntries(s), common = s.map(x => x[0]).filter(d => d in btc);
