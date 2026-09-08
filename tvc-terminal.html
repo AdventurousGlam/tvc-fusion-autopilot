@@ -4141,8 +4141,9 @@ function renderCvdPanel() {
 // Multi-proxy: corsproxy.io → allorigins → jina (fallback). Parser obsługuje HTML i markdown.
 const etfBrowser = { btc: null, eth: null, ts: 0 };
 const CORS_PROXIES = [
-  url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
   url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  url => `https://corsproxy.io/?url=${encodeURIComponent(url)}`,
+  url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
   url => `https://r.jina.ai/${url}`,
 ];
 // Markdown/text tokenizer (legacy jina format + plain text)
@@ -6377,8 +6378,16 @@ const WHALE_ETH_RPCS = [
   'https://eth.llamarpc.com',
   'https://rpc.ankr.com/eth',
 ];
-const SOL_RPC = 'https://api.mainnet-beta.solana.com';
-const SUI_RPC = 'https://fullnode.mainnet.sui.io:443';
+const SOL_RPCS = [
+  'https://solana-rpc.publicnode.com',
+  'https://api.mainnet-beta.solana.com',
+  'https://rpc.ankr.com/solana',
+];
+const SUI_RPCS = [
+  'https://sui-rpc.publicnode.com',
+  'https://sui.llamarpc.com',
+  'https://fullnode.mainnet.sui.io:443',
+];
 
 async function rpcPost(url, payload, timeoutMs=8000) {
   // Use Promise.race instead of AbortController to avoid DataCloneError
@@ -6757,22 +6766,38 @@ async function fetchXRPWhales(xrpUsd) {
   } catch (e) { console.warn('XRP whales fetch failed', e); return []; }
 }
 
+async function solRpc(payload) {
+  for (const rpc of SOL_RPCS) {
+    try {
+      const r = await rpcPost(rpc, payload);
+      if (r && !r.error && r.result !== undefined) return r.result;
+    } catch (e) {}
+  }
+  return null;
+}
+async function suiRpc(payload) {
+  for (const rpc of SUI_RPCS) {
+    try {
+      const r = await rpcPost(rpc, payload);
+      if (r && !r.error && r.result !== undefined) return r.result;
+    } catch (e) {}
+  }
+  return null;
+}
+
 async function fetchSOLWhales(solUsd) {
   try {
-    // Solana getRecentPrioritizationFees / getBlock — get slot then blocks
-    const slotRes = await rpcPost(SOL_RPC, { jsonrpc: '2.0', id: 1, method: 'getSlot' });
-    const slot = slotRes?.result;
+    const slot = await solRpc({ jsonrpc: '2.0', id: 1, method: 'getSlot' });
     if (!slot) return [];
     const results = [];
     const seen = new Set();
     // Get last 2 finalized blocks
     for (let off = 20; off < 22; off++) {
       try {
-        const blockRes = await rpcPost(SOL_RPC, {
+        const block = await solRpc({
           jsonrpc: '2.0', id: 1, method: 'getBlock',
           params: [slot - off, { encoding: 'json', maxSupportedTransactionVersion: 0, transactionDetails: 'accounts', rewards: false }]
         });
-        const block = blockRes?.result;
         if (!block) continue;
         const blockTime = (block.blockTime || 0) * 1000;
         for (const tx of (block.transactions || [])) {
@@ -6802,7 +6827,7 @@ async function fetchSOLWhales(solUsd) {
 async function fetchSUIWhales(suiUsd) {
   try {
     // Query recent transactions with balance changes
-    const res = await rpcPost(SUI_RPC, {
+    const res = await suiRpc({
       jsonrpc: '2.0', id: 1,
       method: 'suix_queryTransactionBlocks',
       params: [
@@ -6810,7 +6835,7 @@ async function fetchSUIWhales(suiUsd) {
         null, 40, true  // 40 most recent, descending
       ]
     });
-    const data = res?.result?.data || [];
+    const data = res?.data || [];
     const results = [];
     const seen = new Set();
     for (const tx of data) {
