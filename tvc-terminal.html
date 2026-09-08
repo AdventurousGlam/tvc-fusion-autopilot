@@ -4145,12 +4145,9 @@ const HTML_PROXIES = [
   url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   url => `https://corsproxy.org/?url=${encodeURIComponent(url)}`,
 ];
-const JSON_PROXIES = [
-  url => url,  // try direct first (Yahoo sometimes allows CORS from custom domains)
-  url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,   // JSON wrapper
-  url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-  url => `https://corsproxy.org/?url=${encodeURIComponent(url)}`,
-];
+// JSON_PROXIES disabled — all free CORS proxies dead (allorigins 522, corsproxy 301 no CORS).
+// Macro data comes from autopilot (fusion JSON via Gist) which runs every 5 min.
+const JSON_PROXIES = [];
 const CORS_PROXIES = HTML_PROXIES; // backward compat
 // Markdown/text tokenizer (legacy jina format + plain text)
 function parseFarsideMarkdown(txt, days = 60) {
@@ -4263,6 +4260,14 @@ async function yahooChart(sym) {
 }
 function pearson(xs, ys) { const n = xs.length; if (n < 10) return null; const mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n; let sxy = 0, sxx = 0, syy = 0; for (let i = 0; i < n; i++) { sxy += (xs[i] - mx) * (ys[i] - my); sxx += (xs[i] - mx) ** 2; syy += (ys[i] - my) ** 2; } return sxx && syy ? sxy / Math.sqrt(sxx * syy) : null; }
 async function refreshMacroBrowser() {
+  // All free CORS proxies are dead — macro data comes from autopilot (fusion JSON via Gist).
+  // Skip browser-side Yahoo fetch entirely to avoid console spam.
+  if (JSON_PROXIES.length === 0) {
+    console.log('[macro] browser fetch disabled — using autopilot data from Gist');
+    macroBrowser.ts = Date.now();
+    const slot = document.getElementById('macro-etf-slot'); if (slot && lastFusion) slot.innerHTML = renderMacroEtf(lastFusion);
+    return;
+  }
   if (Date.now() - macroBrowser.ts < 60 * 60_000) return;
   try {
     const btc = Object.fromEntries(await yahooChart('BTC-USD'));
@@ -4276,7 +4281,7 @@ async function refreshMacroBrowser() {
         const pairs = []; for (let i = 1; i < common.length; i++) pairs.push([sd[common[i]] / sd[common[i - 1]] - 1, btc[common[i]] / btc[common[i - 1]] - 1]);
         const p30 = pairs.slice(-30); const corr = pearson(p30.map(p => p[0]), p30.map(p => p[1]));
         assets[k] = { name, symbol: sym, last: +last.toFixed(3), chg_1d: +((last / prev - 1) * 100).toFixed(2), chg_5d: +((last / prev5 - 1) * 100).toFixed(2), corr_30d: corr == null ? null : +corr.toFixed(2), date: s[s.length - 1][0] };
-      } catch (e) { console.warn('[macro] browser', k, e.message); }
+      } catch (e) { /* silent — Gist data is primary */ }
     }
     const nq = assets.NQ?.corr_30d, dxy = assets.DXY?.corr_30d;
     let regime = 'mixed', note = t('me_note_mixed');
@@ -4284,7 +4289,7 @@ async function refreshMacroBrowser() {
     else if (dxy != null && dxy < -0.4) { regime = 'dollar_driven'; note = `${t('me_note_dollar')} (corr DXY ${dxy})`; }
     else if (nq != null && Math.abs(nq) < 0.25 && (dxy == null || Math.abs(dxy) < 0.25)) { regime = 'decoupled'; note = `${t('me_note_decoupled')} (corr NQ ${nq >= 0 ? '+' : ''}${nq})`; }
     macroBrowser.ctx = { assets, regime, regime_note: note, as_of: Object.values(assets)[0]?.date, source: 'browser' };
-  } catch (e) { console.warn('[macro] browser', e.message); }
+  } catch (e) { /* silent */ }
   macroBrowser.ts = Date.now();
   const slot = document.getElementById('macro-etf-slot'); if (slot && lastFusion) slot.innerHTML = renderMacroEtf(lastFusion);
 }
@@ -4316,7 +4321,7 @@ function renderMacroEtf(data) {
     </div>`; })() : '';
   return `
     <section class="panel">
-      <div class="panel-head"><h3>🏛 ${t('me_title')}</h3><span class="meta">Farside${(etf.btc?.source === 'browser' || etf.eth?.source === 'browser') ? ' (' + t('me_browser') + ')' : ''} · stooq/Yahoo · ${t('me_via_fusion')}</span></div>
+      <div class="panel-head"><h3>🏛 ${t('me_title')}</h3><span class="meta">Farside${(etf.btc?.source === 'browser' || etf.eth?.source === 'browser') ? ' (' + t('me_browser') + ')' : ''} · ${mc?.source === 'browser' ? 'Yahoo' : 'autopilot'} · ${t('me_via_fusion')}</span></div>
       <div style="font-size:10px;color:var(--text-dim);margin-bottom:8px;line-height:1.5">${t('me_desc')}</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1.2fr;gap:10px" class="of-grid3">${etfCard('btc', 'BTC')}${etfCard('eth', 'ETH')}${macroCard}</div>
     </section>`;
@@ -6223,7 +6228,7 @@ function updateOrderbookPanel(ticker) {
     </div>`;
 }
 
-// ============ LIVE NEWS (CryptoCompare) ============
+// ============ LIVE NEWS (per-ticker: RSS fallback → CoinGecko) ============
 const tokenLiveRefresh = {};
 const newsCache = {}; // { ticker: { ts, data } }
 async function fetchLiveNews(ticker) {
@@ -6245,22 +6250,18 @@ async function fetchLiveNews(ticker) {
 
   // BROWSER FALLBACK — only if state.news is empty (older Gist without news)
   const sources = [
-    // 1. CryptoCompare — general latest news, filter by ticker mention client-side (fixes "no category" issue for SOL/SUI)
+    // 1. Browser-side RSS news (fetched via jina in refreshBrowserNews) — filter by ticker
     async () => {
-      const url = `https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest`;
-      const resp = await fetch(url, { mode: 'cors' });
-      if (!resp.ok) throw new Error(`CryptoCompare HTTP ${resp.status}`);
-      const data = await resp.json();
-      const all = data.Data || [];
-      // Filter: title or body mentions ticker (case-insensitive)
-      const tickerRegex = new RegExp(`\\b${ticker}\\b|\\b${ticker.toLowerCase()}\\b`, 'i');
-      let filtered = all.filter(n => tickerRegex.test((n.title || '') + ' ' + (n.body || '')));
-      // If ticker-specific < 3, fall back to top general news
-      if (filtered.length < 3) filtered = all.slice(0, 8);
-      return filtered.slice(0, 8).map(n => ({
-        title: n.title, url: n.url, source: n.source_info?.name || n.source,
-        published_on: n.published_on, imageUrl: n.imageurl
-      }));
+      const perTicker = window._freshNewsPerTicker;
+      if (!perTicker) throw new Error('RSS not loaded yet');
+      const items = perTicker[ticker];
+      if (items && items.length > 0) return items.slice(0, 8);
+      // Fallback: search all fresh news for ticker mention
+      const all = window._freshNews || [];
+      const tickerRegex = new RegExp(`\\b${ticker}\\b`, 'i');
+      const filtered = all.filter(n => tickerRegex.test((n.title || '') + ' ' + (n.categories || '')));
+      if (filtered.length > 0) return filtered.slice(0, 8);
+      throw new Error('no RSS items for ' + ticker);
     },
     // 2. CoinGecko status updates (dev/project updates, per-token) — free, CORS OK
     async () => {
@@ -6977,29 +6978,96 @@ setTimeout(() => {
 }, 2000);
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BROWSER-SIDE NEWS FETCH — CryptoCompare News API (free, CORS-native, no key)
+// BROWSER-SIDE NEWS FETCH — RSS via jina reader proxy (the only reliable proxy)
+// Fetches CoinDesk + Cointelegraph + Decrypt RSS → parses XML in browser
 // ═══════════════════════════════════════════════════════════════════════════
+const NEWS_RSS_FEEDS = [
+  { url: 'https://www.coindesk.com/arc/outboundfeeds/rss/', source: 'CoinDesk', color: '#F5B841' },
+  { url: 'https://cointelegraph.com/rss', source: 'Cointelegraph', color: '#60A5FA' },
+  { url: 'https://decrypt.co/feed', source: 'Decrypt', color: '#A78BFA' },
+];
+
+async function fetchRssViaJina(feedUrl, source, color) {
+  const ctl = new AbortController();
+  const tm = setTimeout(() => ctl.abort(), 20000);
+  try {
+    const r = await fetch(`https://r.jina.ai/${feedUrl}`, {
+      signal: ctl.signal,
+      headers: { 'Accept': 'text/xml,application/rss+xml,application/xml,text/plain,*/*' }
+    });
+    clearTimeout(tm);
+    if (!r.ok) return [];
+    const txt = await r.text();
+    // jina returns markdown for HTML pages, but RSS/XML should come through as raw text
+    // Try to extract XML from the response
+    let xmlStr = txt;
+    // If jina wrapped it, try to find the XML content
+    const xmlStart = txt.indexOf('<?xml');
+    const rssStart = txt.indexOf('<rss');
+    const feedStart = txt.indexOf('<feed');
+    const start = Math.min(...[xmlStart, rssStart, feedStart].filter(i => i >= 0));
+    if (start > 0 && start < txt.length) xmlStr = txt.slice(start);
+    // Parse XML
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(xmlStr, 'text/xml');
+    const err = doc.querySelector('parsererror');
+    if (err) {
+      // Fallback: try to extract titles/links from markdown-converted text
+      return parseNewsFromMarkdown(txt, source, color);
+    }
+    const items = [];
+    // RSS 2.0 format
+    for (const item of doc.querySelectorAll('item')) {
+      const title = item.querySelector('title')?.textContent?.trim();
+      const link = item.querySelector('link')?.textContent?.trim();
+      const pubDate = item.querySelector('pubDate')?.textContent?.trim();
+      const cats = [...item.querySelectorAll('category')].map(c => c.textContent).join(' ');
+      if (!title) continue;
+      const ts = pubDate ? new Date(pubDate).getTime() : 0;
+      items.push({ title, url: link || '#', source, color, published_on: Math.floor(ts / 1000), ts, categories: cats });
+    }
+    // Atom format fallback
+    if (items.length === 0) {
+      for (const entry of doc.querySelectorAll('entry')) {
+        const title = entry.querySelector('title')?.textContent?.trim();
+        const linkEl = entry.querySelector('link[href]');
+        const link = linkEl?.getAttribute('href');
+        const pub = entry.querySelector('published, updated')?.textContent?.trim();
+        if (!title) continue;
+        const ts = pub ? new Date(pub).getTime() : 0;
+        items.push({ title, url: link || '#', source, color, published_on: Math.floor(ts / 1000), ts, categories: '' });
+      }
+    }
+    return items;
+  } catch (e) { clearTimeout(tm); return []; }
+}
+
+function parseNewsFromMarkdown(txt, source, color) {
+  // Fallback: if jina converted RSS to markdown, extract [title](url) patterns
+  const items = [];
+  const linkRe = /\[([^\]]{10,})\]\((https?:\/\/[^\s)]+)\)/g;
+  let m;
+  while ((m = linkRe.exec(txt)) !== null) {
+    const title = m[1].trim();
+    // Skip navigation/boilerplate links
+    if (title.length < 15 || /subscribe|sign.up|newsletter|cookie|privacy/i.test(title)) continue;
+    items.push({ title, url: m[2], source, color, published_on: Math.floor(Date.now() / 1000), ts: Date.now(), categories: '' });
+  }
+  return items.slice(0, 15);
+}
+
 async function refreshBrowserNews() {
   try {
-    const r = await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest');
-    const j = await r.json();
-    if (!j.Data || !j.Data.length) return;
-    const srcColors = { CoinDesk: '#F5B841', Cointelegraph: '#60A5FA', Decrypt: '#A78BFA', 'The Block': '#34D399', CoinTelegraph: '#60A5FA', Bloomberg: '#FF6B6B', Reuters: '#FF9F43' };
-    const allItems = j.Data.map(item => ({
-      title: item.title,
-      url: item.url,
-      source: item.source_info?.name || item.source || 'Unknown',
-      color: srcColors[item.source_info?.name] || srcColors[item.source] || '#7d8bab',
-      published_on: item.published_on,
-      ts: (item.published_on || 0) * 1000,
-      categories: item.categories || '',
-    }));
-    if (allItems.length === 0) return;
+    const results = await Promise.allSettled(
+      NEWS_RSS_FEEDS.map(f => fetchRssViaJina(f.url, f.source, f.color))
+    );
+    const allItems = results.flatMap(r => r.status === 'fulfilled' ? r.value : []);
+    if (allItems.length === 0) { console.warn('[news] no items from any RSS feed'); return; }
     // Sort newest first
     allItems.sort((a, b) => b.ts - a.ts);
-    // Store globally so renderMarketNews can use fresh data
+    // Store globally
     window._freshNews = allItems.slice(0, 30);
-    // Categorize per ticker (simple keyword match)
+    // Categorize per ticker
     const perTicker = { _market: allItems.slice(0, 15), BTC: [], ETH: [], SOL: [], XRP: [], SUI: [] };
     for (const item of allItems) {
       const txt = ((item.title || '') + ' ' + (item.categories || '')).toUpperCase();
@@ -7009,23 +7077,22 @@ async function refreshBrowserNews() {
       if (/\bXRP\b|RIPPLE/.test(txt)) perTicker.XRP.push(item);
       if (/\bSUI\b/.test(txt)) perTicker.SUI.push(item);
     }
-    // Cap each to 10 items
     for (const k of Object.keys(perTicker)) perTicker[k] = perTicker[k].slice(0, 10);
     window._freshNewsPerTicker = perTicker;
-    // Re-render market news panel + set updated timestamp
+    // Re-render
     const slot = document.getElementById('market-news-slot');
     if (slot) slot.innerHTML = renderMarketNews(perTicker._market);
     // Update meta label
     const metaEls = document.querySelectorAll('.panel-head .meta');
     for (const el of metaEls) {
-      if (el.textContent.includes('RSS feeds') || el.textContent.includes('items') || el.textContent.includes('CryptoCompare') || el.textContent.includes('news')) {
-        el.textContent = `${allItems.length} items · fresh ${new Date().toLocaleTimeString(_lang === 'en' ? 'en-US' : 'pl-PL', {hour:'2-digit', minute:'2-digit'})}`;
+      if (el.textContent.includes('RSS') || el.textContent.includes('items') || el.textContent.includes('CryptoCompare') || el.textContent.includes('news')) {
+        el.textContent = `${allItems.length} items · RSS · ${new Date().toLocaleTimeString(_lang === 'en' ? 'en-US' : 'pl-PL', {hour:'2-digit', minute:'2-digit'})}`;
         break;
       }
     }
-    console.log(`[news] refreshed ${allItems.length} items browser-side`);
+    console.log(`[news] refreshed ${allItems.length} items from ${results.filter(r => r.status === 'fulfilled' && r.value.length > 0).length} RSS feeds`);
   } catch (e) {
-    console.warn('Browser-side news refresh failed:', e);
+    console.warn('[news] RSS refresh failed:', e.message);
   }
 }
 
@@ -7445,7 +7512,7 @@ function renderTokenDetailShell(ticker) {
       <div class="live-card news">
         <h4>
           <span>📰 Live News — ${ticker}</span>
-          <span class="refresh-tag">CryptoCompare · auto 5min</span>
+          <span class="refresh-tag">RSS · auto 10min</span>
         </h4>
         <div id="news-${ticker}"><div class="news-loading">Loading news…</div></div>
       </div>
