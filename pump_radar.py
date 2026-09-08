@@ -9,7 +9,7 @@ zaczyna:
   WIELORYBY   — top-30 portfeli Hyperliquid (te same co Smart Money) kupuje token
                 netto w ostatniej godzinie (userFillsByTime).
   KATALIZATOR — nowy listing: Upbit (notices API), Hyperliquid (nowy perp w universe),
-                MEXC (nowy kontrakt), Bybit (announcements), Binance (przez jina).
+                MEXC (nowy kontrakt), Binance (CMS API przez jina). Bybit geo-blokuje runnery — pominięty.
   ZAPŁON      — wolumen 15m ≥ 4σ vs 24h + cena > +1.5% w 15m: pump już ruszył,
                 masz 5–15 min przewagi. Oznaczane `ignited`, nie liczone jako "przed".
 
@@ -245,34 +245,36 @@ def fetch_listings(cache, hl_coins, mexc_uni):
     for base, m in mexc_uni.items():
         if m.get("created") and now - m["created"] < 24 * 3600:
             events.append((f"MEXC:{base}", base, "MEXC perp"))
-    # Upbit — notices (KR): tytuły "… 신규 거래지원 안내 (XXX)" / "Market Support for XXX"
+    # Upbit — announcements API (stary /notices zwraca 404). Tytuły KR: "… 신규 거래지원 안내 (XXX)"
     try:
-        j = _get_json("https://api-manager.upbit.com/api/v1/notices?page=1&per_page=20&thread_name=general", timeout=15)
-        for n in (j.get("data") or {}).get("list") or []:
+        j = _get_json("https://api-manager.upbit.com/api/v1/announcements?os=web&page=1&per_page=20&category=trade", timeout=15,
+                      headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8"})
+        d = j.get("data") or {}
+        for n in d.get("notices") or d.get("list") or []:
             title = n.get("title") or ""
             if "거래지원" in title or "Market Support" in title or "listing" in title.lower():
                 for tk in re.findall(r"\(([A-Z0-9]{2,10})\)", title):
                     events.append((f"UPBIT:{n.get('id')}:{tk}", tk, "Upbit listing"))
     except Exception as e:
-        ERRORS.append(f"listings.upbit: {e}")
-    # Bybit — announcements (może 403 z runnera)
+        ERRORS.append(f"listings.upbit: {str(e)[:60]}")
+    # Binance — CMS API przez jina (binance.com bezpośrednio jest geo-blokowany dla runnerów US;
+    # api.bybit.com blokuje CloudFront po kraju nawet przez jina — Bybit pominięty)
     try:
-        j = _get_json("https://api.bybit.com/v5/announcements/index?locale=en-US&type=new_crypto&limit=20", timeout=15, retries=1)
-        for n in (j.get("result") or {}).get("list") or []:
-            title = n.get("title") or ""
-            for tk in re.findall(r"\b([A-Z0-9]{2,10})(?:USDT|/USDT)\b", title):
-                events.append((f"BYBIT:{n.get('url')}:{tk}", tk, "Bybit listing"))
-    except Exception as e:
-        ERRORS.append(f"listings.bybit: {str(e)[:60]}")
-    # Binance — przez jina (binance.com bywa geo-blokowany dla runnerów US)
-    try:
-        req = ur.Request("https://r.jina.ai/https://www.binance.com/en/support/announcement/list/48", headers={"User-Agent": UA})
+        req = ur.Request("https://r.jina.ai/https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&pageNo=1&pageSize=20&catalogId=48",
+                         headers={"User-Agent": UA, "Accept": "application/json"})
         with ur.urlopen(req, timeout=25, context=SSL_CTX) as r:
-            txt = r.read().decode("utf-8", "ignore")
-        for line in txt.splitlines():
-            if "Will List" in line or "Binance Alpha" in line or "Launchpool" in line:
-                for tk in re.findall(r"\(([A-Z0-9]{2,10})\)", line):
-                    events.append((f"BINANCE:{line[:60]}:{tk}", tk, "Binance " + ("Alpha" if "Alpha" in line else "Launchpool" if "Launchpool" in line else "listing")))
+            wrap = json.loads(r.read())
+        inner = json.loads((wrap.get("data") or {}).get("content") or "{}")
+        for cat in ((inner.get("data") or {}).get("catalogs") or []):
+            for a in cat.get("articles") or []:
+                title = a.get("title") or ""
+                rel = (a.get("releaseDate") or 0) / 1000
+                if rel and now - rel > 6 * 3600:
+                    continue
+                kind = "Binance Alpha" if "Alpha" in title else "Binance Launchpool" if "Launchpool" in title else "Binance Futures" if "Futures" in title or "Perpetual" in title else "Binance listing"
+                tks = set(re.findall(r"\(([A-Z0-9]{2,10})\)", title)) | set(re.findall(r"\b([A-Z0-9]{2,10})USDT\b", title))
+                for tk in tks:
+                    events.append((f"BINANCE:{a.get('id')}:{tk}", tk, kind))
     except Exception as e:
         ERRORS.append(f"listings.binance: {str(e)[:60]}")
     out = {}
