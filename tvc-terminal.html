@@ -4143,11 +4143,13 @@ const etfBrowser = { btc: null, eth: null, ts: 0 };
 const HTML_PROXIES = [
   url => `https://r.jina.ai/${url}`,
   url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-  url => `https://thingproxy.freeboard.io/fetch/${url}`,
+  url => `https://corsproxy.org/?url=${encodeURIComponent(url)}`,
 ];
 const JSON_PROXIES = [
+  url => url,  // try direct first (Yahoo sometimes allows CORS from custom domains)
+  url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,   // JSON wrapper
   url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-  url => `https://thingproxy.freeboard.io/fetch/${url}`,
+  url => `https://corsproxy.org/?url=${encodeURIComponent(url)}`,
 ];
 const CORS_PROXIES = HTML_PROXIES; // backward compat
 // Markdown/text tokenizer (legacy jina format + plain text)
@@ -4242,12 +4244,14 @@ async function yahooChart(sym) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?range=3mo&interval=1d`;
   for (const mkProxy of JSON_PROXIES) {
     try {
-      const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 20000);
+      const ctl = new AbortController(); const tm = setTimeout(() => ctl.abort(), 25000);
       const r = await fetch(mkProxy(url), { signal: ctl.signal }); clearTimeout(tm);
       if (!r.ok) continue;
       const txt = await r.text();
       let data;
       try { data = JSON.parse(txt); } catch { continue; }
+      // allorigins /get wraps in {contents:"..."} — unwrap
+      if (typeof data.contents === 'string') try { data = JSON.parse(data.contents); } catch { continue; }
       // jina wraps in {data:{content:"..."}}
       if (data.data?.content) try { data = JSON.parse(data.data.content); } catch { continue; }
       const res = data.chart?.result?.[0]; if (!res) continue;
@@ -6973,37 +6977,23 @@ setTimeout(() => {
 }, 2000);
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BROWSER-SIDE NEWS FETCH — bypasses stale Gist (fetches fresh RSS directly)
-// Uses public RSS-to-JSON proxy (rss2json.com — free, CORS-enabled, no key)
+// BROWSER-SIDE NEWS FETCH — CryptoCompare News API (free, CORS-native, no key)
 // ═══════════════════════════════════════════════════════════════════════════
 async function refreshBrowserNews() {
   try {
-    // Use rss2json to convert RSS to JSON (CORS-friendly, free public API)
-    const feeds = [
-      { url: 'https://www.coindesk.com/arc/outboundfeeds/rss/', src: 'CoinDesk', color: '#F5B841' },
-      { url: 'https://cointelegraph.com/rss', src: 'Cointelegraph', color: '#60A5FA' },
-      { url: 'https://decrypt.co/feed', src: 'Decrypt', color: '#A78BFA' },
-    ];
-    const allItems = [];
-    for (const f of feeds) {
-      try {
-        const url = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(f.url)}&count=15`;
-        const r = await fetch(url);
-        const j = await r.json();
-        if (j.items) {
-          for (const item of j.items) {
-            allItems.push({
-              title: item.title,
-              url: item.link,
-              source: f.src,
-              color: f.color,
-              published_at: item.pubDate,
-              ts: new Date(item.pubDate).getTime(),
-            });
-          }
-        }
-      } catch (e) { console.warn(`RSS fetch failed for ${f.src}:`, e); }
-    }
+    const r = await fetch('https://min-api.cryptocompare.com/data/v2/news/?lang=EN&sortOrder=latest');
+    const j = await r.json();
+    if (!j.Data || !j.Data.length) return;
+    const srcColors = { CoinDesk: '#F5B841', Cointelegraph: '#60A5FA', Decrypt: '#A78BFA', 'The Block': '#34D399', CoinTelegraph: '#60A5FA', Bloomberg: '#FF6B6B', Reuters: '#FF9F43' };
+    const allItems = j.Data.map(item => ({
+      title: item.title,
+      url: item.url,
+      source: item.source_info?.name || item.source || 'Unknown',
+      color: srcColors[item.source_info?.name] || srcColors[item.source] || '#7d8bab',
+      published_on: item.published_on,
+      ts: (item.published_on || 0) * 1000,
+      categories: item.categories || '',
+    }));
     if (allItems.length === 0) return;
     // Sort newest first
     allItems.sort((a, b) => b.ts - a.ts);
@@ -7012,12 +7002,12 @@ async function refreshBrowserNews() {
     // Categorize per ticker (simple keyword match)
     const perTicker = { _market: allItems.slice(0, 15), BTC: [], ETH: [], SOL: [], XRP: [], SUI: [] };
     for (const item of allItems) {
-      const title = (item.title || '').toUpperCase();
-      if (/\bBTC\b|BITCOIN/.test(title)) perTicker.BTC.push(item);
-      if (/\bETH\b|ETHEREUM|VITALIK/.test(title)) perTicker.ETH.push(item);
-      if (/\bSOL\b|SOLANA/.test(title)) perTicker.SOL.push(item);
-      if (/\bXRP\b|RIPPLE/.test(title)) perTicker.XRP.push(item);
-      if (/\bSUI\b/.test(title)) perTicker.SUI.push(item);
+      const txt = ((item.title || '') + ' ' + (item.categories || '')).toUpperCase();
+      if (/\bBTC\b|BITCOIN/.test(txt)) perTicker.BTC.push(item);
+      if (/\bETH\b|ETHEREUM|VITALIK/.test(txt)) perTicker.ETH.push(item);
+      if (/\bSOL\b|SOLANA/.test(txt)) perTicker.SOL.push(item);
+      if (/\bXRP\b|RIPPLE/.test(txt)) perTicker.XRP.push(item);
+      if (/\bSUI\b/.test(txt)) perTicker.SUI.push(item);
     }
     // Cap each to 10 items
     for (const k of Object.keys(perTicker)) perTicker[k] = perTicker[k].slice(0, 10);
@@ -7028,7 +7018,7 @@ async function refreshBrowserNews() {
     // Update meta label
     const metaEls = document.querySelectorAll('.panel-head .meta');
     for (const el of metaEls) {
-      if (el.textContent.includes('RSS feeds') || el.textContent.includes('items')) {
+      if (el.textContent.includes('RSS feeds') || el.textContent.includes('items') || el.textContent.includes('CryptoCompare') || el.textContent.includes('news')) {
         el.textContent = `${allItems.length} items · fresh ${new Date().toLocaleTimeString(_lang === 'en' ? 'en-US' : 'pl-PL', {hour:'2-digit', minute:'2-digit'})}`;
         break;
       }
