@@ -2266,7 +2266,7 @@ function render() {
       <!-- OPCJE — Deribit DVOL, skew, term structure -->
       <div id="options-slot" class="hide-trading" style="grid-column: span 12; width: 100%;"></div>
       <!-- MAKRO & ETF — Farside flows + korelacje z NQ/DXY/US10Y (server-side, z fusion json) -->
-      <div id="macro-etf-slot" class="hide-trading" style="grid-column: span 12; width: 100%;">${renderMacroEtf(data)}</div>
+      <div id="macro-etf-slot" style="grid-column: span 12; width: 100%;">${renderMacroEtf(data)}</div>
       <section class="panel p-12" id="sec-whales">
         <!-- LIVE WHALES — real-time whale detection (browser fetch, auto-refresh 30s) -->
         <div class="panel-head">
@@ -4239,7 +4239,7 @@ function renderMacroEtf(data) {
   const etf = { btc: data.etf?.btc || etfBrowser.btc, eth: data.etf?.eth || etfBrowser.eth };
   if (!etf.btc && !etf.eth) etfBrowser.ts = 0;   // wymuś ponowną próbę przy następnym cyklu
   const mc = data.macro_context || macroBrowser.ctx;
-  if (!etf.btc && !etf.eth && !mc) return '';
+  if (!etf.btc && !etf.eth && !mc) return `<section class="panel"><div class="panel-head"><h3>🏛 ${t('me_title')}</h3><span class="meta">${t('loading')}…</span></div><div style="padding:16px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">⏳ ${t('me_no_data')} — Farside/Yahoo ${t('me_browser')} fallback…</div></section>`;
   const M = v => `${v >= 0 ? '+' : '−'}$${Math.abs(v) >= 1000 ? (Math.abs(v) / 1000).toFixed(2) + 'B' : Math.abs(v).toFixed(0) + 'M'}`;
   const col = v => v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--text-dim)';
   const bars = series => { if (!series || !series.length) return ''; const s = series.slice(-30); const mx = Math.max(...s.map(x => Math.abs(x.total))) || 1; return `<div style="display:flex;align-items:flex-end;gap:2px;height:44px;margin:6px 0 2px">${s.map(x => { const h = Math.max(2, Math.abs(x.total) / mx * 40); return `<div title="${x.date}: ${M(x.total)}" style="flex:1;display:flex;flex-direction:column;justify-content:${x.total >= 0 ? 'flex-end' : 'flex-start'};height:44px"><div style="height:${h}px;background:${x.total >= 0 ? 'var(--green)' : 'var(--red)'};opacity:${x === s[s.length - 1] ? 1 : 0.65};border-radius:1px"></div></div>`; }).join('')}</div>`; };
