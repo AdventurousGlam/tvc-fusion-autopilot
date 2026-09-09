@@ -57,41 +57,34 @@ EXCHANGE_ID = os.environ.get("TVC_EXCHANGE", "bybit")
 # v0.2 — asymmetric sizing caps
 LONG_SIZE_CAP_PCT = 3.0     # max % capital per LONG trade
 SHORT_SIZE_CAP_PCT = 0.5    # max % capital per SHORT trade (unlimited upside risk)
-# v0.2 — SHORT regime constraint: only allow SHORTs in these regimes
-SHORT_ALLOWED_REGIMES = {"TRENDING_DOWN", "TRENDING_DOWN_VOLATILE", "CRASH"}
 
-# v0.3 — QUALITY GATES. Wyprowadzone z audytu 50 zamkniętych paper trade'ów
-# (paper_trades.db, 2026-09-02):
-#   fusion score >= 70 → 7 trade'ów, 86% WR, +$39.26
-#   fusion score 60-69 → 10 trade'ów, 10% WR, -$2.19
-#   fusion score  < 60 → 33 trade'ów,  3% WR, -$7.60
-#   regime RANGING     → 39 trade'ów,  5% WR  |  TRENDING_UP → 4 trade'y, 100% WR
-#   exit = flip_choch  → 31 trade'ów,  3% WR (ping-pong long↔short co kilka minut)
-#   SHORT              → 20 trade'ów,  0 wygranych
-# Wniosek: system działa świetnie przy wysokiej konwikcji, a traci wyłącznie na
-# niskiej jakości wejściach. Gates poniżej odcinają szum, nie zmieniają sygnału.
-MIN_LONG_SCORE = 65            # minimalny score dla LONG w regime trendowym
-MIN_LONG_SCORE_RANGING = 70    # w RANGING wymagamy jeszcze wyższej konwikcji
-MAX_SHORT_SCORE = 40           # SHORT tylko gdy score jest faktycznie bearish
-MIN_HOLD_MINUTES = 240         # nie flipuj pozycji młodszej niż 4h (anty ping-pong)
-REOPEN_COOLDOWN_MINUTES = 120  # po zamknięciu tickera 2h przerwy przed nowym wejściem
-MAX_NEW_TRADES_PER_DAY = 3     # bezpiecznik anty-overtrading (Sep 1: 14 trade'ów/dzień)
+# ═══════════════════════════════════════════════════════════════════════════
+# v0.5 — SIMPLIFIED 5-RULE SYSTEM (Tushar Chande: <10 rules)
+#
+# Diagnoza: analysis paralysis z 12+ paneli + 5-6 skomplikowanych bramek.
+# System działa najlepiej przy wysokiej konwikcji (score≥70: 86% WR),
+# a traci na niskiej jakości wejściach i nadmiarze reguł (CHoCH flip,
+# entry_quality wait/skip, regime constraint, pending orders).
+#
+# 5 REGUŁ:
+#   1. Fusion Score ≥65 → LONG  /  ≤35 → SHORT
+#   2. Smart Money verdict ≠ opposes (layers.veto is None)
+#   3. Brak makro blackout (3h przed / 1h po tier-1 evencie)
+#   4. SL ze struktury (auto_fusion levels)
+#   5. TP ze struktury (auto_fusion levels)
+#
+# Wszystko inne (regime, CVD, flush/pump, OI, funding) → KONTEKST, nie decyzja.
+# Usunięte: CHoCH flip, entry_quality wait/skip, pending orders, regime gate
+# dla shortów, MIN_HOLD flip protection.
+# Zachowane: trailing SL, reopen cooldown, daily limit, Telegram, equity.
+# ═══════════════════════════════════════════════════════════════════════════
+MIN_LONG_SCORE = 65            # Reguła #1: minimalny score dla LONG
+MAX_SHORT_SCORE = 35           # Reguła #1: SHORT tylko gdy score jest faktycznie bearish
+REOPEN_COOLDOWN_MINUTES = 120  # anty-overtrading: po zamknięciu tickera 2h przerwy
+MAX_NEW_TRADES_PER_DAY = 3     # anty-overtrading: max 3 nowe trade'y dziennie
 
-# v0.4 — STATYSTYKI. Nagłówkowe WR/PnL liczone tylko od wdrożenia bramek v0.3;
-# trade'y v0.2 (ping-pong CHoCH, 29.08–02.09) zostają w bazie jako archiwum
-# (panel "Co działa → wg wersji"), ale nie zaśmiecają nagłówka.
-# excluded=1 → trade wykluczony ze wszystkich statystyk (np. sl_rescan_bug, patrz db_init).
-STATS_SINCE = "2026-09-02T19:00:00"   # deploy bramek v0.3 (commit c890e34)
-
-# v0.4 — JAKOŚĆ WEJŚCIA (entry_quality z auto_fusion, patrz compute_levels tam).
-#   verdict 'ok'   → wejście po cenie rynkowej TERAZ (strefa obejmuje cenę),
-#   verdict 'wait' → WEJŚCIE OCZEKUJĄCE: pozycja status='pending' z limitem na górnej
-#                    krawędzi strefy (long) / dolnej (short); realizuje się, gdy cena
-#                    dotknie strefy w ciągu PENDING_TTL_H, inaczej wygasa,
-#   verdict 'skip' → brak wejścia (R:R < 1.5, SL za daleko od struktury, weekend dla altów).
-# SUI 05.09: bot wszedł po 0.8104 po +3% dnia, 6% pod MA200D — v0.4 dałoby 'wait'
-# ze strefą 0.782–0.789 (pullback do EMA21 1h) i TP1 przy high7d, TP2 przy MA200D.
-PENDING_TTL_H = 24.0
+# STATYSTYKI — liczone od wdrożenia bramek v0.3 (trade'y v0.2 = archiwum).
+STATS_SINCE = "2026-09-02T19:00:00"
 STATS_WHERE = "status='closed' AND opened_at >= ? AND COALESCE(excluded,0)=0"
 
 # --- ccxt lazy import (bot still runs `init` without it) ---------------
@@ -660,11 +653,10 @@ def cmd_open(args):
         ticker = dec["ticker"]
         score = int(dec.get("score") or 0)
 
-        # v0.3 — SCORE GATE. Dane: score>=70 → 86% WR, score<70 → ~5% WR.
+        # v0.5 — REGUŁA #1: SCORE GATE (jeden próg, bez rozróżnienia regime)
         if direction == "long":
-            min_long = MIN_LONG_SCORE_RANGING if regime == "RANGING" else MIN_LONG_SCORE
-            if score < min_long:
-                print(f"[skip] {ticker} LONG score {score} < {min_long} (regime {regime}) — za niska konwikcja")
+            if score < MIN_LONG_SCORE:
+                print(f"[skip] {ticker} LONG score {score} < {MIN_LONG_SCORE} — za niska konwikcja")
                 skipped += 1
                 continue
         else:
@@ -673,14 +665,13 @@ def cmd_open(args):
                 skipped += 1
                 continue
 
-        # v0.2 — SHORT regime constraint, z wyjątkiem CHoCH override (świeży bearish
-        # change of character na 1h dla TEGO tokena omija globalny BTC-regime gate)
-        if direction == "short" and regime not in SHORT_ALLOWED_REGIMES and not dec.get("choch_override"):
-            print(f"[skip] {ticker} SHORT blocked — regime {regime} not in {SHORT_ALLOWED_REGIMES}")
+        # v0.5 — REGUŁA #2: SMART MONEY VETO (layers.veto != None → skip)
+        layers = dec.get("layers") or {}
+        veto = layers.get("veto")
+        if veto:
+            print(f"[skip] {ticker} {direction.upper()} — Smart Money VETO: {veto}")
             skipped += 1
             continue
-        if direction == "short" and dec.get("choch_override"):
-            print(f"[open] {ticker} SHORT via CHoCH override — regime {regime} bypassed")
 
         # v0.3 — DAILY LIMIT
         if opened_today >= MAX_NEW_TRADES_PER_DAY:
@@ -709,111 +700,17 @@ def cmd_open(args):
             except (ValueError, TypeError):
                 pass
 
-        # De-dupe / flip logic — patrzymy na KAŻDĄ otwartą pozycję tego tickera,
-        # niezależnie od daty otwarcia (nie tylko "dziś"), żeby nie trzymać
-        # jednocześnie long+short na tym samym tokenie.
+        # v0.5 — DE-DUPE: jeśli ticker ma otwartą pozycję (dowolny kierunek) → skip.
+        # Żadnych flipów — SL/TP zamkną starą pozycję, nowa wejdzie w następnym cyklu.
         existing_any = conn.execute(
-            "SELECT * FROM positions WHERE ticker=? AND status IN ('open','pending') ORDER BY opened_at DESC LIMIT 1",
+            "SELECT id, direction FROM positions WHERE ticker=? AND status='open' LIMIT 1",
             (ticker,),
         ).fetchone()
-
-        if existing_any and existing_any["direction"] == direction:
-            # ta sama strona już otwarta / oczekująca — nic do zrobienia
+        if existing_any:
             skipped += 1
             continue
 
-        if existing_any and existing_any["status"] == "pending":
-            # przeciwny sygnał → oczekujące wejście traci sens, anuluj (bez PnL, poza statystykami)
-            _cancel_pending(conn, existing_any["id"], "cancelled_flip")
-            existing_any = None
-
-        if existing_any and existing_any["direction"] != direction:
-            if not dec.get("choch_override"):
-                # przeciwny kierunek, ale bez silnego sygnału CHoCH — nie flipuj,
-                # zostaw starą pozycję żeby SL/TP zrobiły swoje
-                skipped += 1
-                continue
-            # v0.3 — MIN HOLD. Nie flipuj pozycji, która nie miała szansy zadziałać.
-            # Dane: mediana życia trade'u zamkniętego przez flip_choch była w porządku,
-            # ale 8 z 31 żyło < 60 min — czysty szum. SL/TP mają pierwszeństwo.
-            try:
-                opened_dt = datetime.fromisoformat(existing_any["opened_at"])
-                if opened_dt.tzinfo is None:
-                    opened_dt = opened_dt.replace(tzinfo=timezone.utc)
-                age_min = (now_utc - opened_dt).total_seconds() / 60
-            except (ValueError, TypeError):
-                age_min = MIN_HOLD_MINUTES  # brak daty → nie blokuj
-            if age_min < MIN_HOLD_MINUTES:
-                print(f"[skip] {ticker} flip zablokowany — pozycja ma {age_min:.0f} min "
-                      f"(< {MIN_HOLD_MINUTES} min), SL/TP niech zadziałają")
-                skipped += 1
-                continue
-
-            # FLIP — CHoCH override daje sygnał przeciwny do otwartej pozycji:
-            # zamknij starą po aktualnej cenie rynkowej, otwórz nową w nowym kierunku
-            try:
-                flip_price = _fetch_current_price(ticker)
-            except Exception as e:
-                print(f"[flip] {ticker} price fetch failed ({e}) — skipping flip this cycle")
-                skipped += 1
-                continue
-            old_dir = existing_any["direction"]
-            old_entry = existing_any["entry_price"]
-            if old_dir == "long":
-                pnl_pct = (flip_price - old_entry) / old_entry * 100
-            else:
-                pnl_pct = (old_entry - flip_price) / old_entry * 100
-            pnl_usd = existing_any["size_usd"] * (pnl_pct / 100)
-            exit_dt = datetime.now(timezone.utc).isoformat()
-            conn.execute(
-                """UPDATE positions SET status='closed', exit_price=?, exit_date=?,
-                   pnl_pct=?, pnl_usd=?, hit_or_miss=?, closed_at=? WHERE id=?""",
-                (flip_price, exit_dt, pnl_pct, pnl_usd, "flip_choch", exit_dt, existing_any["id"]),
-            )
-            conn.commit()
-            print(f"[flip] {ticker} closed old {old_dir} @ {flip_price:.4f} PnL {pnl_pct:+.2f}% "
-                  f"(${pnl_usd:+.2f}) — opening new {direction} (CHoCH override)")
-            _notify_close(ticker, old_dir, old_entry, flip_price, pnl_pct, pnl_usd, "flip_choch")
-
-        # v0.4 — JAKOŚĆ WEJŚCIA (filtr lokalizacji)
-        eq = dec.get("entry_quality") or {}
-        verdict = eq.get("verdict") or "ok"
-        flags = list(eq.get("flags") or [])
-        if verdict == "skip":
-            print(f"[skip] {ticker} {direction.upper()} — entry_quality=skip ({', '.join(flags) or 'brak flag'}): {eq.get('note', '')}")
-            skipped += 1
-            continue
-        zone_low = dec.get("entry_low"); zone_high = dec.get("entry_high")
-        if verdict == "wait" and zone_low and zone_high:
-            # Wejście oczekujące — limit na krawędzi strefy od strony ceny
-            limit_px = float(zone_high) if direction == "long" else float(zone_low)
-            size_pct_requested = float(dec.get("size_pct", 0))
-            size_pct = min(size_pct_requested, SHORT_SIZE_CAP_PCT if direction == "short" else LONG_SIZE_CAP_PCT)
-            size_usd = PAPER_CAPITAL * (size_pct / 100)
-            sources = dec.get("sources", {})
-            conn.execute(
-                """INSERT INTO positions (
-                    date, ticker, exchange, action, direction, fusion_score, regime,
-                    onchain_score, technical_score, news_score, momentum_score, sentiment_score,
-                    entry_price, size_pct, size_usd, sl_price, tp1_price, tp2_price,
-                    status, thesis, invalidation, risk_flag, onchain_data_thin, opened_at,
-                    context_tags, entry_zone_low, entry_zone_high, pending_until, rr
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (trade_date, ticker, EXCHANGE_ID, dec.get("action"), direction, dec.get("score"), regime,
-                 sources.get("onchain"), sources.get("technical"), sources.get("news"), sources.get("momentum"), sources.get("sentiment"),
-                 limit_px, size_pct, size_usd, dec.get("sl"), dec.get("tp1"), dec.get("tp2"),
-                 "pending", dec.get("risk_flag", ""), dec.get("invalidation_note", ""), dec.get("risk_flag", ""),
-                 1 if dec.get("onchain_data_thin") else 0, now_utc.isoformat(),
-                 ",".join(_context_tags(flags, now_utc, data)), float(zone_low), float(zone_high),
-                 (now_utc + timedelta(hours=PENDING_TTL_H)).isoformat(), (dec.get("levels") or {}).get("rr")),
-            )
-            opened_today += 1
-            print(f"[pending] {direction.upper()} {ticker} limit @ {limit_px:.4f} (strefa {zone_low}–{zone_high}) "
-                  f"TTL {PENDING_TTL_H:.0f}h · {eq.get('note', '')}")
-            _notify_pending(ticker, direction, limit_px, zone_low, zone_high, dec.get("sl"), dec.get("tp1"), eq.get("note", ""))
-            continue
-
-        # verdict 'ok' → wejście po cenie rynkowej TERAZ (nie środek strefy — ta bywa 5 min stara)
+        # v0.5 — WEJŚCIE PO CENIE RYNKOWEJ (bez pending orders / entry_quality)
         try:
             entry_price = _fetch_current_price(ticker)
         except Exception as e:
@@ -823,44 +720,30 @@ def cmd_open(args):
             skipped += 1
             continue
 
-        # v0.2 — asymmetric sizing caps
+        # Asymmetric sizing caps
         size_pct_requested = float(dec.get("size_pct", 0))
         max_cap = SHORT_SIZE_CAP_PCT if direction == "short" else LONG_SIZE_CAP_PCT
         size_pct = min(size_pct_requested, max_cap)
         if size_pct < size_pct_requested:
-            print(f"[cap] {ticker} {direction.upper()} size {size_pct_requested}% capped to {size_pct}% (v0.2 asymmetric cap)")
+            print(f"[cap] {ticker} {direction.upper()} size {size_pct_requested}% capped to {size_pct}%")
         size_usd = PAPER_CAPITAL * (size_pct / 100)
 
         sources = dec.get("sources", {})
         row = (
-            trade_date,
-            ticker,
-            EXCHANGE_ID,
-            dec.get("action"),
-            direction,
-            dec.get("score"),
-            regime,
-            sources.get("onchain"),
-            sources.get("technical"),
-            sources.get("news"),
-            sources.get("momentum"),
-            sources.get("sentiment"),
-            entry_price,
-            size_pct,
-            size_usd,
-            dec.get("sl"),
-            dec.get("tp1"),
-            dec.get("tp2"),
+            trade_date, ticker, EXCHANGE_ID, dec.get("action"), direction,
+            dec.get("score"), regime,
+            sources.get("onchain"), sources.get("technical"), sources.get("news"),
+            sources.get("momentum"), sources.get("sentiment"),
+            entry_price, size_pct, size_usd,
+            dec.get("sl"), dec.get("tp1"), dec.get("tp2"),
             "open",
-            None, None, None, None, None,
-            dec.get("risk_flag", ""),
-            dec.get("invalidation_note", ""),
-            dec.get("risk_flag", ""),
+            None, None, None, None, None,  # exit_price, exit_date, pnl_pct, pnl_usd, hit_or_miss
+            dec.get("risk_flag", ""), dec.get("invalidation_note", ""), dec.get("risk_flag", ""),
             1 if dec.get("onchain_data_thin") else 0,
             datetime.now(timezone.utc).isoformat(),
-            None,
-            ",".join(_context_tags(flags, now_utc, data)),
-            float(zone_low) if zone_low else None, float(zone_high) if zone_high else None,
+            None,  # closed_at
+            None,  # context_tags (v0.5: removed entry_quality tags)
+            None, None,  # entry_zone_low, entry_zone_high (v0.5: no pending)
             (dec.get("levels") or {}).get("rr"),
         )
         conn.execute(
@@ -881,18 +764,11 @@ def cmd_open(args):
               f"SL {dec.get('sl')} TP1 {dec.get('tp1')} TP2 {dec.get('tp2')}  "
               f"score {dec.get('score')}")
         _notify_open(ticker, direction, entry_price, size_usd, dec.get("sl"), dec.get("tp1"),
-                     dec.get("tp2"), dec.get("score"), regime, bool(dec.get("choch_override")))
-
-    # v0.4 — oczekujące bez sygnału: jeśli fusion przestał dawać BUY/SELL w kierunku
-    # pendingu (HOLD/WATCH albo odwrotny kierunek), wejście oczekujące traci podstawę.
-    dir_now = {d.get("ticker"): _direction_from_action(d.get("action")) for d in data.get("decisions", [])}
-    for pr in conn.execute("SELECT id, ticker, direction FROM positions WHERE status='pending'").fetchall():
-        if dir_now.get(pr["ticker"]) != pr["direction"]:
-            _cancel_pending(conn, pr["id"], "signal_gone")
+                     dec.get("tp2"), dec.get("score"), regime, False)
 
     conn.commit()
     conn.close()
-    print(f"[open] done — opened {opened}, skipped {skipped} (dupes/no-price/regime-blocked)")
+    print(f"[open] done — opened {opened}, skipped {skipped}")
 
 
 # --- check -------------------------------------------------------------
@@ -1871,7 +1747,7 @@ def cmd_upload(args):
     health = {
         "autopilot_last_cycle": datetime.now(timezone.utc).isoformat(),
         "cycle_interval_min": 5,
-        "bot_version": "0.3",
+        "bot_version": "0.5",
         "telegram_enabled": bool(os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID")),
         "telegram_chat_id_tail": (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()[-4:] or None,
         "telegram_last_error": _TELEGRAM_LAST_ERROR,
@@ -1884,9 +1760,9 @@ def cmd_upload(args):
         "open_count": len(open_positions),
         "gates": {
             "min_long_score": MIN_LONG_SCORE,
-            "min_long_score_ranging": MIN_LONG_SCORE_RANGING,
             "max_short_score": MAX_SHORT_SCORE,
-            "min_hold_min": MIN_HOLD_MINUTES,
+            "smart_money_veto": True,
+            "macro_blackout": True,
             "reopen_cooldown_min": REOPEN_COOLDOWN_MINUTES,
             "max_trades_per_day": MAX_NEW_TRADES_PER_DAY,
         },
