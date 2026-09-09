@@ -169,37 +169,54 @@ def _parse_farside_table(text, days=60):
     return rows[-days:]
 
 
+def _etf_from_series(series, source_tag):
+    """Helper: przelicza [{date,total}] na dict z d1/d7/d30/streak."""
+    vals = [r["total"] for r in series]
+    streak, sign = 0, (1 if vals[-1] > 0 else -1 if vals[-1] < 0 else 0)
+    for v in reversed(vals):
+        if sign and (v > 0) == (sign > 0) and v != 0:
+            streak += 1
+        else:
+            break
+    return {"series": series, "d1": vals[-1], "d7": sum(vals[-5:]), "d30": sum(vals[-21:]),
+            "streak": streak * sign, "last_date": series[-1]["date"], "unit": "USD mln",
+            "cum_60d": sum(vals), "source": source_tag}
+
+
 def fetch_etf_flows():
     """
     BTC + ETH spot ETF net flows (Farside, mln USD).
-    Runner GitHub NIE dosięga Farside (403 direct, 403 jina, 522 allorigins — Cloudflare blokuje
-    IP datacenter). Terminal w przeglądarce Gosi dosięga (przez jina) i — jeśli ma token Gist —
-    zapisuje etf_flows.json do Gist. Tu: najpierw próba bezpośrednia (gdyby kiedyś zadziałała),
-    potem Gist. Zwraca None gdy oba puste; d1/d7/d30/streak liczone jak w przeglądarce.
+    Łańcuch prób: (1) Farside bezpośrednio, (2) własny PHP proxy na Hostinger,
+    (3) Gist (zapisywany przez terminal w przeglądarce Gosi).
+    Zwraca None gdy wszystko puste; d1/d7/d30/streak liczone jak w przeglądarce.
     """
+    HOSTINGER_PROXY = "https://tradingventureclub.com/terminal/etf-proxy.php?asset={asset}"
     out = {"btc_1d": None, "eth_1d": None, "btc": None, "eth": None}
     for key, url in (("btc", "https://farside.co.uk/bitcoin-etf-flow-all-data/"),
                      ("eth", "https://farside.co.uk/ethereum-etf-flow-all-data/")):
+        # 1) Direct Farside
         try:
             series = _parse_farside_table(_get_text(url))
             if not series:
                 raise ValueError("pusta tabela")
-            vals = [r["total"] for r in series]
-            streak, sign = 0, (1 if vals[-1] > 0 else -1 if vals[-1] < 0 else 0)
-            for v in reversed(vals):
-                if sign and (v > 0) == (sign > 0) and v != 0:
-                    streak += 1
-                else:
-                    break
-            out[key] = {"series": series, "d1": vals[-1], "d7": sum(vals[-5:]), "d30": sum(vals[-21:]),
-                        "streak": streak * sign, "last_date": series[-1]["date"], "unit": "USD mln",
-                        "cum_60d": sum(vals), "source": "farside-direct"}
-            out[f"{key}_1d"] = vals[-1] * 1_000_000
-            print(f"[etf] {key.upper()} direct {series[-1]['date']}: {vals[-1]:+.1f}M")
+            out[key] = _etf_from_series(series, "farside-direct")
+            out[f"{key}_1d"] = series[-1]["total"] * 1_000_000
+            print(f"[etf] {key.upper()} direct {series[-1]['date']}: {series[-1]['total']:+.1f}M")
+            continue
         except Exception as e:
             FETCH_ERRORS.append(f"etf.{key}.direct: {type(e).__name__}: {str(e)[:60]}")
+        # 2) Hostinger PHP proxy
+        try:
+            series = _parse_farside_table(_get_text(HOSTINGER_PROXY.format(asset=key)))
+            if not series:
+                raise ValueError("pusta tabela")
+            out[key] = _etf_from_series(series, "hostinger-proxy")
+            out[f"{key}_1d"] = series[-1]["total"] * 1_000_000
+            print(f"[etf] {key.upper()} hostinger-proxy {series[-1]['date']}: {series[-1]['total']:+.1f}M")
+        except Exception as e:
+            FETCH_ERRORS.append(f"etf.{key}.hostinger: {type(e).__name__}: {str(e)[:60]}")
     if not out["btc"] and not out["eth"]:
-        # Gist: etf_flows.json zapisany przez terminal (przeglądarka Gosi przez jina)
+        # 3) Gist fallback
         gist_id = os.environ.get("TVC_GIST_ID", "e88c461a964ed22d2cf14326c65b4438")
         try:
             g = _get_json(f"https://gist.githubusercontent.com/AdventurousGlam/{gist_id}/raw/etf_flows.json?t={int(time.time())}", retries=1)

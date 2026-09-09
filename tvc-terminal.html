@@ -4138,9 +4138,10 @@ function renderCvdPanel() {
 //   macro_context: NQ/SPX/DXY/US10Y/GOLD zmiana 1d/5d + korelacja 30 sesji z BTC + reżim makro
 // ═══════════════════════════════════════════════════════════════════════════
 // Fallback przeglądarkowy dla ETF: Farside blokuje IP GitHub (403), przeglądarka pobiera przez CORS proxy.
-// Proxy chains: HTML_PROXIES for Farside (jina reader OK), JSON_PROXIES for APIs (jina mangles JSON).
+// Proxy chains: HTML_PROXIES for Farside. Primary = own PHP proxy on Hostinger (reliable).
 const etfBrowser = { btc: null, eth: null, ts: 0 };
 const HTML_PROXIES = [
+  url => { const m = url.match(/farside\.co\.uk\/(bitcoin|ethereum)/); return m ? `/terminal/etf-proxy.php?asset=${m[1] === 'bitcoin' ? 'btc' : 'eth'}` : `https://r.jina.ai/${url}`; },
   url => `https://r.jina.ai/${url}`,
   url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
   url => `https://corsproxy.org/?url=${encodeURIComponent(url)}`,
