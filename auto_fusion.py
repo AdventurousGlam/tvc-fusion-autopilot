@@ -190,7 +190,7 @@ def fetch_etf_flows():
     (3) Gist (zapisywany przez terminal w przeglądarce Gosi).
     Zwraca None gdy wszystko puste; d1/d7/d30/streak liczone jak w przeglądarce.
     """
-    HOSTINGER_PROXY = "https://tradingventureclub.com/terminal/etf-proxy.php?asset={asset}"
+    CF_WORKER = "https://etf-proxy.nerdygets.workers.dev/?asset={asset}"
     out = {"btc_1d": None, "eth_1d": None, "btc": None, "eth": None}
     for key, url in (("btc", "https://farside.co.uk/bitcoin-etf-flow-all-data/"),
                      ("eth", "https://farside.co.uk/ethereum-etf-flow-all-data/")):
@@ -205,16 +205,16 @@ def fetch_etf_flows():
             continue
         except Exception as e:
             FETCH_ERRORS.append(f"etf.{key}.direct: {type(e).__name__}: {str(e)[:60]}")
-        # 2) Hostinger PHP proxy
+        # 2) Cloudflare Worker proxy (CF→CF, bypasses Cloudflare challenge)
         try:
-            series = _parse_farside_table(_get_text(HOSTINGER_PROXY.format(asset=key)))
+            series = _parse_farside_table(_get_text(CF_WORKER.format(asset=key)))
             if not series:
                 raise ValueError("pusta tabela")
-            out[key] = _etf_from_series(series, "hostinger-proxy")
+            out[key] = _etf_from_series(series, "cf-worker")
             out[f"{key}_1d"] = series[-1]["total"] * 1_000_000
-            print(f"[etf] {key.upper()} hostinger-proxy {series[-1]['date']}: {series[-1]['total']:+.1f}M")
+            print(f"[etf] {key.upper()} cf-worker {series[-1]['date']}: {series[-1]['total']:+.1f}M")
         except Exception as e:
-            FETCH_ERRORS.append(f"etf.{key}.hostinger: {type(e).__name__}: {str(e)[:60]}")
+            FETCH_ERRORS.append(f"etf.{key}.cf-worker: {type(e).__name__}: {str(e)[:60]}")
     if not out["btc"] and not out["eth"]:
         # 3) Gist fallback
         gist_id = os.environ.get("TVC_GIST_ID", "e88c461a964ed22d2cf14326c65b4438")
