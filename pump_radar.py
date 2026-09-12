@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """
-TVC Pump Radar — skan całego rynku perpów co 5 min pod krótkoterminowe pumpy.
+TVC Pump Radar v2 — skan rynku perpów co 5 min pod krótkoterminowe pumpy.
 
-Nie "przewiduje" pumpów. Mierzy trzy rzeczy, które je poprzedzają, i jedną, która je
-zaczyna:
-  PALIWO      — skok OI przy płaskiej cenie (ktoś buduje pozycję po cichu), funding
-                ujemny (shorty płacą), kompresja (ciasny range vs ATR).
-  WIELORYBY   — top-30 portfeli Hyperliquid (te same co Smart Money) kupuje token
-                netto w ostatniej godzinie (userFillsByTime).
-  KATALIZATOR — nowy listing: Upbit (notices API), Hyperliquid (nowy perp w universe),
-                MEXC (nowy kontrakt), Binance (CMS API przez jina). Bybit geo-blokuje runnery — pominięty.
-  ZAPŁON      — wolumen 15m ≥ 4σ vs 24h + cena > +1.5% w 15m: pump już ruszył,
-                masz 5–15 min przewagi. Oznaczane `ignited`, nie liczone jako "przed".
+v2 changes (2026-09-12): po analizie 149 alertów z 10 dni:
+  - oi_surge i oi_build_4h usunięte jako samodzielne sygnały (hit rate 3-5%, szum)
+  - funding zostaje jako główny sygnał (13.6% hit 1h, avg_max 6.76%)
+  - ignition przemianowany na dump warning (avg -6.61% 24h po "zapłonie")
+  - próg minimalny podniesiony z 35 do 50
+  - wymagane: funding + min. 1 inny czynnik (wieloryby/listing/kompresja)
+  - OI wzrost i kompresja zostają jako wzmocnienia (+5-10), nie samodzielne alerty
 
-Każdy alert (score ≥ WATCH) trafia do pump_radar_alerts.json z ceną i czasem; kolejne
-cykle dopisują zwrot +1h / +4h / +24h. Statystyki (hit rate, średni zwrot, per
-składnik) są w pump_radar.json → Gist → panel w terminalu. To jest cały sens:
-po 2 tygodniach wiemy, które składniki mają edge, a które to szum.
+Składniki:
+  FUNDING     — ujemny funding rate (shorty płacą) — jedyny edge potwierdzony danymi
+  WIELORYBY   — top-30 portfeli HL kupuje netto w 1h
+  KATALIZATOR — nowy listing (Upbit, HL, MEXC, Binance)
+  KOMPRESJA   — ciasny range vs ATR (wzmocnienie, nie samodzielny)
+  OI WZROST   — skok OI przy płaskiej cenie (wzmocnienie, nie samodzielny)
+  DUMP WARNING— wolumen 15m ≥ 4σ + cena > +1.5% → oznaczane jako dump risk
+                (historycznie: avg +0.7% 1h, potem -6.61% 24h)
 
-Źródła dostępne z runnera GitHub: Hyperliquid (info), MEXC contract API, Upbit
-notices, jina (Binance announcements), Bybit (może być 403 — z fallbackiem).
+Źródła: Hyperliquid, MEXC, Upbit, Binance (via jina).
 Uruchamiane z workflow przed auto_fusion; wynik ładowany do fusion json.
 Nigdy nie wywraca cyklu (exit 0).
 """
@@ -53,8 +53,8 @@ HL_INFO = "https://api.hyperliquid.xyz/info"
 HL_LEADERBOARD = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
 
 MIN_TURNOVER_USD = 3_000_000    # poniżej — brak płynności, "pump" to 2 zlecenia
-SCORE_WATCH = 35
-SCORE_HIGH = 55
+SCORE_WATCH = 50
+SCORE_HIGH = 65
 MAX_KLINE_CANDIDATES = 40       # ile tokenów dostaje 5m klines (kompresja + zapłon) w cyklu
 ALERT_COOLDOWN_H = 6            # ten sam token nie alertuje częściej niż co 6h (chyba że HIGH po WATCH)
 HIT_1H_PCT = 2.0                # "trafienie" = +2% w 1h lub +3% w 4h
@@ -336,23 +336,16 @@ def score_coin(coin, u, series, flow, listings, klines):
     oi1 = pct(u["oi_usd"], p1[2]) if p1 and p1[2] else None
     oi4 = pct(u["oi_usd"], p4[2]) if p4 and p4[2] else None
 
-    # PALIWO: OI rośnie, cena stoi
-    if oi1 is not None and px1 is not None:
-        if oi1 >= 15 and abs(px1) < 1.5:
-            parts["oi_surge"] = 30
-        elif oi1 >= 8 and abs(px1) < 1.0:
-            parts["oi_surge"] = 22
-    if oi4 is not None and px4 is not None and oi4 >= 15 and abs(px4) < 3:
-        parts["oi_build_4h"] = 10
+    # ── FUNDING (główny sygnał — jedyny z potwierdzonym edge) ──
     f = u.get("funding_8h") or 0.0
     if f <= -0.10:
-        parts["funding"] = 25
+        parts["funding"] = 35          # bardzo ujemny — shorty mocno płacą
     elif f <= -0.03:
-        parts["funding"] = 15
+        parts["funding"] = 25
     elif f <= -0.015:
-        parts["funding"] = 8
+        parts["funding"] = 15
 
-    # WIELORYBY: netto kupno top-30 w 1h
+    # ── WIELORYBY: netto kupno top-30 w 1h ──
     fl = flow.get(coin)
     if fl and fl["net"] >= 2e6:
         parts["whales"] = 30
@@ -361,19 +354,27 @@ def score_coin(coin, u, series, flow, listings, klines):
     elif fl and fl["net"] >= 1.5e5 and fl["wallets"] >= 2:
         parts["whales"] = 12
 
-    # KATALIZATOR
+    # ── KATALIZATOR ──
     if coin in listings:
         parts["listing"] = 30
         tags.append("listing:" + "/".join(listings[coin]))
 
-    # KOMPRESJA + ZAPŁON (tylko kandydaci z klines)
+    # ── OI WZROST (wzmocnienie +5/+10, nie samodzielny sygnał) ──
+    if oi1 is not None and px1 is not None:
+        if oi1 >= 15 and abs(px1) < 1.5:
+            parts["oi_surge"] = 10      # wzmocnienie, było 30
+        elif oi1 >= 8 and abs(px1) < 1.0:
+            parts["oi_surge"] = 5       # wzmocnienie, było 22
+
+    # ── KOMPRESJA + DUMP WARNING (tylko kandydaci z klines) ──
     if klines and len(klines) >= 60:
         closes = [k["c"] for k in klines]; highs = [k["h"] for k in klines]; lows = [k["l"] for k in klines]
         trs = [max(klines[i]["h"] - klines[i]["l"], abs(klines[i]["h"] - closes[i - 1]), abs(klines[i]["l"] - closes[i - 1])) for i in range(1, len(klines))]
         atr = mean(trs[-72:]) if len(trs) >= 72 else mean(trs)
         rng3h = max(highs[-36:]) - min(lows[-36:])
         if atr and rng3h < 3.5 * atr:
-            parts["compression"] = 10
+            parts["compression"] = 10   # wzmocnienie (bez zmian)
+        # DUMP WARNING: volume spike + price spike = historycznie dump po 1-4h
         vols = [k["v"] for k in klines]
         v15 = sum(vols[-3:]); hist = [sum(vols[i:i + 3]) for i in range(0, len(vols) - 3, 3)]
         if len(hist) >= 20:
@@ -381,15 +382,31 @@ def score_coin(coin, u, series, flow, listings, klines):
             z = (v15 - mu) / sd if sd else 0
             px15 = pct(closes[-1], closes[-4]) or 0
             if z >= 4 and px15 >= 1.5:
-                parts["ignition"] = 20; tags.append(f"ignited z{z:.0f} +{px15:.1f}%15m")
+                parts["dump_warning"] = -10; tags.append(f"⚠️DUMP z{z:.0f} +{px15:.1f}%15m")
             elif z >= 3 and px15 >= 0.8:
-                parts["ignition"] = 10
+                parts["dump_warning"] = -5; tags.append(f"⚠️dump z{z:.0f} +{px15:.1f}%15m")
 
-    # PÓŹNO: już po pumpie
+    # ── PÓŹNO: już po pumpie ──
     r24 = u.get("r24") or 0
     if r24 >= 15 or (px1 is not None and px1 >= 5):
         parts["late"] = -15; tags.append("late")
-    score = max(0, min(100, sum(parts.values())))
+
+    raw_score = sum(parts.values())
+
+    # ── GATE: wymagany funding + min. 1 inny czynnik (wieloryby/listing/kompresja) ──
+    has_funding = "funding" in parts
+    has_other = any(k in parts for k in ("whales", "listing", "compression"))
+    # Listing + whales może alertować bez fundingu (inna logika)
+    has_listing_whale = "listing" in parts and "whales" in parts
+
+    if has_funding and has_other:
+        score = max(0, min(100, raw_score))
+    elif has_listing_whale:
+        score = max(0, min(100, raw_score))
+    else:
+        # brak wymaganej kombinacji — score cappowany poniżej WATCH
+        score = min(max(0, raw_score), SCORE_WATCH - 1)
+
     return {
         "ticker": coin, "src": u["src"], "score": score,
         "level": "HIGH" if score >= SCORE_HIGH else "WATCH" if score >= SCORE_WATCH else "none",
@@ -461,7 +478,7 @@ def send_telegram(new_alerts, st):
     highs = [a for a in new_alerts if a["level"] == "HIGH"]
     if not token or not chat or not highs:
         return
-    lines = ["🚀 <b>Pump Radar — HIGH</b>"]
+    lines = ["🚀 <b>Pump Radar v2 — HIGH</b>"]
     for a in highs[:5]:
         parts = " · ".join(f"{k} {v:+d}" for k, v in a["parts"].items())
         lines.append(f"<b>{a['ticker']}</b> {a['score']}/100 @ {a['price']:.6g} — {parts}" + (f"\n   {' · '.join(a['tags'])}" if a["tags"] else ""))
