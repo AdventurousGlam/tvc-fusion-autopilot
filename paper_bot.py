@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Paper Trading Bot v0.1.1
+TVC Fusion Paper Trading Bot v0.6
+
+v0.6 (2026-09-14) — AUDIT FIX: threshold alignment + R:R guard
+  - MIN_LONG_SCORE 65→60 (aligned with auto_fusion BUY threshold)
+  - MAX_SHORT_SCORE 35→40 (symmetric, formula-achievable)
+  - Added MIN_RR_AT_ENTRY=1.0 guard: checks R:R at live market price
+    before opening (fixes stale-TP bug, e.g. SOL 11.09 R:R=0.0)
+  - Root cause: 93% of BUY signals (13/14) were rejected Sep 2-12
+    because auto_fusion marks ≥60 as BUY but paper_bot required ≥65.
 
 Automates the entire paper trading loop:
   - `open`   Reads today's fusion-decisions .md file, extracts JSON, opens
@@ -67,7 +75,8 @@ SHORT_SIZE_CAP_PCT = 0.5    # max % capital per SHORT trade (unlimited upside ri
 # entry_quality wait/skip, regime constraint, pending orders).
 #
 # 5 REGUŁ:
-#   1. Fusion Score ≥65 → LONG  /  ≤35 → SHORT
+#   1. Fusion Score ≥60 → LONG  /  ≤40 → SHORT  (v0.6: aligned w/ auto_fusion)
+#   1b. R:R at live price ≥ 1.0 (v0.6: execution-time guard)
 #   2. Smart Money verdict ≠ opposes (layers.veto is None)
 #   3. Brak makro blackout (3h przed / 1h po tier-1 evencie)
 #   4. SL ze struktury (auto_fusion levels)
@@ -78,8 +87,9 @@ SHORT_SIZE_CAP_PCT = 0.5    # max % capital per SHORT trade (unlimited upside ri
 # dla shortów, MIN_HOLD flip protection.
 # Zachowane: trailing SL, reopen cooldown, daily limit, Telegram, equity.
 # ═══════════════════════════════════════════════════════════════════════════
-MIN_LONG_SCORE = 65            # Reguła #1: minimalny score dla LONG
-MAX_SHORT_SCORE = 35           # Reguła #1: SHORT tylko gdy score jest faktycznie bearish
+MIN_LONG_SCORE = 60            # Reguła #1: minimalny score dla LONG (v0.6: 65→60, aligned with auto_fusion BUY)
+MAX_SHORT_SCORE = 40           # Reguła #1: SHORT gdy score jest bearish (v0.6: 35→40, symmetric)
+MIN_RR_AT_ENTRY = 1.0          # Reguła #1b: min R:R w momencie wejścia (ochrona przed stale TP)
 REOPEN_COOLDOWN_MINUTES = 120  # anty-overtrading: po zamknięciu tickera 2h przerwy
 MAX_NEW_TRADES_PER_DAY = 3     # anty-overtrading: max 3 nowe trade'y dziennie
 
@@ -719,6 +729,36 @@ def cmd_open(args):
         if not entry_price:
             skipped += 1
             continue
+
+        # v0.6 — REGUŁA #1b: R:R GUARD w momencie wejścia.
+        # Fusion generuje TP/SL na podstawie ceny w momencie skanu, ale bot wchodzi
+        # po cenie rynkowej (która może być wyższa/niższa). Jeśli cena przeszła
+        # bliżej TP niż SL, R:R spada poniżej 1:1 → skip. (Fix: SOL 11.09, R:R=0.0)
+        sl_from_json = dec.get("sl")
+        tp1_from_json = dec.get("tp1")
+        if sl_from_json and tp1_from_json:
+            try:
+                _sl = float(sl_from_json)
+                _tp = float(tp1_from_json)
+                _risk = abs(entry_price - _sl)
+                _reward = abs(_tp - entry_price)
+                _live_rr = _reward / max(1e-12, _risk)
+                if _live_rr < MIN_RR_AT_ENTRY:
+                    print(f"[skip] {ticker} {direction.upper()} — R:R at live price = {_live_rr:.2f} "
+                          f"(< {MIN_RR_AT_ENTRY}) entry={entry_price} SL={_sl} TP1={_tp}")
+                    skipped += 1
+                    continue
+                # Also check TP is on the right side of entry
+                if direction == "long" and _tp <= entry_price:
+                    print(f"[skip] {ticker} LONG — TP1 {_tp} <= entry {entry_price} (stale levels)")
+                    skipped += 1
+                    continue
+                if direction == "short" and _tp >= entry_price:
+                    print(f"[skip] {ticker} SHORT — TP1 {_tp} >= entry {entry_price} (stale levels)")
+                    skipped += 1
+                    continue
+            except (TypeError, ValueError):
+                pass  # missing/bad levels — proceed, SL/TP will be set to None
 
         # Asymmetric sizing caps
         size_pct_requested = float(dec.get("size_pct", 0))
