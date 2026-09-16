@@ -43,7 +43,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install optional deps
-        run: pip install certifi ccxt
+        run: pip install certifi ccxt yfinance
 
       - name: Cicha weryfikacja Telegram (getMe+getChat, bez wysyłania wiadomości)
         working-directory: /home/runner/home-clone/Claude/TVCFusion
@@ -72,6 +72,14 @@ jobs:
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 pump_radar.py --telegram
 
+      - name: Correlation Matrix (daily, Binance + Yahoo Finance)
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
+        run: python3 correlation_matrix.py || true
+
+      - name: Polymarket Predictions (snapshot + outcome check)
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
+        run: python3 polymarket_predictions.py || true
+
       - name: Run auto_fusion (fresh algorytmiczne sygnały)
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 auto_fusion.py
@@ -92,7 +100,7 @@ jobs:
           git config user.name "tvc-autopilot"
           git config user.email "autopilot@tvcfusion.local"
           git add fusion_*.json paper_trades.db
-          for f in crypto_picks.json layers_cache.json pump_radar.json pump_radar_alerts.json; do [ -e "$f" ] && git add "$f"; done; true
+          for f in crypto_picks.json layers_cache.json pump_radar.json pump_radar_alerts.json correlation_data.json market_predictions.json; do [ -e "$f" ] && git add "$f"; done; true
           if git diff --cached --quiet; then
             echo "Brak zmian do commitu."
             exit 0
@@ -119,6 +127,7 @@ jobs:
               git checkout --theirs -- paper_trades.db 2>/dev/null || true
               git checkout --theirs -- crypto_picks.json 2>/dev/null || true
               git checkout --theirs -- layers_cache.json pump_radar.json pump_radar_alerts.json 2>/dev/null || true
+              git checkout --theirs -- correlation_data.json market_predictions.json 2>/dev/null || true
               git add -A
               if git rebase --continue; then
                 echo "Konflikt rozwiązany automatycznie."

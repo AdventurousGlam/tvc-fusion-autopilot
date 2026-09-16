@@ -1372,6 +1372,8 @@ def generate_fusion():
         "catalyst_calendar_this_week": generate_catalyst_calendar(),
         "crypto_picks": load_crypto_picks(),
         "pump_radar": load_pump_radar(),
+        "correlation_matrix": load_correlation_data(),
+        "market_predictions": load_market_predictions(),
         "macro_events": generate_macro_events(days_ahead=45),
         "etf": {k: etf_flows.get(k) for k in ("btc", "eth")} if etf_flows else None,
         "macro_context": macro_ctx,
@@ -1403,6 +1405,34 @@ def load_pump_radar():
         ts = datetime.fromisoformat(d["generated_at"].replace("Z", "+00:00"))
         if (datetime.now(timezone.utc) - ts).total_seconds() > 30 * 60:
             return None
+        return d
+    except Exception:
+        return None
+
+
+def load_correlation_data():
+    """correlation_data.json z correlation_matrix.py (daily). Zwraca None gdy brak."""
+    try:
+        p = FUSION_DIR / "correlation_data.json"
+        if not p.exists():
+            return None
+        d = json.loads(p.read_text())
+        # Accept if generated in the last 48h (runs daily)
+        ts = datetime.fromisoformat(d["generated_at"].replace("Z", "+00:00"))
+        if (datetime.now(timezone.utc) - ts).total_seconds() > 48 * 3600:
+            return None
+        return d
+    except Exception:
+        return None
+
+
+def load_market_predictions():
+    """market_predictions.json z polymarket_predictions.py. Zwraca None gdy brak."""
+    try:
+        p = FUSION_DIR / "market_predictions.json"
+        if not p.exists():
+            return None
+        d = json.loads(p.read_text())
         return d
     except Exception:
         return None

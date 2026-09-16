@@ -741,6 +741,63 @@
   }
   footer .cmds { display: flex; gap: 10px; align-items: center; }
   footer code { background: var(--bg-elev-2); padding: 2px 6px; border-radius: 3px; font-family: var(--mono); color: var(--gold); font-size: 9.5px; }
+
+  /* ============ TRADER CHECKLIST ============ */
+  .checklist-cats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  @media (max-width: 700px) { .checklist-cats { grid-template-columns: 1fr; } }
+  .cl-cat { background: var(--bg-elev-2); border-radius: 6px; padding: 8px 10px; }
+  .cl-cat-title { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+  .cl-item { display: flex; align-items: center; gap: 6px; padding: 3px 0; cursor: pointer; font-size: 11px; color: var(--text-muted); transition: color .15s; }
+  .cl-item:hover { color: var(--text); }
+  .cl-item.checked { color: var(--green); }
+  .cl-item input[type=checkbox] { accent-color: var(--green); width: 14px; height: 14px; cursor: pointer; }
+  .cl-progress { height: 6px; background: var(--bg-elev-2); border-radius: 3px; overflow: hidden; margin-top: 8px; }
+  .cl-progress-fill { height: 100%; background: linear-gradient(90deg, var(--red), var(--gold), var(--green)); border-radius: 3px; transition: width .3s ease; }
+  .cl-verdict { text-align: center; padding: 8px; margin-top: 6px; border-radius: 6px; font-weight: 900; font-size: 14px; letter-spacing: 0.04em; }
+  .cl-verdict.go { background: rgba(34,197,94,0.15); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
+  .cl-verdict.nogo { background: rgba(239,68,68,0.15); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+  .cl-verdict.partial { background: rgba(251,146,60,0.15); color: var(--gold); border: 1px solid rgba(251,146,60,0.3); }
+  .cl-mood { display: flex; gap: 8px; justify-content: center; margin-top: 8px; }
+  .cl-mood span { font-size: 20px; cursor: pointer; opacity: 0.4; transition: opacity .15s, transform .15s; }
+  .cl-mood span:hover { opacity: 0.7; transform: scale(1.15); }
+  .cl-mood span.active { opacity: 1; transform: scale(1.25); }
+
+  /* ============ CORRELATION MAP ============ */
+  .corr-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+  .corr-tab { padding: 3px 10px; border-radius: 4px; font-size: 10px; font-weight: 700; cursor: pointer; background: var(--bg-elev-2); color: var(--text-muted); border: 1px solid transparent; transition: all .15s; }
+  .corr-tab.active { background: var(--gold); color: #000; border-color: var(--gold); }
+  .corr-matrix { overflow-x: auto; }
+  .corr-matrix table { border-collapse: collapse; font-size: 9px; font-family: var(--mono); width: 100%; }
+  .corr-matrix th { padding: 3px 2px; font-size: 8px; font-weight: 700; color: var(--text-muted); text-align: center; white-space: nowrap; }
+  .corr-matrix td { padding: 2px; text-align: center; font-weight: 600; min-width: 28px; border-radius: 2px; }
+  .corr-matrix .row-label { text-align: right; padding-right: 4px; color: var(--text-muted); font-weight: 700; font-size: 8px; white-space: nowrap; }
+  .corr-pairs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+  @media (max-width: 700px) { .corr-pairs { grid-template-columns: 1fr; } }
+  .corr-pair-list { background: var(--bg-elev-2); border-radius: 6px; padding: 8px 10px; }
+  .corr-pair-list h4 { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  .corr-pair-row { display: flex; align-items: center; gap: 6px; font-size: 10px; margin-bottom: 3px; }
+  .corr-pair-bar { height: 4px; border-radius: 2px; flex: 1; background: var(--bg-elev); overflow: hidden; }
+  .corr-pair-bar-fill { height: 100%; border-radius: 2px; }
+
+  /* ============ MARKET PREDICTIONS (POLYMARKET) ============ */
+  .pred-cards { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  @media (max-width: 700px) { .pred-cards { grid-template-columns: 1fr; } }
+  .pred-card { background: var(--bg-elev-2); border-radius: 6px; padding: 10px 12px; border: 1px solid var(--border-soft); }
+  .pred-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .pred-card-ticker { font-weight: 900; font-size: 13px; }
+  .pred-card-dir { font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 4px; }
+  .pred-card-dir.up { background: rgba(34,197,94,0.15); color: var(--green); }
+  .pred-card-dir.down { background: rgba(239,68,68,0.15); color: var(--red); }
+  .pred-card-dir.neutral { background: rgba(107,114,128,0.15); color: var(--text-muted); }
+  .pred-pct-bar { height: 6px; background: var(--bg-elev); border-radius: 3px; overflow: hidden; margin: 4px 0; }
+  .pred-pct-fill { height: 100%; border-radius: 3px; transition: width .3s; }
+  .pred-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
+  .pred-stat { text-align: center; background: var(--bg-elev-2); border-radius: 4px; padding: 6px; }
+  .pred-stat .v { font-size: 16px; font-weight: 900; font-family: var(--mono); }
+  .pred-stat .k { font-size: 8px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; margin-top: 2px; }
+  .pred-log { max-height: 200px; overflow-y: auto; padding-right: 4px; }
+  .pred-log-row { display: grid; grid-template-columns: 70px 40px 50px 50px 40px; gap: 6px; padding: 3px 0; border-bottom: 1px solid var(--border-soft); font-size: 10px; align-items: center; }
+  .pred-log-row.header { font-weight: 800; color: var(--text-muted); text-transform: uppercase; font-size: 8px; letter-spacing: 0.06em; }
 </style>
 </head>
 <body>
@@ -1443,6 +1500,55 @@ const I18N = {
   watchlist_empty:    { pl: 'Kliknij + aby dodać token do watchlisty', en: 'Click + to add a token to your watchlist' },
   watchlist_no_score: { pl: 'brak Fusion Score',                    en: 'no Fusion Score' },
   watchlist_remove:   { pl: 'Usuń z watchlisty',                    en: 'Remove from watchlist' },
+  // ─── TRADER CHECKLIST ───
+  checklist:          { pl: 'Checklista Tradera',                   en: 'Trader Checklist' },
+  checklist_sub:      { pl: 'codzienna rutyna · nawyki dyscypliny', en: 'daily routine · discipline habits' },
+  cl_risk:            { pl: 'Zarządzanie ryzykiem',                 en: 'Risk Management' },
+  cl_emotion:         { pl: 'Stan emocjonalny',                     en: 'Emotional State' },
+  cl_plan:            { pl: 'Plan trade',                            en: 'Trade Plan' },
+  cl_discipline:      { pl: 'Dyscyplina',                           en: 'Discipline' },
+  cl_r1:  { pl: 'Stop loss ustawiony przed wejściem',               en: 'Stop loss set before entry' },
+  cl_r2:  { pl: 'Pozycja max 2% portfela',                          en: 'Position max 2% of portfolio' },
+  cl_r3:  { pl: 'R:R minimum 2:1',                                  en: 'R:R minimum 2:1' },
+  cl_r4:  { pl: 'Nie więcej niż 3 otwarte pozycje',                 en: 'No more than 3 open positions' },
+  cl_r5:  { pl: 'Sprawdziłem korelację między pozycjami',           en: 'Checked correlation between positions' },
+  cl_e1:  { pl: 'Nie handluję pod wpływem emocji',                  en: 'Not trading under emotions' },
+  cl_e2:  { pl: 'Spałem minimum 7h',                                en: 'Slept minimum 7h' },
+  cl_e3:  { pl: 'Nie próbuję \"odrobić\" strat',                    en: 'Not trying to recover losses' },
+  cl_e4:  { pl: 'Akceptuję możliwość straty',                       en: 'I accept possible loss' },
+  cl_e5:  { pl: 'Nie mam FOMO',                                     en: 'No FOMO' },
+  cl_e6:  { pl: 'Stan umysłu: spokojny i skupiony',                 en: 'Mental state: calm and focused' },
+  cl_p1:  { pl: 'Mam jasny powód wejścia (setup)',                  en: 'Clear entry reason (setup)' },
+  cl_p2:  { pl: 'Zidentyfikowałem trend (HTF)',                     en: 'Identified trend (HTF)' },
+  cl_p3:  { pl: 'Sprawdziłem kalendarz makro',                      en: 'Checked macro calendar' },
+  cl_p4:  { pl: 'Mam plan wyjścia (TP + scenariusz B)',             en: 'Have exit plan (TP + plan B)' },
+  cl_p5:  { pl: 'Setup potwierdzony przez min. 2 źródła',           en: 'Setup confirmed by min. 2 sources' },
+  cl_d1:  { pl: 'Nie przesuwam SL w złą stronę',                    en: 'Not moving SL in wrong direction' },
+  cl_d2:  { pl: 'Przestrzegam dziennego limitu strat',              en: 'Respecting daily loss limit' },
+  cl_d3:  { pl: 'Zapisuję każdy trade w dzienniku',                 en: 'Logging every trade in journal' },
+  cl_d4:  { pl: 'Nie zmieniam planu w trakcie trade\'u',            en: 'Not changing plan mid-trade' },
+  cl_d5:  { pl: 'Robię przerwę po 2 stratach z rzędu',             en: 'Taking break after 2 consecutive losses' },
+  cl_mood_label:      { pl: 'Nastrój',                              en: 'Mood' },
+  cl_go:              { pl: 'GO — HANDLUJ',                          en: 'GO — TRADE' },
+  cl_nogo:            { pl: 'NO-GO — ODPUŚĆ',                       en: 'NO-GO — SIT OUT' },
+  cl_partial:         { pl: 'OSTROŻNIE — małe pozycje',             en: 'CAUTION — small positions' },
+  // ─── CORRELATION MAP ───
+  corr_map:           { pl: 'Mapa Korelacji',                       en: 'Correlation Map' },
+  corr_sub:           { pl: 'korelacja Pearsona · dane z gist',     en: 'Pearson correlation · gist data' },
+  corr_most:          { pl: 'Najbardziej skorelowane',               en: 'Most correlated' },
+  corr_least:         { pl: 'Najmniej skorelowane',                  en: 'Least correlated' },
+  corr_no_data:       { pl: 'Brak danych korelacji — czekam na correlation_matrix.py', en: 'No correlation data — waiting for correlation_matrix.py' },
+  // ─── MARKET PREDICTIONS ───
+  pred_title:         { pl: 'Predykcje Rynku',                      en: 'Market Predictions' },
+  pred_sub:           { pl: 'Polymarket · aktywne przy ≥65%',        en: 'Polymarket · active at ≥65%' },
+  pred_up:            { pl: 'WZROST',                                en: 'UP' },
+  pred_down:          { pl: 'SPADEK',                                en: 'DOWN' },
+  pred_neutral:       { pl: 'NEUTRALNE',                             en: 'NEUTRAL' },
+  pred_accuracy:      { pl: 'Trafność ogólna',                      en: 'Overall accuracy' },
+  pred_confident:     { pl: 'Pewne (≥65%)',                          en: 'Confident (≥65%)' },
+  pred_total:         { pl: 'Łącznie predykcji',                    en: 'Total predictions' },
+  pred_log_title:     { pl: 'Historia predykcji',                   en: 'Prediction history' },
+  pred_no_data:       { pl: 'Brak danych predykcji — czekam na polymarket_predictions.py', en: 'No prediction data — waiting for polymarket_predictions.py' },
 };
 
 function t(key) { return (I18N[key] && I18N[key][_lang]) || (I18N[key] && I18N[key].pl) || key; }
@@ -1593,6 +1699,215 @@ async function fetchWatchlistSparklines() {
     await new Promise(r => setTimeout(r, 100));
   }
 }
+// ═══════════════════════════════════════════════════════════════
+// TRADER CHECKLIST — 21 checkboxes, mood selector, GO/NO-GO
+// ═══════════════════════════════════════════════════════════════
+const CHECKLIST_ITEMS = {
+  risk:       ['cl_r1','cl_r2','cl_r3','cl_r4','cl_r5'],
+  emotion:    ['cl_e1','cl_e2','cl_e3','cl_e4','cl_e5','cl_e6'],
+  plan:       ['cl_p1','cl_p2','cl_p3','cl_p4','cl_p5'],
+  discipline: ['cl_d1','cl_d2','cl_d3','cl_d4','cl_d5']
+};
+const CHECKLIST_CAT_LABELS = { risk: 'cl_risk', emotion: 'cl_emotion', plan: 'cl_plan', discipline: 'cl_discipline' };
+const CHECKLIST_CAT_ICONS = { risk: '🛡️', emotion: '🧠', plan: '📋', discipline: '⚡' };
+const CHECKLIST_CAT_COLORS = { risk: 'var(--cyan)', emotion: 'var(--purple)', plan: 'var(--blue)', discipline: 'var(--gold)' };
+const MOOD_EMOJIS = ['😤','😟','😐','🙂','😎'];
+
+function getChecklistKey() {
+  const d = new Date(); return `tvc_checklist_${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function loadChecklist() {
+  try { return JSON.parse(localStorage.getItem(getChecklistKey())) || { checks: {}, mood: -1 }; } catch(e) { return { checks: {}, mood: -1 }; }
+}
+function saveChecklist(data) {
+  try { localStorage.setItem(getChecklistKey(), JSON.stringify(data)); } catch(e) {}
+}
+function toggleCheckItem(key) {
+  const data = loadChecklist();
+  data.checks[key] = !data.checks[key];
+  saveChecklist(data);
+  renderChecklist();
+}
+function setChecklistMood(idx) {
+  const data = loadChecklist();
+  data.mood = data.mood === idx ? -1 : idx;
+  saveChecklist(data);
+  renderChecklist();
+}
+function renderChecklist() {
+  const slot = document.getElementById('checklist-slot');
+  if (!slot) return;
+  const data = loadChecklist();
+  const allKeys = Object.values(CHECKLIST_ITEMS).flat();
+  const checked = allKeys.filter(k => data.checks[k]);
+  const total = allKeys.length;
+  const pct = Math.round((checked.length / total) * 100);
+  let verdict = 'nogo', verdictKey = 'cl_nogo';
+  if (pct >= 85) { verdict = 'go'; verdictKey = 'cl_go'; }
+  else if (pct >= 60) { verdict = 'partial'; verdictKey = 'cl_partial'; }
+
+  let cats = '';
+  for (const [cat, keys] of Object.entries(CHECKLIST_ITEMS)) {
+    const catChecked = keys.filter(k => data.checks[k]).length;
+    cats += `<div class="cl-cat">
+      <div class="cl-cat-title" style="color:${CHECKLIST_CAT_COLORS[cat]}">${CHECKLIST_CAT_ICONS[cat]} ${t(CHECKLIST_CAT_LABELS[cat])} <span style="font-size:9px;color:var(--text-dim);font-weight:600">${catChecked}/${keys.length}</span></div>
+      ${keys.map(k => `<label class="cl-item${data.checks[k] ? ' checked' : ''}" onclick="toggleCheckItem('${k}')">
+        <input type="checkbox" ${data.checks[k] ? 'checked' : ''} onclick="event.stopPropagation();toggleCheckItem('${k}')"> ${t(k)}
+      </label>`).join('')}
+    </div>`;
+  }
+
+  slot.innerHTML = `<section class="panel p-12" id="sec-checklist">
+    <div class="panel-head"><h3>${t('checklist')}</h3><span class="meta">${checked.length}/${total} · ${t('checklist_sub')}</span></div>
+    <div class="cl-progress"><div class="cl-progress-fill" style="width:${pct}%"></div></div>
+    <div style="text-align:center;font-size:10px;color:var(--text-muted);margin:4px 0;font-weight:700">${checked.length} / ${total} (${pct}%)</div>
+    <div class="cl-verdict ${verdict}">${t(verdictKey)}</div>
+    <div class="checklist-cats" style="margin-top:10px">${cats}</div>
+    <div style="text-align:center;margin-top:10px">
+      <div style="font-size:9px;color:var(--text-muted);text-transform:uppercase;font-weight:700;letter-spacing:0.06em;margin-bottom:4px">${t('cl_mood_label')}</div>
+      <div class="cl-mood">${MOOD_EMOJIS.map((e,i) => `<span class="${data.mood===i?'active':''}" onclick="setChecklistMood(${i})">${e}</span>`).join('')}</div>
+    </div>
+  </section>`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// CORRELATION MAP — 14×14 heatmap from gist data
+// ═══════════════════════════════════════════════════════════════
+let corrTimeframe = '30d';
+function corrColor(val) {
+  if (val == null || isNaN(val)) return 'var(--bg-elev-2)';
+  const v = Math.max(-1, Math.min(1, val));
+  if (v > 0) { const a = Math.round(v * 180); return `rgba(34,197,94,${(a/255).toFixed(2)})`; }
+  else { const a = Math.round(Math.abs(v) * 180); return `rgba(239,68,68,${(a/255).toFixed(2)})`; }
+}
+function setCorrTimeframe(tf) {
+  corrTimeframe = tf;
+  renderCorrelationMap();
+}
+function renderCorrelationMap() {
+  const slot = document.getElementById('correlation-slot');
+  if (!slot) return;
+  const corrData = lastFusion?.correlation_matrix;
+  if (!corrData || !corrData[corrTimeframe]) {
+    slot.innerHTML = `<section class="panel p-12" id="sec-correlation">
+      <div class="panel-head"><h3>${t('corr_map')}</h3><span class="meta">${t('corr_sub')}</span></div>
+      <div style="padding:20px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">${t('corr_no_data')}</div>
+    </section>`;
+    return;
+  }
+  const tf = corrData[corrTimeframe];
+  const assets = tf.assets || [];
+  const matrix = tf.matrix || [];
+  const tabs = ['7d','14d','30d','90d'].map(t2 => `<span class="corr-tab${corrTimeframe===t2?' active':''}" onclick="setCorrTimeframe('${t2}')">${t2}</span>`).join('');
+
+  // Build table
+  let thead = '<tr><th></th>' + assets.map(a => `<th>${a}</th>`).join('') + '</tr>';
+  let tbody = '';
+  for (let i = 0; i < assets.length; i++) {
+    tbody += '<tr><td class="row-label">' + assets[i] + '</td>';
+    for (let j = 0; j < assets.length; j++) {
+      const val = matrix[i]?.[j];
+      const display = i === j ? '1.00' : (val != null ? val.toFixed(2) : '—');
+      const bg = i === j ? 'var(--bg-elev)' : corrColor(val);
+      const color = i === j ? 'var(--text-dim)' : (Math.abs(val||0) > 0.5 ? '#fff' : 'var(--text-muted)');
+      tbody += `<td style="background:${bg};color:${color};font-size:8px">${display}</td>`;
+    }
+    tbody += '</tr>';
+  }
+
+  // Most/least correlated pairs
+  let pairs = [];
+  for (let i = 0; i < assets.length; i++) {
+    for (let j = i+1; j < assets.length; j++) {
+      if (matrix[i]?.[j] != null) pairs.push({ a: assets[i], b: assets[j], v: matrix[i][j] });
+    }
+  }
+  pairs.sort((a,b) => b.v - a.v);
+  const most = pairs.slice(0, 5);
+  const least = pairs.slice(-5).reverse();
+  const pairHtml = (list, positive) => list.map(p => {
+    const pct = Math.round(Math.abs(p.v) * 100);
+    const clr = positive ? 'var(--green)' : 'var(--red)';
+    return `<div class="corr-pair-row"><span style="font-weight:700;color:var(--text)">${p.a}/${p.b}</span><span style="color:${clr};font-weight:700;font-family:var(--mono)">${p.v.toFixed(2)}</span><div class="corr-pair-bar"><div class="corr-pair-bar-fill" style="width:${pct}%;background:${clr}"></div></div></div>`;
+  }).join('');
+
+  slot.innerHTML = `<section class="panel p-12" id="sec-correlation">
+    <div class="panel-head"><h3>${t('corr_map')}</h3><span class="meta">${t('corr_sub')}</span></div>
+    <div class="corr-tabs">${tabs}</div>
+    <div class="corr-matrix"><table>${thead}${tbody}</table></div>
+    <div class="corr-pairs">
+      <div class="corr-pair-list"><h4 style="color:var(--green)">🔗 ${t('corr_most')}</h4>${pairHtml(most, true)}</div>
+      <div class="corr-pair-list"><h4 style="color:var(--red)">🔀 ${t('corr_least')}</h4>${pairHtml(least, false)}</div>
+    </div>
+  </section>`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// MARKET PREDICTIONS — Polymarket-based BTC/ETH predictions
+// ═══════════════════════════════════════════════════════════════
+function renderPredictions() {
+  const slot = document.getElementById('predictions-slot');
+  if (!slot) return;
+  const predData = lastFusion?.market_predictions;
+  if (!predData) {
+    slot.innerHTML = `<section class="panel p-12" id="sec-predictions">
+      <div class="panel-head"><h3>${t('pred_title')}</h3><span class="meta">${t('pred_sub')}</span></div>
+      <div style="padding:20px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">${t('pred_no_data')}</div>
+    </section>`;
+    return;
+  }
+  const current = predData.current || {};
+  const stats = predData.stats || {};
+  const log = predData.log || [];
+
+  // Cards for each asset
+  let cards = '';
+  for (const [ticker, info] of Object.entries(current)) {
+    const pct = info.pct || 50;
+    const dir = pct >= 65 ? 'up' : (pct <= 35 ? 'down' : 'neutral');
+    const dirLabel = dir === 'up' ? t('pred_up') : (dir === 'down' ? t('pred_down') : t('pred_neutral'));
+    const priceChange = info.price_change != null ? `${info.price_change >= 0 ? '+' : ''}${info.price_change.toFixed(2)}%` : '—';
+    const priceColor = (info.price_change || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+    const barColor = dir === 'up' ? 'var(--green)' : (dir === 'down' ? 'var(--red)' : 'var(--text-muted)');
+    const active = pct >= 65 || pct <= 35;
+    cards += `<div class="pred-card" style="${active ? 'border-color:' + barColor : ''}">
+      <div class="pred-card-head">
+        <span class="pred-card-ticker">${ticker}</span>
+        <span class="pred-card-dir ${dir}">${dirLabel}</span>
+      </div>
+      <div style="font-size:10px;color:var(--text-muted);margin-bottom:4px">${t('pred_up')}: <strong style="color:var(--text);font-family:var(--mono)">${pct}%</strong> · ${_lang==='pl'?'Zmiana ceny':'Price'}: <strong style="color:${priceColor};font-family:var(--mono)">${priceChange}</strong></div>
+      <div class="pred-pct-bar"><div class="pred-pct-fill" style="width:${pct}%;background:${barColor}"></div></div>
+      ${active ? `<div style="font-size:9px;text-align:center;color:${barColor};font-weight:700;margin-top:4px">⚡ ${_lang==='pl'?'AKTYWNA PREDYKCJA':'ACTIVE PREDICTION'}</div>` : ''}
+    </div>`;
+  }
+
+  // Stats
+  const acc = stats.overall_accuracy ?? '—';
+  const conf = stats.confident_accuracy ?? '—';
+  const totalPred = stats.total_predictions ?? '—';
+
+  // Log
+  let logHtml = `<div class="pred-log-row header"><span>${_lang==='pl'?'Data':'Date'}</span><span>Ticker</span><span>${_lang==='pl'?'Predykcja':'Prediction'}</span><span>${_lang==='pl'?'Wynik':'Result'}</span><span>✓/✗</span></div>`;
+  for (const entry of log.slice(0, 20)) {
+    const ok = entry.correct;
+    const icon = ok === true ? '✅' : (ok === false ? '❌' : '⏳');
+    const dirTxt = entry.direction === 'up' ? '↑' : (entry.direction === 'down' ? '↓' : '—');
+    const resTxt = entry.actual_change != null ? `${entry.actual_change >= 0 ? '+' : ''}${entry.actual_change.toFixed(1)}%` : '—';
+    logHtml += `<div class="pred-log-row"><span>${entry.date || '—'}</span><span style="font-weight:700">${entry.ticker || '—'}</span><span>${dirTxt} ${entry.pct || '—'}%</span><span style="color:${(entry.actual_change||0)>=0?'var(--green)':'var(--red)'}">${resTxt}</span><span>${icon}</span></div>`;
+  }
+
+  slot.innerHTML = `<section class="panel p-12" id="sec-predictions">
+    <div class="panel-head"><h3>${t('pred_title')}</h3><span class="meta">${t('pred_sub')}</span></div>
+    <div class="pred-cards">${cards || `<div style="padding:12px;color:var(--text-dim);font-size:11px">${t('pred_no_data')}</div>`}</div>
+    <div class="pred-stats" style="margin-top:10px">
+      <div class="pred-stat"><div class="v" style="color:var(--cyan)">${typeof acc==='number'?acc+'%':acc}</div><div class="k">${t('pred_accuracy')}</div></div>
+      <div class="pred-stat"><div class="v" style="color:var(--green)">${typeof conf==='number'?conf+'%':conf}</div><div class="k">${t('pred_confident')}</div></div>
+      <div class="pred-stat"><div class="v" style="color:var(--gold)">${totalPred}</div><div class="k">${t('pred_total')}</div></div>
+    </div>
+    ${log.length ? `<div style="margin-top:10px"><div style="font-size:10px;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">${t('pred_log_title')}</div><div class="pred-log">${logHtml}</div></div>` : ''}
+  </section>`;
+}
+
 function renderWatchlistPanel() {
   const slot = document.getElementById('watchlist-slot');
   if (!slot) return;
@@ -2473,6 +2788,12 @@ function render() {
 
       <div id="cycle-slot" class="hide-trading" style="grid-column: span 12; width: 100%;"></div>
 
+      <!-- CORRELATION MAP — Pearson correlation heatmap (gist data) -->
+      <div id="correlation-slot" class="hide-trading" style="grid-column: span 12; width: 100%;"></div>
+
+      <!-- MARKET PREDICTIONS — Polymarket-based daily predictions (gist data) -->
+      <div id="predictions-slot" class="hide-trading" style="grid-column: span 12; width: 100%;"></div>
+
       <!-- ═══ E · WYNIKI I NAUKA — co działa, P&L, dziennik ═══ -->
       <div class="section-header " style="grid-column: span 12; display:flex;align-items:center;gap:10px;margin:10px 0 4px;padding:6px 10px;background:linear-gradient(90deg,rgba(167,139,250,0.15),transparent);border-left:4px solid var(--purple);border-radius:4px">
         <span style="font-size:14px;font-weight:900;color:var(--purple);letter-spacing:0.03em">${t('sec_learn')}</span>
@@ -2486,6 +2807,9 @@ function render() {
       </section>
       <div id="orderflow-slot" style="grid-column: span 12; width: 100%;"></div>
       <div id="journal-slot" style="grid-column: span 12; width: 100%;"></div>
+
+      <!-- TRADER CHECKLIST — daily discipline checklist with GO/NO-GO -->
+      <div id="checklist-slot" style="grid-column: span 12; width: 100%;"></div>
     </main>
   `;
 
@@ -2513,6 +2837,11 @@ function render() {
   renderWatchlistPanel();
   fetchWatchlistPrices();
   fetchWatchlistSparklines();
+
+  // ── New panels: Checklist, Correlation Map, Predictions ──
+  renderChecklist();
+  renderCorrelationMap();
+  renderPredictions();
 }
 
 function renderDecision(d) {
