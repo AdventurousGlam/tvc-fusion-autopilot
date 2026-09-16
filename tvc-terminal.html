@@ -5825,14 +5825,17 @@ function generateCommandCenterActions() {
     //  40+: MEDIUM (ENTRY_SETUP, big walls)
     //  10+: LOW (informational)
 
-    // 1. CUT_OR_PARTIAL verdict → highest urgency
-    if (state.verdict === 'CUT_OR_PARTIAL') {
+    // v0.9: only show position-management actions for tokens with REAL open positions
+    const hasRealPos = (lastFusion?.state?.open_positions || []).some(p => p.ticker === ticker);
+
+    // 1. CUT_OR_PARTIAL verdict → highest urgency (ONLY if real position)
+    if (state.verdict === 'CUT_OR_PARTIAL' && hasRealPos) {
       actions.push({
         priority: 100,
         ticker, urgency: 'URGENT',
         icon: '🚨',
         color: 'var(--red)',
-        title: `${ticker}: Take partial 30-50% NOW`,
+        title: `${ticker}: Rozważ partial 30-50%`,
         reasoning: state.reasoning.slice(0, 3).join(' · '),
         command: `python3 ~/Claude/TVCFusion/paper_bot.py close ${ticker}`,
       });
@@ -5865,28 +5868,30 @@ function generateCommandCenterActions() {
         command: `Obserwuj — brak kierunkowej konwiktcji, ewentualnie graj brzegi zakresu`,
       });
     }
-    // 3. Fusion risk_flag mentions extension/stretched (like XRP)
-    if (dec.risk_flag && /extreme|stretched|extended|mean.reversion|najbardziej/i.test(dec.risk_flag) && state.verdict !== 'CUT_OR_PARTIAL') {
+    // 3. Fusion risk_flag "extreme" — only if real position AND truly extreme (score < 30)
+    // v0.9: lowered priority 85→55, narrowed trigger (was any "stretched", now only "extreme" + low score)
+    if (dec.risk_flag && /extreme/i.test(dec.risk_flag) && dec.score < 30 && hasRealPos && state.verdict !== 'CUT_OR_PARTIAL') {
       actions.push({
-        priority: 85,
-        ticker, urgency: 'HIGH',
+        priority: 55,
+        ticker, urgency: 'MEDIUM',
         icon: '💰',
         color: 'var(--amber)',
-        title: `${ticker}: Fusion flags extended — take partial defensive`,
-        reasoning: dec.risk_flag.substring(0, 180) + '...',
-        command: `python3 ~/Claude/TVCFusion/paper_bot.py close ${ticker}`,
+        title: `${ticker}: Fusion flags extreme risk — obserwuj`,
+        reasoning: dec.risk_flag.substring(0, 180),
+        command: `Obserwuj — trailing SL chroni automatycznie`,
       });
     }
-    // 4. TIGHTEN_SL verdict
-    if (state.verdict === 'TIGHTEN_SL') {
+    // 4. TIGHTEN_SL verdict — only if real position
+    // v0.9: lowered priority 70→50, softer language
+    if (state.verdict === 'TIGHTEN_SL' && hasRealPos) {
       actions.push({
-        priority: 70,
-        ticker, urgency: 'HIGH',
+        priority: 50,
+        ticker, urgency: 'MEDIUM',
         icon: '⚠️',
         color: 'var(--amber)',
-        title: `${ticker}: Tighten SL do breakeven+`,
+        title: `${ticker}: Rozważ zacieśnienie SL`,
         reasoning: state.reasoning.slice(0, 3).join(' · '),
-        command: state.actions[0] || 'Update SL manually',
+        command: 'Trailing SL aktywny — rozważ ręczne dostrojenie',
       });
     }
     // 5. ENTRY_SETUP (WATCH triggered)
@@ -5901,33 +5906,35 @@ function generateCommandCenterActions() {
         command: `python3 ~/Claude/TVCFusion/paper_bot.py open (fresh fusion needed)`,
       });
     }
-    // 6. Big wall > $5M nearby (< 2%)
+    // 6. Big wall > $5M nearby (< 2%) — informational, no action commands
+    // v0.9: lowered priority 50→30, removed "take partial" from sell walls
     if (walls) {
       const bigWalls = [...(walls.buyWalls||[]), ...(walls.sellWalls||[])].filter(w => w.notional > 5_000_000 && Math.abs(parseFloat(w.distance)) < 2);
       for (const wall of bigWalls.slice(0, 1)) {
         const isBuy = walls.buyWalls.includes(wall);
         actions.push({
-          priority: 50,
-          ticker, urgency: 'MEDIUM',
+          priority: 30,
+          ticker, urgency: 'LOW',
           icon: isBuy ? '🟦' : '🟧',
           color: isBuy ? '#38BDF8' : '#FB923C',
           title: `${ticker}: Big ${isBuy?'BUY':'SELL'} wall $${(wall.notional/1e6).toFixed(1)}M @ ${fmt(wall.price)}`,
-          reasoning: `Distance ${wall.distance}% · age ${Math.round((wall.ageMs||0)/1000)}s · ${isBuy?'support':'resistance'} forming`,
-          command: isBuy ? `Watch dla entry przy pullback` : `Adjust TP przed wall, take partial`,
+          reasoning: `Distance ${wall.distance}% · age ${Math.round((wall.ageMs||0)/1000)}s · ${isBuy?'support':'resistance'}`,
+          command: isBuy ? `Wsparcie formuje się — dobry kontekst` : `Opór — obserwuj reakcję ceny`,
         });
       }
     }
-    // 7. Extreme imbalance sustained
+    // 7. Extreme imbalance sustained — informational only
+    // v0.9: removed "tighten SL further" — this is noise, trailing handles it
     if (Math.abs(smoothedImb) > 0.4 && ['HOLD', 'HOLD_STRONG'].includes(state.verdict)) {
       const isBull = smoothedImb > 0;
       actions.push({
-        priority: 40,
-        ticker, urgency: 'MEDIUM',
+        priority: 25,
+        ticker, urgency: 'LOW',
         icon: isBull ? '🚀' : '📉',
         color: isBull ? 'var(--green)' : 'var(--red)',
-        title: `${ticker}: ${isBull?'Strong BULLS':'Strong BEARS'} sustained ${(smoothedImb*100).toFixed(0)}%`,
-        reasoning: `5s avg imbalance przez extended period · ${isBull ? 'momentum long' : 'defensive'}`,
-        command: isBull ? `Hold, trailing SL up` : `Consider tightening SL further`,
+        title: `${ticker}: ${isBull?'BULLS':'BEARS'} dominują ${(smoothedImb*100).toFixed(0)}%`,
+        reasoning: `5s avg imbalance · ${isBull ? 'momentum sprzyja long' : 'chwilowa presja sprzedaży'}`,
+        command: isBull ? `Momentum wspiera — trzymaj` : `Obserwuj — trailing SL chroni automatycznie`,
       });
     }
     // 8. FLUSH RISK WYSOKI — nie otwieraj longów, zacieśnij trailing (prio 90)
@@ -6065,7 +6072,10 @@ function interpretTokenState(ticker) {
 
   // 1. FUSION baseline
   const isLong = dec.direction === 'long';
-  const hasOpenPos = dec.action !== 'SKIP' && dec.action !== 'WATCH';
+  // v0.9 FIX: check REAL paper positions, not Fusion action label
+  // Old bug: dec.action !== 'SKIP' treated every BUY/HOLD as "has position"
+  const openPositions = lastFusion?.state?.open_positions || [];
+  const hasOpenPos = openPositions.some(p => p.ticker === ticker);
   if (dec.action === 'STRONG_BUY') { score += 3; reasoning.push(`Fusion STRONG_BUY score ${dec.score}`); }
   else if (dec.action === 'BUY') { score += 2; reasoning.push(`Fusion BUY score ${dec.score}`); }
   else if (dec.action === 'WATCH') { score += 0; reasoning.push(`Fusion WATCH (${dec.score}) — no entry yet`); }
@@ -6081,14 +6091,21 @@ function interpretTokenState(ticker) {
     else reasoning.push(`Position ${pctFromEntry.toFixed(1)}% od entry (⚠️ underwater)`);
   }
 
+  // 2b. TREND BONUS — high-conviction Fusion resists microstructure noise
+  // v0.9: strong Fusion (score 70+) gets +1 buffer so orderbook noise can't flip verdict
+  if (dec.score >= 75) { score += 2; reasoning.push(`📈 Fusion ${dec.score} (very high conviction) — noise-resistant`); }
+  else if (dec.score >= 70) { score += 1; reasoning.push(`📈 Fusion ${dec.score} (high conviction) — partially noise-resistant`); }
+
   // 3. ORDERBOOK signal (only if WS active)
+  // v0.9: reduced weight ±1 max (was ±2) — orderbook is noise, not structure
   if (walls && ob) {
     const smoothedImb = walls.imbalanceSmoothed ?? walls.imbalance;
     const rawImb = walls.imbalance;
-    if (rawImb < -0.5) { score -= 2; reasoning.push(`Orderbook: ${(rawImb*100).toFixed(0)}% BEARS (asks dominują ${Math.round(1/(1+rawImb))}×)`); }
-    else if (rawImb > 0.5) { score += 2; reasoning.push(`Orderbook: +${(rawImb*100).toFixed(0)}% BULLS (bids dominują)`); }
-    else if (rawImb < -0.25) { score -= 1; reasoning.push(`Orderbook: ${(rawImb*100).toFixed(0)}% BEARS`); }
-    else if (rawImb > 0.25) { score += 1; reasoning.push(`Orderbook: +${(rawImb*100).toFixed(0)}% BULLS`); }
+    if (rawImb < -0.5) { score -= 1; reasoning.push(`Orderbook: ${(rawImb*100).toFixed(0)}% BEARS (asks dominują)`); }
+    else if (rawImb > 0.5) { score += 1; reasoning.push(`Orderbook: +${(rawImb*100).toFixed(0)}% BULLS (bids dominują)`); }
+    // moderate imbalance (0.25-0.5): informational only, no score impact
+    else if (rawImb < -0.25) { reasoning.push(`Orderbook: ${(rawImb*100).toFixed(0)}% lekko bearish (info)`); }
+    else if (rawImb > 0.25) { reasoning.push(`Orderbook: +${(rawImb*100).toFixed(0)}% lekko bullish (info)`); }
     // Divergence raw vs smoothed
     if (Math.abs(smoothedImb - rawImb) > 0.5) {
       reasoning.push(`⚡ FLIP! Raw ${(rawImb*100).toFixed(0)}% vs 5s avg ${(smoothedImb*100).toFixed(0)}% — coś się zmienia TERAZ`);
@@ -6164,48 +6181,59 @@ function interpretTokenState(ticker) {
   }
 
   // ═══ VERDICT LOGIC ═══
+  // v0.9: wider thresholds — harder to trigger defensive verdicts
+  // Old: HOLD >= 0, TIGHTEN >= -2, CUT < -2
+  // New: HOLD >= -1, TIGHTEN >= -4, CUT < -4
   let verdict, color;
-  if (!hasOpenPos && dec.action === 'WATCH') {
-    // WATCH state — waiting for entry trigger
-    verdict = score > 1 ? 'ENTRY_SETUP' : 'WATCH';
-    color = score > 1 ? 'var(--gold)' : 'var(--text-muted)';
-    if (score > 1) actions.push(`✅ Trigger warunki spełnione — rozważ entry z size ${dec.size_pct}%`);
+  if (!hasOpenPos && (dec.action === 'WATCH' || dec.action === 'HOLD')) {
+    // WATCH/HOLD state — no real position, waiting for entry trigger
+    verdict = score > 2 ? 'ENTRY_SETUP' : 'WATCH';
+    color = score > 2 ? 'var(--gold)' : 'var(--text-muted)';
+    if (score > 2) actions.push(`✅ Trigger warunki spełnione — rozważ entry z size ${dec.size_pct}%`);
     else actions.push(`👀 Watch — czekaj na trigger (Fusion: ${dec.risk_flag ? 'sprawdź risk_flag' : 'brak alert'})`);
   } else if (hasOpenPos) {
-    // Has open long position — decide HOLD / TIGHTEN / PARTIAL / CUT
+    // Has REAL open position — decide HOLD / TIGHTEN / PARTIAL / CUT
     if (score >= 3) {
       verdict = 'HOLD_STRONG'; color = 'var(--green)';
-      actions.push('✅ Trzymaj — wszystkie sygnały wspierają long');
-      actions.push('Ewentualnie trailing SL do lock gains');
-    } else if (score >= 0) {
+      actions.push('✅ Trzymaj — wszystkie sygnały wspierają pozycję');
+      actions.push('Trailing SL chroni zyski automatycznie');
+    } else if (score >= -1) {
+      // v0.9: was >= 0, now >= -1 — wider HOLD zone, less trigger-happy
       verdict = 'HOLD'; color = 'var(--blue)';
-      actions.push('👌 Trzymaj — sygnały mixed ale nie negatywne');
-      actions.push(`SL Fusion: $${fmt(dec.sl)}`);
-    } else if (score >= -2) {
+      actions.push('👌 Trzymaj — sygnały mixed ale brak zagrożenia');
+      actions.push(`SL Fusion: $${fmt(dec.sl)} · trailing SL aktywny`);
+    } else if (score >= -4) {
+      // v0.9: was >= -2, now >= -4 — MUCH harder to trigger TIGHTEN
       verdict = 'TIGHTEN_SL'; color = 'var(--amber)';
-      actions.push('⚠️ Tighten SL do breakeven+ NOW');
+      actions.push('⚠️ Rozważ zacieśnienie SL (nie panikuj — trailing chroni)');
       const be = dec.entry_low && dec.entry_high ? ((dec.entry_low + dec.entry_high) / 2 * 1.005) : dec.sl;
       actions.push(`Suggested SL: $${fmt(be)} (breakeven +0.5%)`);
       confidence = 'medium';
     } else {
+      // v0.9: was < -2, now < -4 — needs massive convergence of bearish signals
       verdict = 'CUT_OR_PARTIAL'; color = 'var(--red)';
-      actions.push('🚨 Take partial 30-50% NOW');
+      actions.push('🚨 Rozważ partial 30-50%');
       actions.push('Reszta trailing SL 1% pod current price');
-      actions.push('Consider full close jeśli score spadnie dalej');
       confidence = 'high';
     }
-    // Special: near sell zone with profit → take partial
-    if (nearSellZone && hasOpenPos && isLong) {
-      actions.unshift('💰 Cena w SELL zone → take partial 30% NOW');
+    // Special: near sell zone with profit → suggestion only (not urgent)
+    if (nearSellZone && isLong) {
+      actions.push('💡 Cena blisko sell zone — obserwuj reakcję, nie spiesz się');
     }
-    // Special: XRP-style extreme extension override
-    if (dec.risk_flag && /extreme|stretched|extended|mean.reversion/i.test(dec.risk_flag)) {
-      actions.unshift('⚠️ Fusion risk_flag flaguje extension — cut partial regardless orderbook');
+    // Special: extreme extension override — only if REALLY extreme (score < 25)
+    if (dec.risk_flag && /extreme/i.test(dec.risk_flag) && dec.score < 25) {
+      actions.unshift('⚠️ Fusion flaguje ekstremalny risk — rozważ partial');
     }
+  } else if (!hasOpenPos && (dec.action === 'BUY' || dec.action === 'STRONG_BUY')) {
+    // No position but Fusion says BUY — potential entry
+    verdict = score > 0 ? 'ENTRY_SETUP' : 'WATCH';
+    color = score > 0 ? 'var(--gold)' : 'var(--text-muted)';
+    if (score > 0) actions.push(`✅ Fusion ${dec.action} + supportive signals — rozważ entry`);
+    else actions.push(`👀 Fusion ${dec.action} ale sygnały mixed — czekaj na potwierdzenie`);
   } else {
-    // No open position, no watch — SKIP
+    // No open position, no entry signal — SKIP
     verdict = 'SKIP'; color = 'var(--text-dim)';
-    actions.push('⊘ Fusion SKIP — no action needed');
+    actions.push('⊘ Brak pozycji, brak sygnału — no action needed');
   }
 
   return { verdict, color, confidence, reasoning, actions, score };
