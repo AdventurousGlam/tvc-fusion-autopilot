@@ -63,6 +63,7 @@
     min-height: 100%; overflow-x: hidden;
   }
   body { padding: 8px; padding-bottom: 40px; }
+  @media (min-width: 641px) { body { padding-left: 64px; } }
 
   /* ============ MOBILE OPTIMIZATIONS ============ */
   @media (max-width: 640px) {
@@ -916,6 +917,7 @@
 <!-- COMMAND BAR — sticky top, always visible glance status -->
 <div id="command-bar" style="position:sticky;top:0;z-index:1000;background:linear-gradient(180deg,var(--bg-elev-2) 0%,var(--bg-elev) 100%);border-bottom:2px solid var(--gold);padding:8px 12px;margin:-8px -8px 8px -8px;display:grid;grid-template-columns:auto 1fr auto auto auto;gap:12px;align-items:center;box-shadow:0 4px 12px rgba(0,0,0,0.4);font-size:12px">
   <div style="display:flex;align-items:center;gap:6px">
+    <button id="sb-hamburger" onclick="toggleSidebar()">☰</button>
     <span style="font-weight:900;color:var(--gold);font-size:14px;letter-spacing:0.03em">⚡ TVC</span>
   </div>
   <div id="cb-pnl" style="font-family:var(--mono);font-weight:800;font-size:14px;color:var(--text)">
@@ -987,15 +989,47 @@
   </div>
 </div>
 
-<!-- NAV BAR — szybki skok do każdego panelu (sticky pod Command Barem) -->
-<nav id="panel-nav" style="position:sticky;top:52px;z-index:999;background:var(--bg-elev);border-bottom:1px solid var(--border);margin:-8px -8px 8px -8px;padding:4px 8px;display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;-webkit-overflow-scrolling:touch;white-space:nowrap"></nav>
+<!-- SIDEBAR NAV — collapsible, ikony gdy zwinięty, rozwijany na hover/klik -->
+<aside id="sidebar">
+  <div class="sb-head" onclick="toggleSidebarPin()">
+    <span class="sb-logo">⚡</span><span class="sb-title">TVC FUSION</span>
+  </div>
+  <nav id="panel-nav"></nav>
+</aside>
+<div id="sb-overlay" onclick="closeSidebar()"></div>
 <style>
-  #panel-nav::-webkit-scrollbar { display: none; }
-  .nav-chip { flex:0 0 auto; background:transparent; color:var(--text-muted); border:1px solid var(--border); border-radius:12px; padding:2px 9px; font-size:10.5px; font-weight:600; cursor:pointer; transition:all .12s; line-height:1.5; font-family:inherit; }
-  .nav-chip:hover { color:var(--text); border-color:var(--gold); }
-  .nav-chip.active { background:var(--gold-soft); color:var(--gold); border-color:var(--gold); }
-  .nav-sep { flex:0 0 auto; width:1px; background:var(--border); margin:2px 3px; }
-  @media (max-width: 640px) { #panel-nav { top:auto; position:relative; margin-top:0; } }
+  /* ── SIDEBAR ── */
+  #sidebar { position:fixed;left:0;top:0;bottom:0;z-index:1001;width:56px;background:var(--bg-elev);border-right:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;transition:width .22s cubic-bezier(.4,0,.2,1); }
+  #sidebar:hover, #sidebar.pinned { width:220px; }
+  #sidebar:hover .sb-lbl, #sidebar.pinned .sb-lbl { opacity:1;max-width:160px; }
+  #sidebar:hover .sb-sec, #sidebar.pinned .sb-sec { opacity:1;max-height:18px;margin:10px 0 2px 14px; }
+  #sidebar:hover .sb-title, #sidebar.pinned .sb-title { opacity:1;max-width:140px; }
+  .sb-head { padding:12px 8px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border);cursor:pointer;flex-shrink:0;min-height:48px; }
+  .sb-logo { font-size:20px;flex-shrink:0;text-align:center;width:40px;line-height:1; }
+  .sb-title { font-size:11px;font-weight:900;color:var(--gold);letter-spacing:.08em;white-space:nowrap;opacity:0;max-width:0;overflow:hidden;transition:opacity .2s,max-width .22s; }
+  #panel-nav { flex:1;overflow-y:auto;overflow-x:hidden;padding:4px 0;scrollbar-width:thin;scrollbar-color:var(--border) transparent; }
+  #panel-nav::-webkit-scrollbar { width:4px; }
+  #panel-nav::-webkit-scrollbar-thumb { background:var(--border);border-radius:2px; }
+  .sb-sec { font-size:8px;font-weight:800;color:var(--text-dim);text-transform:uppercase;letter-spacing:.1em;opacity:0;max-height:0;margin:0;overflow:hidden;transition:all .22s;white-space:nowrap; }
+  .sb-sep { height:1px;background:var(--border);margin:4px 8px; }
+  .sb-item { display:flex;align-items:center;gap:0;width:100%;padding:7px 8px;border:none;background:transparent;color:var(--text-muted);font-size:11px;font-weight:600;cursor:pointer;transition:all .12s;font-family:inherit;white-space:nowrap;text-align:left;border-left:3px solid transparent; }
+  .sb-item:hover { color:var(--text);background:rgba(255,255,255,.04); }
+  .sb-item.active { color:var(--gold);background:var(--gold-soft);border-left-color:var(--gold); }
+  .sb-icon { flex-shrink:0;width:40px;text-align:center;font-size:15px;line-height:1; }
+  .sb-lbl { opacity:0;max-width:0;overflow:hidden;transition:opacity .2s,max-width .22s;font-size:11px; }
+  #sb-hamburger { display:none;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--text);font-size:16px;cursor:pointer;flex-shrink:0; }
+  #sb-overlay { display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000; }
+  @media (min-width:641px) {
+    #command-bar { margin-left:-64px !important;padding-left:72px !important; }
+  }
+  @media (max-width:640px) {
+    #sidebar { transform:translateX(-100%);width:260px;z-index:1100;box-shadow:4px 0 24px rgba(0,0,0,.6); }
+    #sidebar.mobile-open { transform:translateX(0); }
+    #sidebar .sb-lbl, #sidebar .sb-title { opacity:1;max-width:200px; }
+    #sidebar .sb-sec { opacity:1;max-height:18px;margin:10px 0 2px 14px; }
+    #sb-hamburger { display:flex; }
+    body { padding-left:4px !important; }
+  }
   /* ============ COMMAND BAR — MOBILE (2 rzędy, nic się nie zawija) ============ */
   @media (max-width: 640px) {
     #command-bar {
@@ -3982,35 +4016,58 @@ const NAV_ITEMS = [
   'sep',
   ['performance-slot', '🔬', 'nav_perf'], ['pnl-history-slot', '💹', 'nav_pnl'], ['orderflow-slot', '📓', 'nav_orderflow'], ['journal-slot', '📝', 'nav_journal'], ['watchlist-slot', '👀', 'nav_watchlist'], ['checklist-slot', '✅', 'nav_checklist'],
 ];
+// ── Sidebar toggle helpers ──
+function toggleSidebarPin() {
+  const sb = document.getElementById('sidebar');
+  if (window.innerWidth <= 640) { toggleSidebar(); return; }
+  sb.classList.toggle('pinned');
+}
+function toggleSidebar() {
+  const sb = document.getElementById('sidebar');
+  const isOpen = sb.classList.toggle('mobile-open');
+  document.getElementById('sb-overlay').style.display = isOpen ? 'block' : 'none';
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('mobile-open');
+  document.getElementById('sb-overlay').style.display = 'none';
+}
+
+const SIDEBAR_SECTIONS = ['sec_decide','sec_fuel','sec_flows','sec_context','sec_learn'];
 function buildPanelNav() {
   const nav = document.getElementById('panel-nav'); if (!nav) return;
-  const cb = document.getElementById('command-bar'); if (cb && window.innerWidth > 640) nav.style.top = cb.offsetHeight + 'px';   // przypnij dokładnie pod Command Bar
   const html = [];
-  let pendingSep = false;
+  let secIdx = 0, sectionBuf = [`<div class="sb-sec">${t(SIDEBAR_SECTIONS[0])}</div>`], sectionHas = false;
   for (const it of NAV_ITEMS) {
-    if (it === 'sep') { pendingSep = html.length > 0; continue; }
+    if (it === 'sep') {
+      if (sectionHas) { html.push(...sectionBuf); html.push('<div class="sb-sep"></div>'); }
+      secIdx++;
+      sectionBuf = secIdx < SIDEBAR_SECTIONS.length ? [`<div class="sb-sec">${t(SIDEBAR_SECTIONS[secIdx])}</div>`] : [];
+      sectionHas = false; continue;
+    }
     const [id, icon, key] = it; const el = document.getElementById(id);
-    if (!el || el.offsetParent === null || el.innerHTML.trim() === '') continue;   // brak / ukryty przez preset / pusty
-    if (pendingSep) { html.push('<span class="nav-sep"></span>'); pendingSep = false; }
-    html.push(`<button class="nav-chip" data-target="${id}" onclick="navJump('${id}')" title="${t(key)}">${icon} <span class="nav-lbl">${t(key)}</span></button>`);
+    if (!el || el.offsetParent === null || el.innerHTML.trim() === '') continue;
+    sectionHas = true;
+    sectionBuf.push(`<button class="sb-item" data-target="${id}" onclick="navJump('${id}')" title="${t(key)}"><span class="sb-icon">${icon}</span><span class="sb-lbl">${t(key)}</span></button>`);
   }
+  if (sectionHas) html.push(...sectionBuf);
   nav.innerHTML = html.join('');
 }
 function navJump(id) {
   const el = document.getElementById(id); if (!el) return;
-  const offset = (document.getElementById('command-bar')?.offsetHeight || 52) + (document.getElementById('panel-nav')?.offsetHeight || 30) + 6;
+  const offset = (document.getElementById('command-bar')?.offsetHeight || 52) + 12;
   window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - offset, behavior: 'smooth' });
-  document.querySelectorAll('.nav-chip').forEach(b => b.classList.toggle('active', b.dataset.target === id));
+  document.querySelectorAll('.sb-item').forEach(b => b.classList.toggle('active', b.dataset.target === id));
   el.style.transition = 'box-shadow 0.3s'; el.style.boxShadow = '0 0 0 3px var(--gold)'; setTimeout(() => { el.style.boxShadow = ''; }, 1200);
+  if (window.innerWidth <= 640) closeSidebar();
 }
-// podświetlanie aktywnego chipa przy przewijaniu (throttled)
+// podświetlanie aktywnego elementu przy przewijaniu (throttled)
 let _navScrollT = 0;
 window.addEventListener('scroll', () => {
   const now = Date.now(); if (now - _navScrollT < 150) return; _navScrollT = now;
   const offset = (document.getElementById('command-bar')?.offsetHeight || 52) + 40;
   let active = null;
-  document.querySelectorAll('.nav-chip').forEach(b => { const el = document.getElementById(b.dataset.target); if (el && el.getBoundingClientRect().top - offset <= 0) active = b.dataset.target; });
-  document.querySelectorAll('.nav-chip').forEach(b => b.classList.toggle('active', b.dataset.target === active));
+  document.querySelectorAll('.sb-item').forEach(b => { const el = document.getElementById(b.dataset.target); if (el && el.getBoundingClientRect().top - offset <= 0) active = b.dataset.target; });
+  document.querySelectorAll('.sb-item').forEach(b => b.classList.toggle('active', b.dataset.target === active));
 }, { passive: true });
 
 function scrollToJournal() {
