@@ -220,6 +220,16 @@
   .p-4 { grid-column: span 4; }
   @media (max-width: 900px) { .p-8, .p-6, .p-5, .p-4 { grid-column: span 12; } }
 
+  /* ============ WATCHLIST PANEL ============ */
+  .watchlist-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
+  .wl-card {
+    background: var(--bg-elev-2); border-radius: 6px; padding: 8px 10px;
+    cursor: pointer; transition: background .12s, border-color .12s;
+    border: 1px solid var(--border-soft);
+  }
+  .wl-card:hover { background: var(--bg-hover); border-color: var(--gold); }
+  @media (max-width: 700px) { .watchlist-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); } }
+
   /* ============ DECISIONS PANEL ============ */
   .decisions { display: flex; flex-direction: column; gap: 3px; }
   .decision {
@@ -867,6 +877,7 @@
   </div>
   <div style="display:flex;gap:4px;align-items:center">
     <button id="sound-toggle" onclick="toggleSoundAlerts()" style="background:var(--bg-elev-3,#1a2340);color:var(--gold);border:1px solid var(--gold);padding:6px 10px;border-radius:5px;font-weight:700;font-size:13px;cursor:pointer" title="Sound alerts TYLKO na CONFLUENCE_BUY (strong buy) / CONFLUENCE_SELL (strong sell). Aggressive momentum + big walls = silent.">🔊</button>
+    <button id="notif-toggle" onclick="toggleNotifications()" style="background:var(--bg-elev-3,#1a2340);color:var(--amber,#F59E0B);border:1px solid var(--amber,#F59E0B);padding:6px 10px;border-radius:5px;font-weight:700;font-size:13px;cursor:pointer" title="Browser push notifications — alerts even when terminal tab is in background. Fires on: Confluence, Flush Risk, Pump Risk.">🔕</button>
     <select id="preset-select" onchange="applyPreset(this.value)" style="background:var(--bg-elev-3,#1a2340);color:var(--gold);border:1px solid var(--gold);padding:6px 8px;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer;font-family:inherit" title="Preset view — hide panels not relevant to context">
       <option value="all">ALL panels</option>
       <option value="morning">🌅 Morning Brief</option>
@@ -1425,6 +1436,13 @@ const I18N = {
   winning:            { pl: '🔥 seria wygranych',                   en: '🔥 winning' },
   losing:             { pl: '⚠️ seria strat',                       en: '⚠️ losing' },
   neutral:            { pl: 'neutralna',                            en: 'neutral' },
+  // ─── WATCHLIST ───
+  watchlist:          { pl: 'Watchlista',                           en: 'Watchlist' },
+  watchlist_sub:      { pl: 'własne tokeny · tylko cena',           en: 'custom tokens · price only' },
+  watchlist_add:      { pl: 'Dodaj token',                          en: 'Add token' },
+  watchlist_empty:    { pl: 'Kliknij + aby dodać token do watchlisty', en: 'Click + to add a token to your watchlist' },
+  watchlist_no_score: { pl: 'brak Fusion Score',                    en: 'no Fusion Score' },
+  watchlist_remove:   { pl: 'Usuń z watchlisty',                    en: 'Remove from watchlist' },
 };
 
 function t(key) { return (I18N[key] && I18N[key][_lang]) || (I18N[key] && I18N[key].pl) || key; }
@@ -1500,6 +1518,129 @@ try {
 } catch (e) {}
 function saveOverlays() {
   try { localStorage.setItem('tvc_overlays', JSON.stringify(overlays)); } catch (e) {}
+}
+
+/* ── WATCHLIST — user-added tokens (price only, no Fusion Score) ── */
+let watchlistTokens = [];
+try {
+  const wl = localStorage.getItem('tvc_watchlist');
+  if (wl) watchlistTokens = JSON.parse(wl);
+} catch (e) {}
+function saveWatchlist() {
+  try { localStorage.setItem('tvc_watchlist', JSON.stringify(watchlistTokens)); } catch (e) {}
+}
+function addWatchlistToken(ticker) {
+  ticker = ticker.toUpperCase().trim();
+  if (!ticker) return;
+  // already in fusion decisions or watchlist?
+  const fusionTickers = (lastFusion?.decisions || []).map(d => d.ticker);
+  if (fusionTickers.includes(ticker)) return;
+  if (watchlistTokens.includes(ticker)) return;
+  // must have a Binance mapping (or we add it dynamically)
+  if (!BINANCE_SYMBOLS[ticker]) {
+    // try standard USDT pair
+    BINANCE_SYMBOLS[ticker] = ticker + 'USDT';
+  }
+  watchlistTokens.push(ticker);
+  saveWatchlist();
+  // fetch data immediately
+  fetchWatchlistPrices();
+  fetchWatchlistSparklines();
+  renderWatchlistPanel();
+}
+function removeWatchlistToken(ticker) {
+  watchlistTokens = watchlistTokens.filter(t => t !== ticker);
+  saveWatchlist();
+  delete livePrices[ticker];
+  delete sparklineData[ticker];
+  renderWatchlistPanel();
+}
+async function fetchWatchlistPrices() {
+  if (!watchlistTokens.length) return;
+  const symbols = watchlistTokens.map(t => BINANCE_SYMBOLS[t]).filter(Boolean);
+  if (!symbols.length) return;
+  try {
+    const url = `https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(JSON.stringify(symbols))}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`Binance HTTP ${resp.status}`);
+    const data = await resp.json();
+    for (const ticker of watchlistTokens) {
+      const sym = BINANCE_SYMBOLS[ticker];
+      const item = data.find(d => d.symbol === sym);
+      if (item) livePrices[ticker] = { price: parseFloat(item.lastPrice), change24h: parseFloat(item.priceChangePercent) };
+      else {
+        // invalid symbol — remove from watchlist
+        watchlistTokens = watchlistTokens.filter(t => t !== ticker);
+        saveWatchlist();
+      }
+    }
+    updatePriceCells();
+    renderWatchlistPanel();
+  } catch (e) { console.warn('Watchlist price fetch failed:', e); }
+}
+async function fetchWatchlistSparklines() {
+  for (const ticker of watchlistTokens) {
+    const symbol = BINANCE_SYMBOLS[ticker];
+    if (!symbol || sparklineData[ticker]) continue;
+    try {
+      const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=24`;
+      const resp = await fetch(url);
+      if (!resp.ok) continue;
+      const raw = await resp.json();
+      sparklineData[ticker] = raw.map(k => parseFloat(k[4]));
+      renderSparkline(ticker);
+    } catch (e) {}
+    await new Promise(r => setTimeout(r, 100));
+  }
+}
+function renderWatchlistPanel() {
+  const slot = document.getElementById('watchlist-slot');
+  if (!slot) return;
+  const tokens = watchlistTokens.filter(t => BINANCE_SYMBOLS[t]);
+  slot.innerHTML = `
+    <section class="panel p-4" style="border-left:3px solid var(--gold)">
+      <div class="panel-head" style="margin-bottom:8px">
+        <h3 style="display:flex;align-items:center;gap:6px">
+          <span style="font-size:14px">👁</span> ${t('watchlist')}
+          <span style="font-size:10px;color:var(--text-dim);font-weight:500;margin-left:4px">${tokens.length} tokens · ${t('watchlist_no_score')}</span>
+        </h3>
+      </div>
+      ${tokens.length ? `
+        <div class="watchlist-grid">${tokens.map(renderWatchlistCard).join('')}</div>
+      ` : `<div style="padding:12px;text-align:center;color:var(--text-dim);font-size:11px">${t('watchlist_empty')}</div>`}
+      <div class="watchlist-add" style="margin-top:8px;display:flex;gap:6px;align-items:center">
+        <input id="wl-input" type="text" placeholder="${t('watchlist_add')} (np. DOGE, LINK...)"
+          style="flex:1;background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:11px;font-family:var(--mono);outline:none"
+          onkeydown="if(event.key==='Enter'){addWatchlistToken(this.value);this.value='';}" />
+        <button onclick="addWatchlistToken(document.getElementById('wl-input').value);document.getElementById('wl-input').value='';"
+          style="background:var(--gold);color:var(--bg-dark);border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:800;cursor:pointer;white-space:nowrap">+ ${t('watchlist_add')}</button>
+      </div>
+    </section>
+    ${tokens.map(tk => `<div class="token-detail" id="td-${tk}" style="grid-column:span 12;width:100%"></div>`).join('')}
+  `;
+  // render sparklines for watchlist tokens
+  tokens.forEach(t => { if (sparklineData[t]) renderSparkline(t); });
+}
+function renderWatchlistCard(ticker) {
+  const lp = livePrices[ticker];
+  const priceStr = lp ? '$' + lp.price.toLocaleString('en-US', { maximumFractionDigits: lp.price >= 100 ? 0 : lp.price >= 1 ? 2 : 4 }) : '—';
+  const chg = lp?.change24h;
+  const chgStr = chg != null ? (chg > 0 ? '+' : '') + chg.toFixed(2) + '%' : '…';
+  const chgClass = chg > 0 ? 'pos' : chg < 0 ? 'neg' : 'zero';
+  return `
+    <div class="wl-card" onclick="toggleTokenDetail('${ticker}')" title="${t('click_analysis')}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+        <span style="font-size:13px;font-weight:900;color:var(--text);letter-spacing:-0.02em">${ticker}</span>
+        <button onclick="event.stopPropagation();removeWatchlistToken('${ticker}')" title="${t('watchlist_remove')}"
+          style="background:none;border:none;color:var(--text-dim);font-size:12px;cursor:pointer;padding:0 2px;line-height:1;opacity:0.5">&times;</button>
+      </div>
+      <div id="price-cell-${ticker}" style="margin-bottom:4px">
+        <div class="price" style="font-size:12px;font-weight:700;font-family:var(--mono)">${priceStr}</div>
+        <div class="chg ${chgClass}" style="font-size:10px">${chgStr}</div>
+      </div>
+      <div class="sparkline-cell" style="height:24px"><canvas id="sparkline-${ticker}"></canvas></div>
+    </div>
+  `;
 }
 
 // User zoom state — persists across renders + refreshes so chart never
@@ -2242,6 +2383,9 @@ function render() {
       <!-- PORTFOLIO HEALTH — live status wszystkich tokenów -->
       <div id="portfolio-health-slot" class="hide-morning" style="grid-column: span 12; width: 100%;"></div>
 
+      <!-- WATCHLIST — user-added custom tokens (price only) -->
+      <div id="watchlist-slot" style="grid-column: span 12; width: 100%;"></div>
+
       <!-- ═══ B · PALIWO I RYZYKO — co może wystrzelić lub pęknąć ═══ -->
       <div class="section-header " style="grid-column: span 12; display:flex;align-items:center;gap:10px;margin:10px 0 4px;padding:6px 10px;background:linear-gradient(90deg,rgba(251,146,60,0.15),transparent);border-left:4px solid #FB923C;border-radius:4px">
         <span style="font-size:14px;font-weight:900;color:#FB923C;letter-spacing:0.03em">${t('sec_fuel')}</span>
@@ -2364,6 +2508,11 @@ function render() {
     if (!alreadyOpen) openTokenDetail(expandedToken);
     // else: leave the chart alone — user has it zoomed how they want it
   }
+
+  // ── Watchlist (user-added custom tokens, price only) ──
+  renderWatchlistPanel();
+  fetchWatchlistPrices();
+  fetchWatchlistSparklines();
 }
 
 function renderDecision(d) {
@@ -2766,8 +2915,13 @@ function detectSetupAlerts(ticker, walls, now) {
       // NIE jest to już oznaczone jako range (żeby nie dzwonić na przemian buy/sell
       // co kilka minut na tym samym tickerze w konsolidacji)
       if (!displayA.rangeBound) {
-        if (a.type === 'CONFLUENCE_BUY') playAlertSound('CONFLUENCE_BUY');
-        else if (a.type === 'CONFLUENCE_SELL') playAlertSound('CONFLUENCE_SELL');
+        if (a.type === 'CONFLUENCE_BUY') {
+          playAlertSound('CONFLUENCE_BUY');
+          sendBrowserNotification(`🟢 CONFLUENCE BUY — ${ticker}`, `Strong buy signal at $${mid?.toLocaleString() || '?'}. Pred zone + live wall + orderflow aligned.`, `confluence-${ticker}`);
+        } else if (a.type === 'CONFLUENCE_SELL') {
+          playAlertSound('CONFLUENCE_SELL');
+          sendBrowserNotification(`🔴 CONFLUENCE SELL — ${ticker}`, `Strong sell signal at $${mid?.toLocaleString() || '?'}. Pred zone + live wall + orderflow aligned.`, `confluence-${ticker}`);
+        }
       }
     }
   }
@@ -3605,6 +3759,66 @@ setTimeout(() => {
 }, 100);
 
 // ═══════════════════════════════════════════════════════════════════════════
+// BROWSER PUSH NOTIFICATIONS — alerts when terminal tab is not active
+// Fires on: CONFLUENCE_BUY/SELL, FLUSH_RISK_HIGH, PUMP_RISK_HIGH
+// ═══════════════════════════════════════════════════════════════════════════
+let _notifEnabled = false;
+try { _notifEnabled = localStorage.getItem('tvc_notif_enabled') === 'true'; } catch (e) {}
+
+async function toggleNotifications() {
+  if (!_notifEnabled) {
+    // Request permission
+    if (!('Notification' in window)) {
+      alert('Your browser does not support push notifications.');
+      return;
+    }
+    let perm = Notification.permission;
+    if (perm === 'default') perm = await Notification.requestPermission();
+    if (perm !== 'granted') {
+      alert('Notifications blocked. Enable them in browser settings for this site.');
+      return;
+    }
+    _notifEnabled = true;
+  } else {
+    _notifEnabled = false;
+  }
+  try { localStorage.setItem('tvc_notif_enabled', String(_notifEnabled)); } catch (e) {}
+  const btn = document.getElementById('notif-toggle');
+  if (btn) btn.textContent = _notifEnabled ? '🔔' : '🔕';
+}
+
+function sendBrowserNotification(title, body, tag) {
+  if (!_notifEnabled) return;
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  // Only notify when tab is not focused (user is away)
+  try {
+    const n = new Notification(title, {
+      body: body,
+      icon: 'https://tradingventureclub.com/wp-content/uploads/2024/12/tvc-logo-gold.png',
+      tag: tag || 'tvc-alert',  // prevents duplicate notifications with same tag
+      silent: false,
+      requireInteraction: false,
+    });
+    // Auto-close after 10s
+    setTimeout(() => n.close(), 10000);
+    // Click → focus terminal tab
+    n.onclick = () => { window.focus(); n.close(); };
+  } catch (e) { console.warn('Notification error:', e); }
+}
+
+// Initialize notification button label
+setTimeout(() => {
+  const btn = document.getElementById('notif-toggle');
+  if (btn) btn.textContent = _notifEnabled ? '🔔' : '🔕';
+  // If previously enabled, silently verify permission still granted
+  if (_notifEnabled && 'Notification' in window && Notification.permission !== 'granted') {
+    _notifEnabled = false;
+    try { localStorage.setItem('tvc_notif_enabled', 'false'); } catch (e) {}
+    if (btn) btn.textContent = '🔕';
+  }
+}, 150);
+
+// ═══════════════════════════════════════════════════════════════════════════
 // PERP METRICS — Binance funding rates + open interest per token (5min refresh)
 // ═══════════════════════════════════════════════════════════════════════════
 const perpMetrics = {};  // { ticker: { funding, openInterest, ts } }
@@ -3943,11 +4157,13 @@ async function refreshFlushRisk() {
       // wejście na WYSOKI → journal (raz na przejście)
       if (flushRisk[tkr].level === 'high' && _flushLastLevel[tkr] !== 'high') {
         try { addJournalEntry({ ts: Date.now(), ticker: tkr, type: 'FLUSH_RISK_HIGH', severity: 'high', msg: `🌊 Flush Risk ${flushRisk[tkr].score}/100 — ${flushRisk[tkr].parts.map(p => p.txt).join(' · ')}`, price_at_alert: flushRisk[tkr].m.px, imbalance_at_alert: null, pressure_at_alert: null, confluence: false }); } catch (e) {}
+        sendBrowserNotification(`🌊 FLUSH RISK HIGH — ${tkr}`, `Score ${flushRisk[tkr].score}/100. ${flushRisk[tkr].parts.map(p => p.txt).join(', ')}`, `flush-${tkr}`);
       }
       _flushLastLevel[tkr] = flushRisk[tkr].level;
       const pu = flushRisk[tkr].pump;
       if (pu && pu.level === 'high' && _flushLastLevel['pump_' + tkr] !== 'high') {
         try { addJournalEntry({ ts: Date.now(), ticker: tkr, type: 'PUMP_RISK_HIGH', severity: 'high', msg: `🚀 Pump Risk ${pu.score}/100 — ${pu.parts.map(p => p.txt).join(' · ')}`, price_at_alert: flushRisk[tkr].m.px, imbalance_at_alert: null, pressure_at_alert: null, confluence: false }); } catch (e) {}
+        sendBrowserNotification(`🚀 PUMP RISK HIGH — ${tkr}`, `Score ${pu.score}/100. ${pu.parts.map(p => p.txt).join(', ')}`, `pump-${tkr}`);
       }
       if (pu) _flushLastLevel['pump_' + tkr] = pu.level;
     } catch (e) { flushRisk[tkr] = { error: String(e.message || e), ts: Date.now() }; }
@@ -6352,30 +6568,38 @@ function renderLiveWhales(whalesByToken) {
       SUI: h => `https://suiscan.xyz/mainnet/tx/${h}`,
     };
     const explorerUrl = (explorers[w.ticker] || (h => '#'))(w.hash);
-    // Direction badge — BIG, visible per every whale tx
-    let dirBadge;
+    // Categorized whale badges — inspired by ZPP's AKUM/CEX-IN/OTC system
+    // Size tier: MEGA ($50M+), INSTITUTION ($10M+), WHALE (default)
+    const sizeTier = usdVal >= 50e6 ? 'MEGA' : usdVal >= 10e6 ? 'INST' : '';
+    const sizePrefix = sizeTier === 'MEGA' ? '🏦 ' : sizeTier === 'INST' ? '🏢 ' : '';
+    let dirBadge, catBadge = '';
     if (w.direction === 'out') {
-      // CEX → wallet (accumulation, whale BUY-side signal)
-      dirBadge = `<span style="background:#065f46;color:#6ee7b7;font-weight:800;font-size:9.5px;padding:2px 6px;border-radius:3px;letter-spacing:0.04em">🟢 BUY</span>`;
+      // CEX → wallet (accumulation signal)
+      dirBadge = `<span style="background:#065f46;color:#6ee7b7;font-weight:800;font-size:9px;padding:2px 5px;border-radius:3px;letter-spacing:0.04em">${sizePrefix}ACCUM</span>`;
+      catBadge = `<span style="background:#14532d;color:#86efac;font-weight:700;font-size:8px;padding:1px 4px;border-radius:2px;letter-spacing:0.03em">CEX↗OUT</span>`;
     } else if (w.direction === 'in') {
-      // wallet → CEX (potential sell, whale SELL-side signal)
-      dirBadge = `<span style="background:#7f1d1d;color:#fca5a5;font-weight:800;font-size:9.5px;padding:2px 6px;border-radius:3px;letter-spacing:0.04em">🔴 SELL</span>`;
+      // wallet → CEX (distribution / potential sell)
+      dirBadge = `<span style="background:#7f1d1d;color:#fca5a5;font-weight:800;font-size:9px;padding:2px 5px;border-radius:3px;letter-spacing:0.04em">${sizePrefix}DIST</span>`;
+      catBadge = `<span style="background:#450a0a;color:#fecaca;font-weight:700;font-size:8px;padding:1px 4px;border-radius:2px;letter-spacing:0.03em">CEX↘IN</span>`;
     } else {
-      // Direction unknown (wallet-to-wallet, unknown CEX, or OTC)
-      dirBadge = `<span style="background:var(--bg-elev-3,#2a2f42);color:var(--text-dim);font-weight:700;font-size:9.5px;padding:2px 6px;border-radius:3px;letter-spacing:0.04em">◐ TRANSFER</span>`;
+      // wallet-to-wallet (OTC, cold storage, or unknown)
+      dirBadge = `<span style="background:var(--bg-elev-3,#2a2f42);color:var(--text-dim);font-weight:700;font-size:9px;padding:2px 5px;border-radius:3px;letter-spacing:0.04em">${sizePrefix}OTC</span>`;
+      catBadge = `<span style="background:#1e1b4b;color:#a5b4fc;font-weight:700;font-size:8px;padding:1px 4px;border-radius:2px;letter-spacing:0.03em">W↔W</span>`;
     }
     return `<a href="${explorerUrl}" target="_blank" rel="noopener" style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;margin-bottom:4px;background:var(--bg-elev-2);border-radius:5px;border-left:2px solid ${tc};text-decoration:none;transition:background .12s;gap:8px" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='var(--bg-elev-2)'">
-      <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0">
+      <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0;flex-wrap:wrap">
         <span style="font-weight:800;color:${tc};font-size:11px;letter-spacing:0.03em;min-width:42px">${w.ticker}</span>
         ${dirBadge}
+        ${catBadge}
         <span style="font-family:var(--mono);font-weight:700;font-size:12px;color:var(--text)">${usdStr}</span>
       </div>
       <span style="font-family:var(--mono);font-size:10px;color:var(--text-dim);white-space:nowrap">${ageStr} ago</span>
     </a>`;
   }).join('') + `<div style="padding:8px 4px 4px;font-size:9.5px;color:var(--text-dim);text-align:center;line-height:1.5;border-top:1px solid var(--bg-elev-2);margin-top:6px">
-    <div><span style="background:#065f46;color:#6ee7b7;font-size:8px;padding:1px 4px;border-radius:2px;font-weight:700">🟢 BUY</span> = whale wypłata z giełdy (accumulation, bullish)</div>
-    <div style="margin-top:2px"><span style="background:#7f1d1d;color:#fca5a5;font-size:8px;padding:1px 4px;border-radius:2px;font-weight:700">🔴 SELL</span> = whale wpłata na giełdę (potential sell, bearish)</div>
-    <div style="margin-top:2px"><span style="background:var(--bg-elev-3,#2a2f42);color:var(--text-dim);font-size:8px;padding:1px 4px;border-radius:2px;font-weight:700">◐ TRANSFER</span> = wallet-to-wallet lub nieznany CEX</div>
+    <div><span style="background:#065f46;color:#6ee7b7;font-size:8px;padding:1px 4px;border-radius:2px;font-weight:700">ACCUM</span> = CEX withdrawal (accumulation, bullish) · <span style="background:#14532d;color:#86efac;font-size:7px;padding:1px 3px;border-radius:2px;font-weight:700">CEX↗OUT</span></div>
+    <div style="margin-top:2px"><span style="background:#7f1d1d;color:#fca5a5;font-size:8px;padding:1px 4px;border-radius:2px;font-weight:700">DIST</span> = CEX deposit (distribution, bearish) · <span style="background:#450a0a;color:#fecaca;font-size:7px;padding:1px 3px;border-radius:2px;font-weight:700">CEX↘IN</span></div>
+    <div style="margin-top:2px"><span style="background:var(--bg-elev-3,#2a2f42);color:var(--text-dim);font-size:8px;padding:1px 4px;border-radius:2px;font-weight:700">OTC</span> = wallet↔wallet (OTC / cold storage) · <span style="background:#1e1b4b;color:#a5b4fc;font-size:7px;padding:1px 3px;border-radius:2px;font-weight:700">W↔W</span></div>
+    <div style="margin-top:2px"><span style="font-size:8px;color:var(--text-dim)">🏦 = $50M+ MEGA · 🏢 = $10M+ INSTITUTION</span></div>
     <div style="margin-top:4px">Auto-refresh 30s · click = explorer</div>
   </div>`;
 }
@@ -9125,6 +9349,7 @@ document.documentElement.lang = _lang;
 })();
 setInterval(fetchFusion, FUSION_REFRESH_MS);
 setInterval(fetchPrices, PRICE_REFRESH_MS);
+setInterval(fetchWatchlistPrices, PRICE_REFRESH_MS);
 setInterval(fetchGlobal, PRICE_REFRESH_MS * 5);
 setInterval(fetchFng, FNG_REFRESH_MS);
 setInterval(updateStatusBadge, 30000);

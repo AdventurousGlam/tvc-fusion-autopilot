@@ -1,0 +1,193 @@
+<!-- TVC Fusion Terminal — Stats Bar for WordPress Landing Page -->
+<!-- Copy-paste this into a Custom HTML block on tradingventureclub.com -->
+<!-- Place it below the hero section or above the Terminal CTA -->
+<style>
+.tvc-stats-bar {
+  width: 100%;
+  overflow: hidden;
+  background: linear-gradient(135deg, #0A0908 0%, #111318 50%, #0A0908 100%);
+  border-top: 1px solid rgba(212, 164, 78, 0.15);
+  border-bottom: 1px solid rgba(212, 164, 78, 0.15);
+  padding: 0;
+  position: relative;
+}
+.tvc-stats-bar::before,
+.tvc-stats-bar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 60px;
+  z-index: 2;
+  pointer-events: none;
+}
+.tvc-stats-bar::before {
+  left: 0;
+  background: linear-gradient(to right, #0A0908, transparent);
+}
+.tvc-stats-bar::after {
+  right: 0;
+  background: linear-gradient(to left, #0A0908, transparent);
+}
+
+.tvc-stats-track {
+  display: flex;
+  gap: 0;
+  animation: tvc-scroll 30s linear infinite;
+  width: max-content;
+  padding: 14px 0;
+}
+.tvc-stats-track:hover {
+  animation-play-state: paused;
+}
+
+@keyframes tvc-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+.tvc-stat-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 32px;
+  white-space: nowrap;
+  font-family: 'Inter', -apple-system, sans-serif;
+  border-right: 1px solid rgba(212, 164, 78, 0.08);
+}
+.tvc-stat-icon {
+  font-size: 16px;
+  filter: drop-shadow(0 0 4px rgba(212, 164, 78, 0.3));
+}
+.tvc-stat-value {
+  font-weight: 800;
+  font-size: 14px;
+  color: #D4A44E;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.tvc-stat-label {
+  font-weight: 500;
+  font-size: 12px;
+  color: #8B95A8;
+  letter-spacing: 0.02em;
+}
+.tvc-stat-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: #D4A44E;
+  opacity: 0.3;
+  margin: 0 12px;
+}
+
+/* Live pulse for the "24/7" stat */
+.tvc-live-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #34D399;
+  margin-right: 4px;
+  animation: tvc-pulse 2s ease-in-out infinite;
+}
+@keyframes tvc-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.4); }
+  50% { opacity: 0.6; box-shadow: 0 0 0 4px rgba(52, 211, 153, 0); }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .tvc-stat-item { padding: 0 20px; }
+  .tvc-stat-value { font-size: 13px; }
+  .tvc-stat-label { font-size: 11px; }
+  .tvc-stats-track { animation-duration: 25s; }
+}
+</style>
+
+<div class="tvc-stats-bar">
+  <div class="tvc-stats-track">
+    <!-- Set 1 -->
+    <div class="tvc-stat-item">
+      <span class="tvc-stat-icon">📊</span>
+      <span class="tvc-stat-value">5</span>
+      <span class="tvc-stat-label">assets scored</span>
+    </div>
+    <div class="tvc-stat-item">
+      <span class="tvc-stat-icon">⚡</span>
+      <span class="tvc-stat-value">every 5 min</span>
+      <span class="tvc-stat-label">auto-refresh</span>
+    </div>
+    <div class="tvc-stat-item">
+      <span class="tvc-stat-icon">🧠</span>
+      <span class="tvc-stat-value">4</span>
+      <span class="tvc-stat-label">data layers per score</span>
+    </div>
+    <div class="tvc-stat-item">
+      <span class="tvc-stat-icon">🐋</span>
+      <span class="tvc-stat-value">6 chains</span>
+      <span class="tvc-stat-label">whale monitoring</span>
+    </div>
+    <div class="tvc-stat-item">
+      <span class="tvc-stat-icon">🤖</span>
+      <span class="tvc-stat-value"><span class="tvc-live-dot"></span>24/7</span>
+      <span class="tvc-stat-label">fully automated</span>
+    </div>
+    <div class="tvc-stat-item">
+      <span class="tvc-stat-icon">📈</span>
+      <span class="tvc-stat-value">20+</span>
+      <span class="tvc-stat-label">live panels</span>
+    </div>
+    <div class="tvc-stat-item">
+      <span class="tvc-stat-icon">🎯</span>
+      <span class="tvc-stat-value">100ms</span>
+      <span class="tvc-stat-label">orderbook latency</span>
+    </div>
+    <div class="tvc-stat-item">
+      <span class="tvc-stat-icon">🔔</span>
+      <span class="tvc-stat-value">5</span>
+      <span class="tvc-stat-label">alert types</span>
+    </div>
+    <!-- Set 2 (duplicate for seamless scroll) -->
+    <div class="tvc-stat-item">
+      <span class="tvc-stat-icon">📊</span>
+      <span class="tvc-stat-value">5</span>
+      <span class="tvc-stat-label">assets scored</span>
+    </div>
+    <div class="tvc-stat-item">
+      <span class="tvc-stat-icon">⚡</span>
+      <span class="tvc-stat-value">every 5 min</span>
+      <span class="tvc-stat-label">auto-refresh</span>
+    </div>
+    <div class="tvc-stat-item">
+      <span class="tvc-stat-icon">🧠</span>
+      <span class="tvc-stat-value">4</span>
+      <span class="tvc-stat-label">data layers per score</span>
+    </div>
+    <div class="tvc-stat-item">
+      <span class="tvc-stat-icon">🐋</span>
+      <span class="tvc-stat-value">6 chains</span>
+      <span class="tvc-stat-label">whale monitoring</span>
+    </div>
+    <div class="tvc-stat-item">
+      <span class="tvc-stat-icon">🤖</span>
+      <span class="tvc-stat-value"><span class="tvc-live-dot"></span>24/7</span>
+      <span class="tvc-stat-label">fully automated</span>
+    </div>
+    <div class="tvc-stat-item">
+      <span class="tvc-stat-icon">📈</span>
+      <span class="tvc-stat-value">20+</span>
+      <span class="tvc-stat-label">live panels</span>
+    </div>
+    <div class="tvc-stat-item">
+      <span class="tvc-stat-icon">🎯</span>
+      <span class="tvc-stat-value">100ms</span>
+      <span class="tvc-stat-label">orderbook latency</span>
+    </div>
+    <div class="tvc-stat-item">
+      <span class="tvc-stat-icon">🔔</span>
+      <span class="tvc-stat-value">5</span>
+      <span class="tvc-stat-label">alert types</span>
+    </div>
+  </div>
+</div>
