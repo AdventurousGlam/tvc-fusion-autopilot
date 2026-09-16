@@ -1435,6 +1435,9 @@ const I18N = {
   nav_smart:          { pl: 'Smart Money',        en: 'Smart Money' },
   nav_picks:          { pl: 'Picks',              en: 'Picks' },
   nav_radar:          { pl: 'Pump Radar',         en: 'Pump Radar' },
+  nav_checklist:      { pl: 'Checklista',         en: 'Checklist' },
+  nav_corr:           { pl: 'Korelacje',          en: 'Correlations' },
+  nav_pred:           { pl: 'Predykcje',          en: 'Predictions' },
   pr_title:           { pl: '🚀 Pump Radar — paliwo · wieloryby · katalizator · zapłon', en: '🚀 Pump Radar — fuel · whales · catalyst · ignition' },
   pr_sub:             { pl: 'Skan całego rynku perpów (Hyperliquid + MEXC) co 5 min. To NIE są sygnały wejścia — to lista tokenów, w których coś się dzieje przed ruchem. Każdy alert jest mierzony (+1h/+4h/+24h), żeby wiedzieć, które składniki mają edge.', en: 'Whole perp market scan (Hyperliquid + MEXC) every 5 min. These are NOT entry signals — a list of tokens where something is happening before the move. Every alert is measured (+1h/+4h/+24h) so we learn which components carry edge.' },
   pr_track:           { pl: 'Track record', en: 'Track record' },
@@ -1743,8 +1746,8 @@ function renderChecklist() {
   const total = allKeys.length;
   const pct = Math.round((checked.length / total) * 100);
   let verdict = 'nogo', verdictKey = 'cl_nogo';
-  if (pct >= 85) { verdict = 'go'; verdictKey = 'cl_go'; }
-  else if (pct >= 60) { verdict = 'partial'; verdictKey = 'cl_partial'; }
+  if (checked.length === total) { verdict = 'go'; verdictKey = 'cl_go'; }
+  else if (checked.length > 0) { verdict = 'partial'; verdictKey = 'cl_partial'; }
 
   let cats = '';
   for (const [cat, keys] of Object.entries(CHECKLIST_ITEMS)) {
@@ -3974,9 +3977,9 @@ const NAV_ITEMS = [
   'sep',
   ['smart-money-slot', '🏦', 'nav_smart'], ['cvd-slot', '⚖️', 'nav_cvd'], ['options-slot', '🎭', 'nav_options'], ['macro-etf-slot', '🏛', 'nav_etf'], ['sec-whales', '🐋', 'nav_whales'],
   'sep',
-  ['sec-calendar', '📅', 'nav_calendar'], ['sec-news', '📰', 'nav_news'], ['sec-market-news', '🗞', 'nav_mnews'], ['cycle-slot', '🧭', 'nav_cycle'],
+  ['sec-calendar', '📅', 'nav_calendar'], ['sec-news', '📰', 'nav_news'], ['sec-market-news', '🗞', 'nav_mnews'], ['cycle-slot', '🧭', 'nav_cycle'], ['correlation-slot', '🔗', 'nav_corr'], ['predictions-slot', '🔮', 'nav_pred'],
   'sep',
-  ['performance-slot', '🔬', 'nav_perf'], ['pnl-history-slot', '💹', 'nav_pnl'], ['orderflow-slot', '📓', 'nav_orderflow'], ['journal-slot', '📝', 'nav_journal'],
+  ['performance-slot', '🔬', 'nav_perf'], ['pnl-history-slot', '💹', 'nav_pnl'], ['orderflow-slot', '📓', 'nav_orderflow'], ['journal-slot', '📝', 'nav_journal'], ['checklist-slot', '✅', 'nav_checklist'],
 ];
 function buildPanelNav() {
   const nav = document.getElementById('panel-nav'); if (!nav) return;
