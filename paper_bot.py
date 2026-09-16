@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Paper Trading Bot v0.6
+TVC Fusion Paper Trading Bot v0.8
+
+v0.8 (2026-09-16) — TIERED SIZING: position size scales with conviction
+  - Score 60-65→8%, 65-75→20%, 75-85→40%, 85+→80% of capital
+  - MIN_LONG_SCORE back to 60 (tiered sizing handles risk)
+  - Replaces flat 3% LONG_SIZE_CAP_PCT
+
+v0.7 (2026-09-16) — STRATEGY UPGRADE: Fibonacci + rebalanced weights
+  - Fibonacci pullback filter: skip LONG if price >70% of 30d range
+  - MIN_LONG_SCORE 60→65 (score 60-64 = 0% WR)
+  - TRAILING_DISTANCE 1.5%→2.5%
 
 v0.6 (2026-09-14) — AUDIT FIX: threshold alignment + R:R guard
   - MIN_LONG_SCORE 65→60 (aligned with auto_fusion BUY threshold)
@@ -62,8 +72,14 @@ DB_PATH = Path(
 PAPER_CAPITAL = float(os.environ.get("TVC_PAPER_CAPITAL", "10000"))
 EXCHANGE_ID = os.environ.get("TVC_EXCHANGE", "bybit")
 
-# v0.2 — asymmetric sizing caps
-LONG_SIZE_CAP_PCT = 3.0     # max % capital per LONG trade
+# v0.8 — TIERED SIZING by fusion score (higher conviction = bigger position)
+# Replaces flat 3% cap. Shorts stay conservative (unlimited upside risk).
+TIERED_LONG_SIZES = {        # (min_score, max_score): size_pct
+    (60, 65): 8.0,           # low conviction — probe position
+    (65, 75): 20.0,          # normal conviction
+    (75, 85): 40.0,          # high conviction
+    (85, 101): 80.0,         # very high conviction — full send
+}
 SHORT_SIZE_CAP_PCT = 0.5    # max % capital per SHORT trade (unlimited upside risk)
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -75,8 +91,10 @@ SHORT_SIZE_CAP_PCT = 0.5    # max % capital per SHORT trade (unlimited upside ri
 # entry_quality wait/skip, regime constraint, pending orders).
 #
 # 5 REGUŁ:
-#   1. Fusion Score ≥60 → LONG  /  ≤40 → SHORT  (v0.6: aligned w/ auto_fusion)
+#   1. Fusion Score ≥60 → LONG  /  ≤40 → SHORT  (v0.8: back to 60, tiered sizing)
 #   1b. R:R at live price ≥ 1.0 (v0.6: execution-time guard)
+#   6. Fibonacci pullback filter (v0.7)
+#   7. Tiered sizing by score: 60-65→8%, 65-75→20%, 75-85→40%, 85+→80% (v0.8)
 #   2. Smart Money verdict ≠ opposes (layers.veto is None)
 #   3. Brak makro blackout (3h przed / 1h po tier-1 evencie)
 #   4. SL ze struktury (auto_fusion levels)
@@ -87,7 +105,7 @@ SHORT_SIZE_CAP_PCT = 0.5    # max % capital per SHORT trade (unlimited upside ri
 # dla shortów, MIN_HOLD flip protection.
 # Zachowane: trailing SL, reopen cooldown, daily limit, Telegram, equity.
 # ═══════════════════════════════════════════════════════════════════════════
-MIN_LONG_SCORE = 65            # Reguła #1: minimalny score dla LONG (v0.7: 60→65, data proves 60-64 = 0% WR)
+MIN_LONG_SCORE = 60            # Reguła #1: minimalny score dla LONG (v0.8: back to 60, tiered sizing handles risk)
 MAX_SHORT_SCORE = 40           # Reguła #1: SHORT gdy score jest bearish (v0.6: 35→40, symmetric)
 MIN_RR_AT_ENTRY = 1.0          # Reguła #1b: min R:R w momencie wejścia (ochrona przed stale TP)
 REOPEN_COOLDOWN_MINUTES = 120  # anty-overtrading: po zamknięciu tickera 2h przerwy
@@ -780,12 +798,16 @@ def cmd_open(args):
             except (TypeError, ValueError):
                 pass
 
-        # Asymmetric sizing caps
-        size_pct_requested = float(dec.get("size_pct", 0))
-        max_cap = SHORT_SIZE_CAP_PCT if direction == "short" else LONG_SIZE_CAP_PCT
-        size_pct = min(size_pct_requested, max_cap)
-        if size_pct < size_pct_requested:
-            print(f"[cap] {ticker} {direction.upper()} size {size_pct_requested}% capped to {size_pct}%")
+        # v0.8 — Tiered sizing: score determines position size
+        if direction == "short":
+            size_pct = SHORT_SIZE_CAP_PCT
+        else:
+            size_pct = 8.0  # fallback
+            for (lo, hi), pct in TIERED_LONG_SIZES.items():
+                if lo <= score < hi:
+                    size_pct = pct
+                    break
+        print(f"[size] {ticker} {direction.upper()} score={score} → {size_pct}% of capital")
         size_usd = PAPER_CAPITAL * (size_pct / 100)
 
         sources = dec.get("sources", {})
@@ -1825,6 +1847,7 @@ def cmd_upload(args):
             "macro_blackout": True,
             "reopen_cooldown_min": REOPEN_COOLDOWN_MINUTES,
             "max_trades_per_day": MAX_NEW_TRADES_PER_DAY,
+            "tiered_sizing": {str(k): v for k, v in TIERED_LONG_SIZES.items()},
         },
     }
 
