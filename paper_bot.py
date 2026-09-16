@@ -87,7 +87,7 @@ SHORT_SIZE_CAP_PCT = 0.5    # max % capital per SHORT trade (unlimited upside ri
 # dla shortów, MIN_HOLD flip protection.
 # Zachowane: trailing SL, reopen cooldown, daily limit, Telegram, equity.
 # ═══════════════════════════════════════════════════════════════════════════
-MIN_LONG_SCORE = 60            # Reguła #1: minimalny score dla LONG (v0.6: 65→60, aligned with auto_fusion BUY)
+MIN_LONG_SCORE = 65            # Reguła #1: minimalny score dla LONG (v0.7: 60→65, data proves 60-64 = 0% WR)
 MAX_SHORT_SCORE = 40           # Reguła #1: SHORT gdy score jest bearish (v0.6: 35→40, symmetric)
 MIN_RR_AT_ENTRY = 1.0          # Reguła #1b: min R:R w momencie wejścia (ochrona przed stale TP)
 REOPEN_COOLDOWN_MINUTES = 120  # anty-overtrading: po zamknięciu tickera 2h przerwy
@@ -760,6 +760,26 @@ def cmd_open(args):
             except (TypeError, ValueError):
                 pass  # missing/bad levels — proceed, SL/TP will be set to None
 
+        # v0.7 — REGUŁA #6: FIBONACCI PULLBACK FILTER
+        # Don't chase! For longs, skip if price is above 70% of 30-day range
+        # (hasn't pulled back enough). For shorts, skip if below 30%.
+        fib_pos = dec.get("fib_position")
+        if fib_pos is not None:
+            try:
+                fib_pos = float(fib_pos)
+                if direction == "long" and fib_pos > 0.70:
+                    print(f"[skip] {ticker} LONG — chasing: price at {fib_pos:.0%} of 30d range "
+                          f"(above 70% Fib threshold)")
+                    skipped += 1
+                    continue
+                if direction == "short" and fib_pos < 0.30:
+                    print(f"[skip] {ticker} SHORT — chasing bottom: price at {fib_pos:.0%} of 30d range "
+                          f"(below 30% Fib threshold)")
+                    skipped += 1
+                    continue
+            except (TypeError, ValueError):
+                pass
+
         # Asymmetric sizing caps
         size_pct_requested = float(dec.get("size_pct", 0))
         max_cap = SHORT_SIZE_CAP_PCT if direction == "short" else LONG_SIZE_CAP_PCT
@@ -836,7 +856,7 @@ def _fetch_ohlc_since(ex, ticker: str, since_iso: str, timeframe: str = "5m"):
 # TRAILING_DISTANCE: SL follows current price at this distance %
 BREAKEVEN_TRIGGER = 1.5   # +1.5% profit → SL = entry × 1.001 (breakeven+)
 TRAILING_TRIGGER = 3.0    # +3% profit → start trailing
-TRAILING_DISTANCE = 1.5   # SL follows 1.5% below current price
+TRAILING_DISTANCE = 2.5   # SL follows 2.5% below current price (v0.7: widened from 1.5%, crypto moves 2% on a sneeze)
 
 
 def _now_ms() -> int:

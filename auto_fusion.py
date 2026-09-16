@@ -347,10 +347,89 @@ def fetch_macro_context():
     return out
 
 
+def _compute_rsi(closes, period=14):
+    """Standard Wilder RSI (0-100). Needs len(closes) >= period+1."""
+    if len(closes) < period + 1:
+        return 50.0  # neutral
+    gains, losses = [], []
+    for i in range(1, len(closes)):
+        d = closes[i] - closes[i - 1]
+        gains.append(max(d, 0))
+        losses.append(max(-d, 0))
+    # Wilder smoothing (EMA-style)
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+    for i in range(period, len(gains)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+
+def _fibonacci_zone_score(closes, klines):
+    """
+    Sprawdza gdzie cena jest w kontekście Fib retracement ostatniego swingu dziennego.
+    Zwraca score 0-100: blisko 61.8% retracement (optimal buy zone for longs) = wysoki,
+    przy szczycie (chasing) = niski. Dla bearish: odwrotnie.
+    """
+    if not klines or len(klines) < 20:
+        return 50
+    highs = [float(k[2]) for k in klines]
+    lows = [float(k[3]) for k in klines]
+    # Ostatni swing: najwyższy/najniższy z 30 dni
+    swing_high = max(highs[-30:]) if len(highs) >= 30 else max(highs)
+    swing_low = min(lows[-30:]) if len(lows) >= 30 else min(lows)
+    rng = swing_high - swing_low
+    if rng <= 0:
+        return 50
+    price = closes[-1]
+    # Pozycja ceny w zakresie (0 = dno, 1 = szczyt)
+    pos = (price - swing_low) / rng
+    # Fibonacci retracement zones (from swing high):
+    # 23.6% retrace = pos ~0.764 (barely pulled back)
+    # 38.2% retrace = pos ~0.618
+    # 50% retrace = pos ~0.50
+    # 61.8% retrace = pos ~0.382 (golden zone for longs)
+    # 78.6% retrace = pos ~0.214 (deep pullback)
+    #
+    # For LONGS: best entries near 50-61.8% retracement (pos 0.38-0.50)
+    # Score peaks at pos=0.40 (61.8% retrace), drops at extremes
+    if pos > 0.85:
+        return 20  # at/near top — chasing, terrible for longs
+    elif pos > 0.70:
+        return 35  # only 23% retraced — still chasing
+    elif pos > 0.55:
+        return 50  # 38% retraced — acceptable
+    elif pos > 0.35:
+        return 80  # 50-61.8% retraced — golden zone (optimal for longs)
+    elif pos > 0.20:
+        return 65  # 78% retraced — deep pullback, riskier but good R:R
+    else:
+        return 40  # near swing low — might be breaking down
+
+
+def _fib_position(current_price, klines_d):
+    """Return price position in 30-day range as 0.0-1.0 (0=swing low, 1=swing high).
+    Used by paper_bot to skip entries that are chasing (longs near top, shorts near bottom)."""
+    if not klines_d or len(klines_d) < 20:
+        return 0.5  # unknown → neutral
+    highs = [float(k[2]) for k in klines_d[-30:]]
+    lows = [float(k[3]) for k in klines_d[-30:]]
+    swing_high = max(highs)
+    swing_low = min(lows)
+    rng = swing_high - swing_low
+    if rng <= 0:
+        return 0.5
+    return max(0.0, min(1.0, (current_price - swing_low) / rng))
+
+
 def compute_ta_score(klines):
     """
-    Prosty technical score 0-100 na podstawie 30 świec dziennych.
-    Kombinuje: trend (EMA20 slope), momentum (RSI proxy), volatility.
+    Technical score 0-100 na podstawie dziennych świec.
+    v0.7: RSI14 + Fibonacci zone + EMA20 trend + momentum + volume.
+    Weights: RSI14 25%, Fib zone 20%, EMA trend 25%, momentum 15%, volume 15%.
     """
     if not klines or len(klines) < 20:
         return 50  # neutral
@@ -358,22 +437,40 @@ def compute_ta_score(klines):
     closes = [float(k[4]) for k in klines]
     volumes = [float(k[5]) for k in klines]
 
-    # Trend: EMA20 vs current
-    ema20 = closes[-1]  # start
+    # ── RSI14 (25%) ──────────────────────────────────────────
+    rsi = _compute_rsi(closes, 14)
+    # Map RSI to score: RSI 30→80 (oversold=bullish), RSI 50→50, RSI 70→20 (overbought)
+    # Sweet spot for longs: RSI 40-55 (not overbought, momentum building)
+    if rsi <= 30:
+        rsi_score = 85  # deeply oversold — strong mean reversion signal
+    elif rsi <= 45:
+        rsi_score = 70  # mildly oversold — good entry zone
+    elif rsi <= 55:
+        rsi_score = 55  # neutral
+    elif rsi <= 70:
+        rsi_score = 40  # overbought territory — fade longs
+    else:
+        rsi_score = 15  # extremely overbought — do NOT buy
+
+    # ── Fibonacci zone (20%) ─────────────────────────────────
+    fib_score = _fibonacci_zone_score(closes, klines)
+
+    # ── EMA20 Trend (25%) ────────────────────────────────────
+    ema20 = closes[-1]
     for c in closes[-20:]:
         ema20 = ema20 * 0.9 + c * 0.1
-    trend_score = 50 + ((closes[-1] - ema20) / ema20) * 500  # -50..+50 range
+    trend_score = 50 + ((closes[-1] - ema20) / ema20) * 500
     trend_score = max(0, min(100, trend_score))
 
-    # Momentum: 7-day return
+    # ── Momentum: 7-day return (15%) ─────────────────────────
     if len(closes) >= 7:
         pct_7d = (closes[-1] - closes[-7]) / closes[-7] * 100
-        momo_score = 50 + pct_7d * 2  # 5% = +10 score
+        momo_score = 50 + pct_7d * 2
         momo_score = max(0, min(100, momo_score))
     else:
         momo_score = 50
 
-    # Volume trend: recent vs avg
+    # ── Volume trend (15%) ───────────────────────────────────
     if len(volumes) >= 20:
         recent_vol = sum(volumes[-3:]) / 3
         avg_vol = sum(volumes[-20:]) / 20
@@ -381,7 +478,13 @@ def compute_ta_score(klines):
     else:
         vol_score = 50
 
-    return int(trend_score * 0.5 + momo_score * 0.35 + vol_score * 0.15)
+    return int(
+        rsi_score * 0.25
+        + fib_score * 0.20
+        + trend_score * 0.25
+        + momo_score * 0.15
+        + vol_score * 0.15
+    )
 
 
 def compute_short_term_momentum(klines_1h):
@@ -511,37 +614,42 @@ def analyze_market_structure(klines, lookback=2):
 def compute_score(ticker, price_data, ta_score, fng, etf_flows):
     """
     Combined fusion score 0-100.
-    Weights: OnChain 40% + TA 30% + News 20% + Sentiment 10%.
+    v0.7 weights: OnChain 40% + TA 40% + Sentiment 15% + News 5%.
+    (News reduced from 20%→5% — was hardcoded at 60, dead weight.
+     TA raised from 30%→40% — now has RSI14 + Fibonacci, earns the weight.
+     Sentiment raised 10%→15% — F&G is a real signal.)
     """
-    # OnChain proxy: ETF flows dla BTC/ETH, sentiment dla altcoinów
+    # OnChain proxy: ETF flows dla BTC/ETH, sentiment + volume for altcoins
     if ticker == "BTC" and etf_flows and etf_flows.get("btc_1d"):
         flow_val = etf_flows["btc_1d"]
-        # Positive inflow = bullish
-        onchain_score = 65 + min(20, (flow_val / 100_000_000) * 5)  # +$500M = +25
+        onchain_score = 65 + min(20, (flow_val / 100_000_000) * 5)
     elif ticker == "ETH" and etf_flows and etf_flows.get("eth_1d"):
         flow_val = etf_flows["eth_1d"]
         onchain_score = 65 + min(20, (flow_val / 100_000_000) * 5)
     else:
-        # Altcoins: use price momentum + volume
-        onchain_score = 60 + (price_data.get("change_24h", 0) * 2)
+        # v0.7 improved altcoin onchain: blend 24h change, 7d change, and volume signal
+        chg_24h = price_data.get("change_24h", 0)
+        chg_7d = price_data.get("change_7d", 0)
+        vol_chg = price_data.get("volume_change_24h", 0)  # % change in volume
+        # Weighted blend: recent price action + medium-term trend + volume confirmation
+        onchain_score = 50 + (chg_24h * 1.5) + (chg_7d * 0.5) + (vol_chg * 0.02 if vol_chg else 0)
 
     onchain_score = max(0, min(100, onchain_score))
 
-    # News: default 60 (neutral without LLM analysis)
-    news_score = 60
+    # News: placeholder (5% weight — minimal impact until we have real news scoring)
+    news_score = 55
 
-    # Sentiment: F&G Index
+    # Sentiment: F&G Index (15% weight — real market signal)
     if fng:
-        # F&G > 65 = greed = bullish for BTC/ETH, potentially topping for alts
         sentiment_score = fng["current"]
     else:
-        sentiment_score = 55
+        sentiment_score = 50
 
     total = (
         onchain_score * 0.40
-        + ta_score * 0.30
-        + news_score * 0.20
-        + sentiment_score * 0.10
+        + ta_score * 0.40
+        + sentiment_score * 0.15
+        + news_score * 0.05
     )
     return int(total), {
         "onchain": int(onchain_score),
@@ -789,6 +897,25 @@ def compute_levels(ticker, direction, price, change_24h, klines_d, klines_1h):
         raw.append((s["price"], 1.0, f"swing1h_{s['type']}"))
     for s in detect_swing_points(klines_d[-60:], lookback=2) if klines_d else []:
         raw.append((s["price"], 2.0, f"swingD_{s['type']}"))
+
+    # ── v0.7 Fibonacci retracement levels (30-day swing range) ──────────
+    if klines_d and len(klines_d) >= 20:
+        fib_highs = [float(k[2]) for k in klines_d[-30:]]
+        fib_lows = [float(k[3]) for k in klines_d[-30:]]
+        fib_high = max(fib_highs)
+        fib_low = min(fib_lows)
+        fib_range = fib_high - fib_low
+        if fib_range > 0:
+            for fib_pct, fib_label in [
+                (0.236, "Fib23.6"),
+                (0.382, "Fib38.2"),
+                (0.500, "Fib50.0"),
+                (0.618, "Fib61.8"),
+                (0.786, "Fib78.6"),
+            ]:
+                fib_level = fib_high - fib_range * fib_pct  # retracement FROM high
+                raw.append((fib_level, 1.5, fib_label))
+
     if len(closes_d) >= 200:
         raw.append((sum(closes_d[-200:]) / 200, 2.5, "MA200D"))
     if len(closes_d) >= 50:
@@ -1330,6 +1457,7 @@ def generate_fusion():
             "onchain_data_thin": False,
             "market_structure": {"1h": ms_1h, "15m": ms_15m},
             "levels": ({k: levels[k] for k in ("rr", "atr_pct", "ema21_1h", "supports", "resistances")} if levels else None),
+            "fib_position": _fib_position(current_price, klines_d220),  # v0.7: 0.0=at swing low, 1.0=at swing high
             "entry_quality": (levels["entry_quality"] if levels else None),
             "layers": layers,
             "choch_override": choch_override,
