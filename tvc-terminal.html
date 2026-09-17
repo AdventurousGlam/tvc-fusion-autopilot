@@ -6081,20 +6081,31 @@ function interpretTokenState(ticker) {
   else if (dec.action === 'WATCH') { score += 0; reasoning.push(`Fusion WATCH (${dec.score}) — no entry yet`); }
   else if (dec.action === 'SELL' || dec.action === 'STRONG_SELL') { score -= 3; reasoning.push(`Fusion ${dec.action}`); }
 
-  // 2. POSITION PROFIT/LOSS status (assumes open long from entry range)
+  // 2. POSITION PROFIT/LOSS — v0.9.1: PnL now IMPACTS SCORE (not just reasoning)
+  // This is the critical fix: a position +5% in profit should strongly resist
+  // noise signals (orderbook, flush, sell zone) that would flip verdict to TIGHTEN_SL.
+  // Before v0.9.1 this section was reasoning-only → zero score impact → useless.
   if (hasOpenPos && dec.entry_low && dec.entry_high) {
     const midEntry = (dec.entry_low + dec.entry_high) / 2;
     const pctFromEntry = ((price - midEntry) / midEntry * 100);
-    if (pctFromEntry > 3) reasoning.push(`Position ~+${pctFromEntry.toFixed(1)}% od entry (dobry profit)`);
-    else if (pctFromEntry > 0.5) reasoning.push(`Position +${pctFromEntry.toFixed(1)}% od entry (breakeven+)`);
-    else if (pctFromEntry > -1) reasoning.push(`Position ${pctFromEntry.toFixed(1)}% od entry (neutral)`);
-    else reasoning.push(`Position ${pctFromEntry.toFixed(1)}% od entry (⚠️ underwater)`);
+    if (pctFromEntry > 5) {
+      score += 4; reasoning.push(`💰 Position +${pctFromEntry.toFixed(1)}% od entry (silny profit → score +4)`);
+    } else if (pctFromEntry > 3) {
+      score += 3; reasoning.push(`💰 Position +${pctFromEntry.toFixed(1)}% od entry (dobry profit → score +3)`);
+    } else if (pctFromEntry > 1) {
+      score += 2; reasoning.push(`📈 Position +${pctFromEntry.toFixed(1)}% od entry (profit → score +2)`);
+    } else if (pctFromEntry > 0) {
+      score += 1; reasoning.push(`📈 Position +${pctFromEntry.toFixed(1)}% od entry (breakeven+ → score +1)`);
+    } else if (pctFromEntry > -2) {
+      reasoning.push(`Position ${pctFromEntry.toFixed(1)}% od entry (neutral — brak wpływu na score)`);
+    } else {
+      score -= 2; reasoning.push(`⚠️ Position ${pctFromEntry.toFixed(1)}% od entry (underwater → score -2)`);
+    }
   }
 
-  // 2b. TREND BONUS — high-conviction Fusion resists microstructure noise
-  // v0.9: strong Fusion (score 70+) gets +1 buffer so orderbook noise can't flip verdict
+  // 2b. TREND BONUS — v0.9.1: lowered threshold from 70→65 so more BUY signals get buffer
   if (dec.score >= 75) { score += 2; reasoning.push(`📈 Fusion ${dec.score} (very high conviction) — noise-resistant`); }
-  else if (dec.score >= 70) { score += 1; reasoning.push(`📈 Fusion ${dec.score} (high conviction) — partially noise-resistant`); }
+  else if (dec.score >= 65) { score += 1; reasoning.push(`📈 Fusion ${dec.score} (high conviction) — partially noise-resistant`); }
 
   // 3. ORDERBOOK signal (only if WS active)
   // v0.9: reduced weight ±1 max (was ±2) — orderbook is noise, not structure
