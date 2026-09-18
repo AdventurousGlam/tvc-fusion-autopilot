@@ -1,34 +1,19 @@
 #!/usr/bin/env python3
 """
-polymarket_predictions.py — Daily BTC/ETH price prediction indicator from Polymarket.
+polymarket_predictions.py v2.0 — BTC/ETH price prediction indicator from Polymarket.
 
-Workflow (runs every cycle in GitHub Actions, but only snapshots once daily at ~18:00 PL):
-  1. Search Polymarket gamma API for active BTC/ETH daily price direction markets.
-  2. Snapshot current probability (YES/NO) → direction signal when ≥65% on one side.
-  3. Next day: check if prediction was correct (compare prices).
-  4. Maintain rolling log of predictions + outcomes + accuracy stats.
+v2.0 rewrite: Uses slug-based UP/DOWN market fetching instead of keyword search.
+Polymarket UP/DOWN markets follow a predictable slug pattern:
+  {asset}-updown-{interval}-{aligned_unix_ts}
+  e.g. btc-updown-5m-1726600800
 
-Output: market_predictions.json
-  {
-    "generated_at": "...",
-    "current": {
-      "BTC": {"direction": "UP", "pct": 82, "market_question": "...", "price_at_snapshot": 65400, "snapshot_time": "..."},
-      "ETH": {"direction": "DOWN", "pct": 71, ...}
-    },
-    "stats": {
-      "overall_accuracy": 65,
-      "confident_accuracy": 82,   // only predictions with ≥65%
-      "total_predictions": 45,
-      "per_asset": {"BTC": {"accuracy": 60, "total": 25}, "ETH": {"accuracy": 71, "total": 20}}
-    },
-    "log": [
-      {"date": "2026-09-14", "asset": "BTC", "direction": "UP", "pct": 78,
-       "price_start": 65400, "price_end": 66100, "outcome": "correct"},
-      ...
-    ]
-  }
+Workflow (runs every cycle in GitHub Actions):
+  1. Build slug for current 5m/15m/1h/4h/daily UP/DOWN market for BTC/ETH.
+  2. Fetch event by slug → extract UP vs DOWN probabilities.
+  3. Maintain rolling log of predictions + outcomes + accuracy stats.
+  4. Next cycle: check if resolved predictions were correct.
 
-auto_fusion.py reads market_predictions.json and embeds it as "market_predictions".
+Output: market_predictions.json (read by tvc-terminal.html Predictions panel).
 
 Dependencies: none beyond stdlib (uses urllib only).
 """
@@ -42,6 +27,7 @@ import urllib.request as ur
 import urllib.error
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from urllib.parse import quote
 
 try:
     import certifi
@@ -49,45 +35,28 @@ try:
 except ImportError:
     SSL_CTX = ssl.create_default_context()
 
-UA = "Mozilla/5.0 tvc-predictions/1.0"
+UA = "Mozilla/5.0 tvc-predictions/2.0"
 FUSION_DIR = Path.home() / "Claude" / "TVCFusion"
 OUT_FILE = FUSION_DIR / "market_predictions.json"
 
-# Poland timezone offset (CET=+1, CEST=+2). We approximate: Apr-Oct → +2, else → +1.
-def _pl_hour_now():
-    """Return current hour in Polish time (approximate DST)."""
-    utc = datetime.now(timezone.utc)
-    month = utc.month
-    offset = 2 if 4 <= month <= 10 else 1
-    return (utc + timedelta(hours=offset)).hour
-
-def _pl_date_now():
-    """Return current date string in Polish time."""
-    utc = datetime.now(timezone.utc)
-    month = utc.month
-    offset = 2 if 4 <= month <= 10 else 1
-    return (utc + timedelta(hours=offset)).strftime("%Y-%m-%d")
-
-
-SNAPSHOT_HOUR = 18  # snapshot at 18:00 Polish time
-SNAPSHOT_WINDOW = 1  # accept snapshot if within ±1 hour
-
-# Confidence threshold — prediction is "active" / "confident" when ≥ this
-CONFIDENCE_THRESHOLD = 65
+# Confidence threshold
+CONFIDENCE_THRESHOLD = 55  # lowered from 65 — UP/DOWN markets are often close to 50/50
 
 # Assets to track
 ASSETS = ["BTC", "ETH"]
+ASSET_SLUGS = {"BTC": "btc", "ETH": "eth"}
 
 # Binance symbols for price reference
 BINANCE_SYMBOLS = {"BTC": "BTCUSDT", "ETH": "ETHUSDT"}
 
-# Search terms for finding relevant Polymarket markets
-SEARCH_PATTERNS = {
-    "BTC": ["bitcoin price", "btc price", "bitcoin above", "bitcoin below",
-            "bitcoin increase", "bitcoin decrease", "btc above", "btc daily"],
-    "ETH": ["ethereum price", "eth price", "ethereum above", "ethereum below",
-            "ether price", "ethereum increase", "eth above", "eth daily"],
-}
+# Intervals to try (in order of preference: shorter = more frequent, more data)
+INTERVALS = [
+    ("5m",  300),
+    ("15m", 900),
+    ("1h",  3600),
+    ("4h",  14400),
+    ("1d",  86400),
+]
 
 
 def _get_json(url, timeout=15, retries=3):
@@ -100,91 +69,214 @@ def _get_json(url, timeout=15, retries=3):
         except Exception as e:
             last_err = e
             if attempt < retries:
-                wait = 3 * (2 ** (attempt - 1))
+                wait = 2 * attempt
                 print(f"[http] retry {attempt}/{retries} ({e}) — waiting {wait}s...")
                 time.sleep(wait)
     raise last_err
 
 
-# --- Polymarket API ---
-
-def search_markets(query, limit=5):
-    """Search Polymarket gamma API for markets matching query."""
-    from urllib.parse import quote
-    url = f"https://gamma-api.polymarket.com/markets?limit={limit}&active=true&closed=false&_q={quote(query)}"
-    try:
-        data = _get_json(url, timeout=10)
-        if isinstance(data, list):
-            return data
-        return []
-    except Exception as e:
-        print(f"[polymarket] Search failed for '{query}': {e}")
-        return []
+def _pl_tz_offset():
+    """Return Poland UTC offset (approximate DST: Apr-Oct = +2, else = +1)."""
+    month = datetime.now(timezone.utc).month
+    return 2 if 4 <= month <= 10 else 1
 
 
-def find_best_market(asset):
-    """Find the most relevant active daily/short-term market for an asset.
-    Returns dict with {question, yes_price, no_price, condition_id, end_date} or None.
+def _pl_date_now():
+    offset = _pl_tz_offset()
+    return (datetime.now(timezone.utc) + timedelta(hours=offset)).strftime("%Y-%m-%d")
+
+
+def _pl_hour_now():
+    offset = _pl_tz_offset()
+    return (datetime.now(timezone.utc) + timedelta(hours=offset)).hour
+
+
+# --- Polymarket slug-based API ---
+
+def _aligned_ts(now_ts, interval_secs):
+    """Align timestamp to interval boundary (floor)."""
+    return int(now_ts) - (int(now_ts) % interval_secs)
+
+
+def _build_slugs(asset, now_ts):
+    """Build candidate slugs for an asset at current time.
+    Returns list of (interval_label, slug) tuples.
     """
-    patterns = SEARCH_PATTERNS.get(asset, [])
-    candidates = []
+    slug_base = ASSET_SLUGS.get(asset, asset.lower())
+    results = []
+    for label, secs in INTERVALS:
+        aligned = _aligned_ts(now_ts, secs)
+        slug = f"{slug_base}-updown-{label}-{aligned}"
+        results.append((label, slug))
+        # Also try previous interval (market may have just expired)
+        prev = aligned - secs
+        results.append((label, f"{slug_base}-updown-{label}-{prev}"))
+    return results
 
-    for pattern in patterns:
-        markets = search_markets(pattern, limit=10)
-        for m in markets:
-            question = (m.get("question") or "").lower()
-            # Filter: must mention the asset and be about price/direction
-            asset_lower = asset.lower()
-            asset_names = {"BTC": ["bitcoin", "btc"], "ETH": ["ethereum", "eth", "ether"]}
-            names = asset_names.get(asset, [asset_lower])
 
-            if not any(n in question for n in names):
-                continue
+def fetch_updown_market(asset):
+    """Fetch UP/DOWN probabilities for an asset from Polymarket.
+    Tries multiple intervals, returns first successful match.
+    Returns dict with {interval, up_pct, down_pct, slug, question, end_date} or None.
+    """
+    now_ts = time.time()
+    slugs = _build_slugs(asset, now_ts)
 
-            # Prefer markets about price direction, daily, short-term
-            price_related = any(w in question for w in
-                                ["price", "above", "below", "increase", "decrease",
-                                 "higher", "lower", "rise", "fall", "close", "reach"])
-            if not price_related:
-                continue
+    for interval_label, slug in slugs:
+        # Try events endpoint first (events contain nested markets)
+        try:
+            url = f"https://gamma-api.polymarket.com/events?slug={quote(slug)}"
+            data = _get_json(url, timeout=10, retries=1)
+            if isinstance(data, list) and data:
+                event = data[0]
+                markets = event.get("markets", [])
+                result = _parse_markets(markets, asset, interval_label, slug)
+                if result:
+                    return result
+        except Exception:
+            pass
 
-            # Extract prices
-            outcomes = m.get("outcomePrices", "")
-            try:
-                if isinstance(outcomes, str):
-                    prices = json.loads(outcomes)
-                else:
-                    prices = outcomes
-                yes_price = float(prices[0]) if prices else None
-                no_price = float(prices[1]) if len(prices) > 1 else None
-            except (json.JSONDecodeError, IndexError, TypeError, ValueError):
-                yes_price = None
-                no_price = None
+        # Fallback: markets endpoint directly
+        try:
+            url = f"https://gamma-api.polymarket.com/markets?slug={quote(slug)}"
+            data = _get_json(url, timeout=10, retries=1)
+            if isinstance(data, list) and data:
+                result = _parse_markets(data, asset, interval_label, slug)
+                if result:
+                    return result
+            elif isinstance(data, dict) and data.get("question"):
+                # Single market response
+                result = _parse_single_market(data, asset, interval_label, slug)
+                if result:
+                    return result
+        except Exception:
+            pass
 
-            if yes_price is None:
-                continue
+    # Fallback: keyword search (legacy, less reliable)
+    return _keyword_search_fallback(asset)
 
-            # Score: prefer markets ending sooner (daily > weekly > monthly)
-            end_date = m.get("endDate") or m.get("end_date_iso") or ""
-            candidates.append({
-                "question": m.get("question", ""),
-                "condition_id": m.get("conditionId") or m.get("condition_id", ""),
-                "yes_price": yes_price,
-                "no_price": no_price,
-                "end_date": end_date,
-                "volume": float(m.get("volume", 0) or 0),
-                "liquidity": float(m.get("liquidity", 0) or 0),
-            })
 
-    if not candidates:
+def _parse_markets(markets, asset, interval_label, slug):
+    """Parse a list of markets from an event to extract UP/DOWN probabilities."""
+    up_pct = None
+    down_pct = None
+    question = None
+    end_date = None
+
+    for m in markets:
+        q = (m.get("question") or m.get("groupItemTitle") or "").lower()
+        outcomes = m.get("outcomePrices") or m.get("outcome_prices", "")
+        try:
+            if isinstance(outcomes, str):
+                prices = json.loads(outcomes) if outcomes else []
+            else:
+                prices = outcomes
+            yes_price = float(prices[0]) if prices else None
+        except (json.JSONDecodeError, IndexError, TypeError, ValueError):
+            yes_price = None
+
+        if yes_price is None:
+            continue
+
+        pct = round(yes_price * 100)
+        end_date = end_date or m.get("endDate") or m.get("end_date_iso")
+
+        if "up" in q or "higher" in q or "increase" in q or "above" in q:
+            up_pct = pct
+            question = m.get("question") or question
+        elif "down" in q or "lower" in q or "decrease" in q or "below" in q:
+            down_pct = pct
+            question = question or m.get("question")
+
+    # If we found at least one direction
+    if up_pct is not None or down_pct is not None:
+        # Infer missing direction
+        if up_pct is not None and down_pct is None:
+            down_pct = 100 - up_pct
+        elif down_pct is not None and up_pct is None:
+            up_pct = 100 - down_pct
+
+        return {
+            "interval": interval_label,
+            "up_pct": up_pct,
+            "down_pct": down_pct,
+            "slug": slug,
+            "question": question,
+            "end_date": end_date,
+            "source": "slug",
+        }
+
+    # Also check if it's a binary YES/NO about price going up
+    if len(markets) == 1:
+        return _parse_single_market(markets[0], asset, interval_label, slug)
+
+    return None
+
+
+def _parse_single_market(m, asset, interval_label, slug):
+    """Parse a single binary market (YES/NO) as UP/DOWN signal."""
+    q = (m.get("question") or "").lower()
+    outcomes = m.get("outcomePrices") or m.get("outcome_prices", "")
+    try:
+        if isinstance(outcomes, str):
+            prices = json.loads(outcomes) if outcomes else []
+        else:
+            prices = outcomes
+        yes_price = float(prices[0]) if prices else None
+    except (json.JSONDecodeError, IndexError, TypeError, ValueError):
+        yes_price = None
+
+    if yes_price is None:
         return None
 
-    # Sort by volume (most liquid = most reliable signal)
-    candidates.sort(key=lambda c: c["volume"], reverse=True)
-    best = candidates[0]
-    print(f"[polymarket] {asset}: Found '{best['question']}' "
-          f"(YES={best['yes_price']:.0%}, vol={best['volume']:.0f})")
-    return best
+    yes_pct = round(yes_price * 100)
+    no_pct = 100 - yes_pct
+
+    # Determine framing
+    positive = any(w in q for w in ["up", "above", "higher", "increase", "rise"])
+    negative = any(w in q for w in ["down", "below", "lower", "decrease", "fall"])
+
+    if positive:
+        up_pct, down_pct = yes_pct, no_pct
+    elif negative:
+        up_pct, down_pct = no_pct, yes_pct
+    else:
+        up_pct, down_pct = yes_pct, no_pct  # assume YES = UP
+
+    return {
+        "interval": interval_label,
+        "up_pct": up_pct,
+        "down_pct": down_pct,
+        "slug": slug,
+        "question": m.get("question"),
+        "end_date": m.get("endDate") or m.get("end_date_iso"),
+        "source": "slug-single",
+    }
+
+
+def _keyword_search_fallback(asset):
+    """Legacy keyword search as a last resort."""
+    queries = {
+        "BTC": ["bitcoin price up down", "btc updown", "bitcoin daily"],
+        "ETH": ["ethereum price up down", "eth updown", "ethereum daily"],
+    }
+    for q in queries.get(asset, []):
+        try:
+            url = f"https://gamma-api.polymarket.com/markets?limit=5&active=true&closed=false&_q={quote(q)}"
+            data = _get_json(url, timeout=10, retries=1)
+            if isinstance(data, list):
+                for m in data:
+                    question = (m.get("question") or "").lower()
+                    asset_lower = asset.lower()
+                    if asset_lower not in question and {"BTC": "bitcoin", "ETH": "ethereum"}.get(asset, "") not in question:
+                        continue
+                    result = _parse_single_market(m, asset, "search", f"search-{asset_lower}")
+                    if result:
+                        result["source"] = "keyword-search"
+                        return result
+        except Exception:
+            pass
+    return None
 
 
 def get_binance_price(asset):
@@ -204,7 +296,6 @@ def get_binance_price(asset):
 # --- State management ---
 
 def load_state():
-    """Load existing predictions state from file."""
     if OUT_FILE.exists():
         try:
             return json.loads(OUT_FILE.read_text(encoding="utf-8"))
@@ -214,78 +305,38 @@ def load_state():
 
 
 def save_state(state):
-    """Save predictions state to file."""
     state["generated_at"] = datetime.now(timezone.utc).isoformat()
+    state["version"] = "2.0"
     OUT_FILE.write_text(json.dumps(state, indent=2, ensure_ascii=False))
-
-
-def interpret_direction(market):
-    """Interpret market probability as UP/DOWN/NEUTRAL direction.
-    Returns (direction, confidence_pct).
-    """
-    if not market:
-        return "NEUTRAL", 50
-
-    yes_pct = round(market["yes_price"] * 100)
-    no_pct = 100 - yes_pct
-
-    # Interpret: if "above" or positive framing → YES=UP
-    q = (market.get("question") or "").lower()
-    positive_framing = any(w in q for w in ["above", "increase", "higher", "rise", "reach", "hit"])
-    negative_framing = any(w in q for w in ["below", "decrease", "lower", "fall", "drop"])
-
-    if positive_framing:
-        if yes_pct >= CONFIDENCE_THRESHOLD:
-            return "UP", yes_pct
-        elif no_pct >= CONFIDENCE_THRESHOLD:
-            return "DOWN", no_pct
-        else:
-            return "NEUTRAL", max(yes_pct, no_pct)
-    elif negative_framing:
-        if yes_pct >= CONFIDENCE_THRESHOLD:
-            return "DOWN", yes_pct
-        elif no_pct >= CONFIDENCE_THRESHOLD:
-            return "UP", no_pct
-        else:
-            return "NEUTRAL", max(yes_pct, no_pct)
-    else:
-        # Ambiguous framing — use YES as bullish signal
-        if yes_pct >= CONFIDENCE_THRESHOLD:
-            return "UP", yes_pct
-        elif no_pct >= CONFIDENCE_THRESHOLD:
-            return "DOWN", no_pct
-        else:
-            return "NEUTRAL", max(yes_pct, no_pct)
 
 
 # --- Outcome checking ---
 
-def check_yesterday_outcomes(state):
-    """Check if yesterday's predictions were correct by comparing prices.
-    Updates log entries that have outcome='pending'.
-    """
+def check_outcomes(state):
+    """Resolve pending predictions by checking if price moved in predicted direction."""
     updated = 0
     for entry in state.get("log", []):
         if entry.get("outcome") != "pending":
             continue
 
-        # Only resolve if we have both prices
         price_start = entry.get("price_start")
         if not price_start:
             continue
 
-        # Check if enough time has passed (at least 20 hours since snapshot)
+        # Check if enough time has passed
         snap_time = entry.get("snapshot_time", "")
         if snap_time:
             try:
                 snap_dt = datetime.fromisoformat(snap_time.replace("Z", "+00:00"))
                 hours_since = (datetime.now(timezone.utc) - snap_dt).total_seconds() / 3600
-                if hours_since < 20:
-                    continue  # too early to resolve
+                # For short intervals, resolve faster
+                interval = entry.get("interval", "1d")
+                min_hours = {"5m": 0.2, "15m": 0.5, "1h": 1.5, "4h": 5, "1d": 20}.get(interval, 20)
+                if hours_since < min_hours:
+                    continue
             except (ValueError, TypeError):
                 pass
 
-        # Get current/end price
         asset = entry.get("asset", "BTC")
         price_end = get_binance_price(asset)
         if not price_end:
@@ -297,7 +348,7 @@ def check_yesterday_outcomes(state):
         elif direction == "DOWN":
             actual_correct = price_end < price_start
         else:
-            actual_correct = None  # NEUTRAL — no prediction made
+            actual_correct = None
 
         entry["price_end"] = round(price_end, 2)
         if actual_correct is None:
@@ -310,7 +361,7 @@ def check_yesterday_outcomes(state):
         price_change = ((price_end - price_start) / price_start) * 100
         entry["price_change_pct"] = round(price_change, 2)
         updated += 1
-        print(f"[outcome] {entry['date']} {asset} {direction} → "
+        print(f"[outcome] {entry.get('date','')} {asset} {direction} → "
               f"{entry['outcome']} ({price_change:+.2f}%)")
 
     if updated:
@@ -319,7 +370,6 @@ def check_yesterday_outcomes(state):
 
 
 def compute_stats(log):
-    """Compute accuracy statistics from the log."""
     resolved = [e for e in log if e.get("outcome") in ("correct", "wrong")]
     confident = [e for e in resolved if e.get("pct", 0) >= CONFIDENCE_THRESHOLD]
 
@@ -356,93 +406,119 @@ def compute_stats(log):
 
 def main():
     print("=" * 60)
-    print("[polymarket_predictions] Starting...")
+    print("[polymarket_predictions v2.0] Starting...")
     print("=" * 60)
 
     state = load_state()
 
-    # 1. Resolve any pending outcomes from previous predictions
-    check_yesterday_outcomes(state)
+    # 1. Resolve pending outcomes
+    check_outcomes(state)
 
-    # 2. Check if we should take a new snapshot (once daily around SNAPSHOT_HOUR PL time)
-    pl_hour = _pl_hour_now()
-    pl_date = _pl_date_now()
-    already_snapped = any(
-        e.get("date") == pl_date for e in state.get("log", [])
-    )
+    # 2. Fetch current UP/DOWN markets for each asset
+    for asset in ASSETS:
+        market = fetch_updown_market(asset)
+        price = get_binance_price(asset)
 
-    should_snapshot = (
-        abs(pl_hour - SNAPSHOT_HOUR) <= SNAPSHOT_WINDOW
-        and not already_snapped
-    )
+        if market:
+            up_pct = market["up_pct"]
+            down_pct = market["down_pct"]
 
-    if should_snapshot:
-        print(f"[snapshot] Taking daily snapshot (PL time ~{pl_hour}:00, date={pl_date})")
-
-        for asset in ASSETS:
-            # Find best market
-            market = find_best_market(asset)
-            direction, pct = interpret_direction(market)
-            price = get_binance_price(asset)
+            if up_pct > down_pct:
+                direction = "UP"
+                pct = up_pct
+            elif down_pct > up_pct:
+                direction = "DOWN"
+                pct = down_pct
+            else:
+                direction = "NEUTRAL"
+                pct = 50
 
             current_entry = {
                 "direction": direction,
                 "pct": pct,
-                "market_question": market["question"] if market else None,
+                "up_pct": up_pct,
+                "down_pct": down_pct,
+                "interval": market.get("interval", "?"),
+                "market_question": market.get("question"),
+                "slug": market.get("slug"),
+                "source": market.get("source", "slug"),
                 "price_at_snapshot": round(price, 2) if price else None,
                 "snapshot_time": datetime.now(timezone.utc).isoformat(),
                 "active": pct >= CONFIDENCE_THRESHOLD,
             }
             state["current"][asset] = current_entry
 
-            # Add to log
-            log_entry = {
-                "date": pl_date,
-                "asset": asset,
-                "direction": direction,
-                "pct": pct,
-                "price_start": round(price, 2) if price else None,
-                "price_end": None,
-                "price_change_pct": None,
-                "outcome": "pending",
-                "market_question": market["question"] if market else None,
-                "snapshot_time": datetime.now(timezone.utc).isoformat(),
-            }
-            state["log"].append(log_entry)
-            status = "ACTIVE" if pct >= CONFIDENCE_THRESHOLD else "inactive"
-            print(f"[snapshot] {asset}: {direction} {pct}% ({status})"
-                  f" @ ${price:,.0f}" if price else f"[snapshot] {asset}: {direction} {pct}% ({status})")
+            print(f"[market] {asset}: {direction} {pct}% "
+                  f"(UP={up_pct}% DOWN={down_pct}% "
+                  f"interval={market['interval']} source={market['source']})")
+        else:
+            # No market found — keep stale current if exists, mark inactive
+            if asset in state.get("current", {}):
+                state["current"][asset]["active"] = False
+                state["current"][asset]["stale"] = True
+            else:
+                state["current"][asset] = {
+                    "direction": "NEUTRAL",
+                    "pct": 50,
+                    "up_pct": 50,
+                    "down_pct": 50,
+                    "active": False,
+                    "stale": True,
+                    "price_at_snapshot": round(price, 2) if price else None,
+                    "snapshot_time": datetime.now(timezone.utc).isoformat(),
+                }
+            print(f"[market] {asset}: No UP/DOWN market found")
 
-    elif already_snapped:
-        print(f"[snapshot] Already snapped today ({pl_date}) — updating current prices only")
-        # Update current prices without new snapshot
+        # Update live price
+        if price and asset in state.get("current", {}):
+            snap_price = state["current"][asset].get("price_at_snapshot")
+            if snap_price:
+                change = ((price - snap_price) / snap_price) * 100
+                state["current"][asset]["live_price"] = round(price, 2)
+                state["current"][asset]["live_change_pct"] = round(change, 2)
+
+    # 3. Log snapshot (once per 15 min max to avoid spam)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    last_log_time = None
+    if state.get("log"):
+        last_log_time = state["log"][-1].get("snapshot_time")
+
+    should_log = True
+    if last_log_time:
+        try:
+            last_dt = datetime.fromisoformat(last_log_time.replace("Z", "+00:00"))
+            minutes_since = (datetime.now(timezone.utc) - last_dt).total_seconds() / 60
+            should_log = minutes_since >= 14
+        except (ValueError, TypeError):
+            pass
+
+    if should_log:
         for asset in ASSETS:
-            price = get_binance_price(asset)
-            if asset in state.get("current", {}) and price:
-                snap_price = state["current"][asset].get("price_at_snapshot")
-                if snap_price:
-                    change = ((price - snap_price) / snap_price) * 100
-                    state["current"][asset]["live_price"] = round(price, 2)
-                    state["current"][asset]["live_change_pct"] = round(change, 2)
-    else:
-        print(f"[snapshot] Not snapshot time (PL hour={pl_hour}, target={SNAPSHOT_HOUR}±{SNAPSHOT_WINDOW})")
-        # Still update live prices
-        for asset in ASSETS:
-            price = get_binance_price(asset)
-            if asset in state.get("current", {}) and price:
-                snap_price = state["current"][asset].get("price_at_snapshot")
-                if snap_price:
-                    change = ((price - snap_price) / snap_price) * 100
-                    state["current"][asset]["live_price"] = round(price, 2)
-                    state["current"][asset]["live_change_pct"] = round(change, 2)
+            cur = state.get("current", {}).get(asset, {})
+            if cur.get("active") and not cur.get("stale"):
+                log_entry = {
+                    "date": _pl_date_now(),
+                    "asset": asset,
+                    "direction": cur.get("direction", "NEUTRAL"),
+                    "pct": cur.get("pct", 50),
+                    "up_pct": cur.get("up_pct", 50),
+                    "down_pct": cur.get("down_pct", 50),
+                    "interval": cur.get("interval", "?"),
+                    "price_start": cur.get("price_at_snapshot"),
+                    "price_end": None,
+                    "price_change_pct": None,
+                    "outcome": "pending",
+                    "snapshot_time": now_iso,
+                }
+                state["log"].append(log_entry)
 
-    # 3. Trim log to last 60 entries (30 days × 2 assets)
-    state["log"] = state["log"][-60:]
+    # 4. Trim log (keep last 200 entries)
+    state["log"] = state["log"][-200:]
 
-    # 4. Compute stats
+    # 5. Compute stats
     state["stats"] = compute_stats(state["log"])
 
-    # 5. Save
+    # 6. Save
     save_state(state)
     print(f"\n[done] Written to {OUT_FILE}")
     stats = state["stats"]

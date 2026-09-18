@@ -1538,6 +1538,10 @@ const I18N = {
   watchlist_empty:    { pl: 'Kliknij + aby dodać token do watchlisty', en: 'Click + to add a token to your watchlist' },
   watchlist_no_score: { pl: 'brak Fusion Score',                    en: 'no Fusion Score' },
   watchlist_remove:   { pl: 'Usuń z watchlisty',                    en: 'Remove from watchlist' },
+  watchlist_checking: { pl: 'Sprawdzam…',                           en: 'Checking…' },
+  watchlist_not_found:{ pl: 'nie znaleziono na Binance',             en: 'not found on Binance' },
+  watchlist_added:    { pl: 'dodano do watchlisty',                  en: 'added to watchlist' },
+  watchlist_fetch_fail:{ pl: 'błąd pobierania ceny',                 en: 'price fetch error' },
   // ─── TRADER CHECKLIST ───
   checklist:          { pl: 'Checklista Tradera',                   en: 'Trader Checklist' },
   checklist_sub:      { pl: 'codzienna rutyna · nawyki dyscypliny', en: 'daily routine · discipline habits' },
@@ -1673,21 +1677,41 @@ try {
 function saveWatchlist() {
   try { localStorage.setItem('tvc_watchlist', JSON.stringify(watchlistTokens)); } catch (e) {}
 }
-function addWatchlistToken(ticker) {
+function showWlToast(msg, type = 'info') {
+  let box = document.getElementById('wl-toast');
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'wl-toast';
+    box.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;padding:8px 18px;border-radius:8px;font-size:12px;font-weight:700;font-family:var(--mono);pointer-events:none;transition:opacity .3s;opacity:0;max-width:340px;text-align:center';
+    document.body.appendChild(box);
+  }
+  const colors = { ok: 'var(--green,#22c55e)', err: 'var(--red,#ef4444)', info: 'var(--cyan,#06b6d4)' };
+  box.style.background = 'var(--bg-elev-3,#1a2340)';
+  box.style.color = colors[type] || colors.info;
+  box.style.border = `1px solid ${colors[type] || colors.info}`;
+  box.textContent = msg;
+  box.style.opacity = '1';
+  clearTimeout(box._tid);
+  box._tid = setTimeout(() => { box.style.opacity = '0'; }, 2500);
+}
+async function addWatchlistToken(ticker) {
   ticker = ticker.toUpperCase().trim();
   if (!ticker) return;
-  // already in fusion decisions or watchlist?
   const fusionTickers = (lastFusion?.decisions || []).map(d => d.ticker);
   if (fusionTickers.includes(ticker)) return;
   if (watchlistTokens.includes(ticker)) return;
-  // must have a Binance mapping (or we add it dynamically)
-  if (!BINANCE_SYMBOLS[ticker]) {
-    // try standard USDT pair
-    BINANCE_SYMBOLS[ticker] = ticker + 'USDT';
-  }
+  const symbol = BINANCE_SYMBOLS[ticker] || (ticker + 'USDT');
+  showWlToast(`${ticker} — ${t('watchlist_checking')}`, 'info');
+  try {
+    const resp = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${encodeURIComponent(symbol)}`);
+    if (!resp.ok) { showWlToast(`${ticker} — ${t('watchlist_not_found')}`, 'err'); return; }
+    const data = await resp.json();
+    if (!data.price) { showWlToast(`${ticker} — ${t('watchlist_not_found')}`, 'err'); return; }
+  } catch (e) { showWlToast(`${ticker} — ${t('watchlist_not_found')}`, 'err'); return; }
+  if (!BINANCE_SYMBOLS[ticker]) BINANCE_SYMBOLS[ticker] = symbol;
   watchlistTokens.push(ticker);
   saveWatchlist();
-  // fetch data immediately
+  showWlToast(`${ticker} — ${t('watchlist_added')}`, 'ok');
   fetchWatchlistPrices();
   fetchWatchlistSparklines();
   renderWatchlistPanel();
@@ -1701,33 +1725,31 @@ function removeWatchlistToken(ticker) {
 }
 async function fetchWatchlistPrices() {
   if (!watchlistTokens.length) return;
-  const symbols = watchlistTokens.map(t => BINANCE_SYMBOLS[t]).filter(Boolean);
-  if (!symbols.length) return;
-  try {
-    const url = `https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(JSON.stringify(symbols))}`;
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`Binance HTTP ${resp.status}`);
-    const data = await resp.json();
-    for (const ticker of watchlistTokens) {
+  const results = await Promise.allSettled(
+    watchlistTokens.map(async (ticker) => {
       const sym = BINANCE_SYMBOLS[ticker];
-      const item = data.find(d => d.symbol === sym);
-      if (item) livePrices[ticker] = { price: parseFloat(item.lastPrice), change24h: parseFloat(item.priceChangePercent) };
-      else {
-        // invalid symbol — remove from watchlist
-        watchlistTokens = watchlistTokens.filter(t => t !== ticker);
-        saveWatchlist();
-      }
-    }
-    updatePriceCells();
-    renderWatchlistPanel();
-  } catch (e) { console.warn('Watchlist price fetch failed:', e); }
+      if (!sym) return { ticker, ok: false };
+      try {
+        const resp = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${encodeURIComponent(sym)}`);
+        if (!resp.ok) return { ticker, ok: false };
+        const item = await resp.json();
+        return { ticker, ok: true, price: parseFloat(item.lastPrice), change24h: parseFloat(item.priceChangePercent) };
+      } catch (e) { return { ticker, ok: false }; }
+    })
+  );
+  for (const r of results) {
+    const v = r.status === 'fulfilled' ? r.value : null;
+    if (v && v.ok) livePrices[v.ticker] = { price: v.price, change24h: v.change24h };
+  }
+  updatePriceCells();
+  renderWatchlistPanel();
 }
 async function fetchWatchlistSparklines() {
-  for (const ticker of watchlistTokens) {
+  for (const ticker of [...watchlistTokens]) {
     const symbol = BINANCE_SYMBOLS[ticker];
     if (!symbol || sparklineData[ticker]) continue;
     try {
-      const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=1h&limit=24`;
+      const url = `https://api.binance.com/api/v3/klines?symbol=${encodeURIComponent(symbol)}&interval=1h&limit=24`;
       const resp = await fetch(url);
       if (!resp.ok) continue;
       const raw = await resp.json();
