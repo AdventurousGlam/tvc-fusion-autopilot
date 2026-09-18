@@ -5367,16 +5367,29 @@ async function smRefreshCot() {
     const names = { 'BITCOIN': 'BTC', 'ETHER CASH SETTLED': 'ETH', 'SOLANA': 'SOL', 'XRP': 'XRP' };
     const where = encodeURIComponent(`contract_market_name in(${Object.keys(names).map(n => `'${n}'`).join(',')})`);
     const sel = 'contract_market_name,report_date_as_yyyy_mm_dd,open_interest_all,asset_mgr_positions_long,asset_mgr_positions_short,lev_money_positions_long,lev_money_positions_short,change_in_asset_mgr_long,change_in_asset_mgr_short,change_in_lev_money_long,change_in_lev_money_short';
-    const rows = await smFetchJson(`https://publicreporting.cftc.gov/resource/gpe5-46if.json?$limit=16&$where=${where}&$order=report_date_as_yyyy_mm_dd%20DESC&$select=${sel}`);
-    const out = {};
+    // v0.9.5: pobieramy 3 tygodnie danych (limit=48 = 4 kontrakty × 3 tyg × zapas)
+    const rows = await smFetchJson(`https://publicreporting.cftc.gov/resource/gpe5-46if.json?$limit=48&$where=${where}&$order=report_date_as_yyyy_mm_dd%20DESC&$select=${sel}`);
+    const out = {}, hist = {};
     for (const r of rows) {
-      const t = names[r.contract_market_name]; if (!t || out[t]) continue;  // najnowszy per kontrakt
+      const t = names[r.contract_market_name]; if (!t) continue;
       const n = k => parseInt(r[k] || 0);
-      out[t] = {
+      const entry = {
         date: r.report_date_as_yyyy_mm_dd.slice(0, 10), oi: n('open_interest_all'),
         am_net: n('asset_mgr_positions_long') - n('asset_mgr_positions_short'), am_chg: n('change_in_asset_mgr_long') - n('change_in_asset_mgr_short'),
         lf_net: n('lev_money_positions_long') - n('lev_money_positions_short'), lf_chg: n('change_in_lev_money_long') - n('change_in_lev_money_short'),
       };
+      if (!out[t]) { out[t] = entry; hist[t] = [entry]; }
+      else if (hist[t].length < 3) hist[t].push(entry);
+    }
+    // Dodaj trend 3-tygodniowy do każdego tokena
+    for (const t of Object.keys(out)) {
+      const h = hist[t] || [];
+      if (h.length >= 2) {
+        out[t].am_net_prev = h[1].am_net;
+        out[t].lf_net_prev = h[1].lf_net;
+        out[t].am_trend = h.map(w => w.am_net);  // [newest, prev, oldest]
+        out[t].lf_trend = h.map(w => w.lf_net);
+      }
     }
     smartMoney.cot = { ...out, _ts: Date.now() }; smartMoney.err.cot = null;
   } catch (e) { smartMoney.err.cot = String(e.message || e); }
@@ -5494,18 +5507,23 @@ function renderSmartMoneyPanel() {
   const hedgers = smartMoney.hl.whales.filter(w => w.hedge);
   const hedgeNote = hedgers.length ? `<div style="font-size:9.5px;color:var(--amber);margin-top:6px;line-height:1.5">⚠ ${t('sm_hedge_note')} ${hedgers.map(w => `<a href="https://app.hyperliquid.xyz/explorer/address/${w.a}" target="_blank" rel="noopener" style="color:var(--amber);font-family:var(--mono)">${w.a.slice(0, 6)}…</a> (${w.bookSide} $${(w.book / 1e6).toFixed(0)}M, uPnL ${w.bookPnl >= 0 ? '+' : '-'}$${(Math.abs(w.bookPnl) / 1e6).toFixed(1)}M)`).join(' · ')}</div>` : '';
 
-  // COT
+  // COT — v0.9.5: trend 3-tygodniowy + WoW strzałki + badge świeżości
+  const cotDate = Object.values(smartMoney.cot).find(c => c && c.date)?.date;
+  const cotAgeDays = cotDate ? Math.round((Date.now() - new Date(cotDate + 'T00:00:00Z').getTime()) / 86400_000) : null;
+  const cotFresh = cotAgeDays != null && cotAgeDays <= 10;
+  const cotAgeBadge = cotAgeDays != null ? (cotFresh ? `<span style="color:var(--green);font-size:9px">✓ ${cotAgeDays}d ago</span>` : `<span style="color:var(--amber);font-size:9px">⚠ ${cotAgeDays}d ago</span>`) : '';
+  const cotTrendArrow = (trend) => { if (!trend || trend.length < 2) return ''; const d = trend[0] - trend[1]; return d > 0 ? `<span style="color:var(--green);font-size:9px" title="WoW: +${d.toLocaleString()}"> ▲</span>` : d < 0 ? `<span style="color:var(--red);font-size:9px" title="WoW: ${d.toLocaleString()}"> ▼</span>` : `<span style="color:var(--text-dim);font-size:9px"> ═</span>`; };
+  const cotMiniSpark = (trend) => { if (!trend || trend.length < 2) return ''; return `<span style="font-size:8px;color:var(--text-dim);margin-left:3px" title="${trend.map(v => (v >= 0 ? '+' : '') + v.toLocaleString()).join(' → ')}">[${trend.map(v => v > 0 ? '+' : v < 0 ? '−' : '0').join('')}]</span>`; };
   const cotRows = ['BTC', 'ETH', 'SOL', 'XRP'].filter(k => smartMoney.cot[k]).map(k => { const c = smartMoney.cot[k]; const sg = n => (n >= 0 ? '+' : '') + n.toLocaleString(); const col = n => n > 0 ? 'var(--green)' : n < 0 ? 'var(--red)' : 'var(--text-dim)';
     return `<tr style="border-bottom:1px solid var(--border-soft)"><td style="padding:4px 6px;font-weight:800;color:var(--gold);font-family:var(--mono)">${k}</td>
-      <td style="padding:4px 6px;text-align:right;font-family:var(--mono);color:${col(c.am_net)}">${sg(c.am_net)} <span style="font-size:9px;color:${col(c.am_chg)}">(${sg(c.am_chg)})</span></td>
-      <td style="padding:4px 6px;text-align:right;font-family:var(--mono);color:${col(c.lf_net)}">${sg(c.lf_net)} <span style="font-size:9px;color:${col(c.lf_chg)}">(${sg(c.lf_chg)})</span></td>
+      <td style="padding:4px 6px;text-align:right;font-family:var(--mono);color:${col(c.am_net)}">${sg(c.am_net)} <span style="font-size:9px;color:${col(c.am_chg)}">(${sg(c.am_chg)})</span>${cotTrendArrow(c.am_trend)}${cotMiniSpark(c.am_trend)}</td>
+      <td style="padding:4px 6px;text-align:right;font-family:var(--mono);color:${col(c.lf_net)}">${sg(c.lf_net)} <span style="font-size:9px;color:${col(c.lf_chg)}">(${sg(c.lf_chg)})</span>${cotTrendArrow(c.lf_trend)}${cotMiniSpark(c.lf_trend)}</td>
       <td style="padding:4px 6px;text-align:right;font-family:var(--mono);color:var(--text-muted)">${c.oi.toLocaleString()}</td></tr>`; }).join('');
-  const cotDate = Object.values(smartMoney.cot).find(c => c && c.date)?.date;
 
   const status = [
     anyB ? `<span style="color:var(--green)">Binance ✓</span>` : anyBy ? `<span style="color:var(--amber)">Binance ✗ → Bybit</span>` : `<span style="color:var(--red)">Binance ✗</span>`,
     hlOk ? `<span style="color:var(--green)">Hyperliquid ✓ ${smartMoney.hl.whales.length} ${t('sm_whales')}</span>` : `<span style="color:var(--red)">Hyperliquid ${smartMoney.err.hl ? '✗' : '…'}</span>`,
-    cotDate ? `<span style="color:var(--green)">CFTC ✓ ${cotDate}</span>` : `<span style="color:var(--text-dim)">CFTC …</span>`,
+    cotDate ? `<span style="color:${cotFresh ? 'var(--green)' : 'var(--amber)'}">CFTC ${cotFresh ? '✓' : '⚠'} ${cotDate} (${cotAgeDays}d)</span>` : `<span style="color:var(--text-dim)">CFTC …</span>`,
   ].join(' · ');
 
   slot.innerHTML = `
@@ -5537,8 +5555,8 @@ function renderSmartMoneyPanel() {
           <div style="font-size:9.5px;color:var(--text-dim);margin-top:6px;line-height:1.5">${t('sm_whale_note')}</div>${hedgeNote}
         </div>
         <div style="background:var(--bg-elev-2);border-radius:6px;padding:8px">
-          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700;margin-bottom:4px">🏛 CME COT ${cotDate ? `· ${cotDate}` : ''}</div>
-          ${cotRows ? `<table style="width:100%;border-collapse:collapse;font-size:10.5px"><thead><tr style="color:var(--text-dim);font-size:9px;text-transform:uppercase;border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 6px"></th><th style="text-align:right;padding:3px 6px" title="${t('sm_cot_am_tip')}">Asset Mgrs</th><th style="text-align:right;padding:3px 6px" title="${t('sm_cot_lf_tip')}">Lev. Funds</th><th style="text-align:right;padding:3px 6px">OI</th></tr></thead><tbody>${cotRows}</tbody></table>` : `<div style="padding:10px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">${smartMoney.err.cot || t('sm_loading')}</div>`}
+          <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.06em;font-weight:700;margin-bottom:4px">🏛 CME COT ${cotDate ? `· ${cotDate} ${cotAgeBadge}` : ''}</div>
+          ${cotRows ? `<table style="width:100%;border-collapse:collapse;font-size:10.5px"><thead><tr style="color:var(--text-dim);font-size:9px;text-transform:uppercase;border-bottom:1px solid var(--border)"><th style="text-align:left;padding:3px 6px"></th><th style="text-align:right;padding:3px 6px" title="${t('sm_cot_am_tip')}">Asset Mgrs <span style="font-size:7px;opacity:0.6">net (WoW) trend</span></th><th style="text-align:right;padding:3px 6px" title="${t('sm_cot_lf_tip')}">Lev. Funds <span style="font-size:7px;opacity:0.6">net (WoW) trend</span></th><th style="text-align:right;padding:3px 6px">OI</th></tr></thead><tbody>${cotRows}</tbody></table>` : `<div style="padding:10px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">${smartMoney.err.cot || t('sm_loading')}</div>`}
           <div style="font-size:9.5px;color:var(--text-dim);margin-top:6px;line-height:1.5">${t('sm_cot_note')}</div>
         </div>
       </div>
