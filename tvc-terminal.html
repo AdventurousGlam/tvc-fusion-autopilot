@@ -5396,18 +5396,26 @@ function smVerdict(tkr) {
   const b = smartMoney.binance[tkr], h = smartMoney.hl.agg[tkr], c = smartMoney.cot[tkr];
   const votes = [];
   if (b) {
-    if (b.topPosRatio >= 1.3) votes.push({ src: 'Binance top', v: 1, txt: `top traderzy ${b.topPosLong.toFixed(0)}% long` });
-    else if (b.topPosRatio <= 0.8) votes.push({ src: 'Binance top', v: -1, txt: `top traderzy ${(100 - b.topPosLong).toFixed(0)}% short` });
-    else votes.push({ src: 'Binance top', v: 0, txt: `top traderzy neutralni (${b.topPosLong.toFixed(0)}% long)` });
-    // rozjazd: duzi vs tłum
+    // v0.9.5: obniżone progi — 1.15/0.87 zamiast 1.3/0.8 (te prawie nigdy nie wchodziły)
+    if (b.topPosRatio >= 1.15) votes.push({ src: 'Binance top', v: 1, txt: `top traderzy ${b.topPosLong.toFixed(0)}% long (ratio ${b.topPosRatio.toFixed(2)})` });
+    else if (b.topPosRatio <= 0.87) votes.push({ src: 'Binance top', v: -1, txt: `top traderzy ${(100 - b.topPosLong).toFixed(0)}% short (ratio ${b.topPosRatio.toFixed(2)})` });
+    else votes.push({ src: 'Binance top', v: 0, txt: `top traderzy neutralni (${b.topPosLong.toFixed(0)}% long, ratio ${b.topPosRatio.toFixed(2)})` });
+    // rozjazd: duzi vs tłum — próg 0.15 zamiast 0.35
     const div = b.topPosRatio - b.globalRatio;
-    if (div > 0.35) votes.push({ src: 'Divergence', v: 1, txt: 'duzi bardziej long niż tłum' });
-    else if (div < -0.35) votes.push({ src: 'Divergence', v: -1, txt: 'duzi bardziej short niż tłum' });
+    if (div > 0.15) votes.push({ src: 'Divergence', v: 1, txt: `duzi bardziej long niż tłum (Δ${div >= 0 ? '+' : ''}${div.toFixed(2)})` });
+    else if (div < -0.15) votes.push({ src: 'Divergence', v: -1, txt: `duzi bardziej short niż tłum (Δ${div.toFixed(2)})` });
+    // Δ3h momentum — jeśli top ratio zmienił się wyraźnie w 3h, dodaj dodatkowy głos
+    if (b.topPosDelta3h > 0.08) votes.push({ src: 'Momentum 3h', v: 1, txt: `top traderzy akumulują (Δ3h +${b.topPosDelta3h.toFixed(2)})` });
+    else if (b.topPosDelta3h < -0.08) votes.push({ src: 'Momentum 3h', v: -1, txt: `top traderzy redukują (Δ3h ${b.topPosDelta3h.toFixed(2)})` });
+    // Taker flow — agresywne kupno/sprzedaż jako głos
+    if (b.takerRatio >= 1.15) votes.push({ src: 'Taker flow', v: 1, txt: `taker buy dominant (${b.takerRatio.toFixed(2)})` });
+    else if (b.takerRatio <= 0.87) votes.push({ src: 'Taker flow', v: -1, txt: `taker sell dominant (${b.takerRatio.toFixed(2)})` });
   }
   if (h && (h.long + h.short) > 0) {
     const net = (h.long - h.short) / (h.long + h.short);
-    if (net > 0.3) votes.push({ src: 'HL whales', v: 1, txt: `wieloryby HL netto long $${((h.long - h.short) / 1e6).toFixed(0)}M` });
-    else if (net < -0.3) votes.push({ src: 'HL whales', v: -1, txt: `wieloryby HL netto short $${((h.short - h.long) / 1e6).toFixed(0)}M` });
+    // v0.9.5: próg 0.15 zamiast 0.3
+    if (net > 0.15) votes.push({ src: 'HL whales', v: 1, txt: `wieloryby HL netto long $${((h.long - h.short) / 1e6).toFixed(0)}M` });
+    else if (net < -0.15) votes.push({ src: 'HL whales', v: -1, txt: `wieloryby HL netto short $${((h.short - h.long) / 1e6).toFixed(0)}M` });
     else votes.push({ src: 'HL whales', v: 0, txt: 'wieloryby HL podzielone' });
   }
   if (c) {
@@ -5415,8 +5423,11 @@ function smVerdict(tkr) {
     else if (c.am_chg < 0) votes.push({ src: 'CME asset mgrs', v: -1, txt: `asset managers CME redukują (${c.am_chg})` });
   }
   const score = votes.reduce((s, v) => s + v.v, 0);
-  const label = score >= 2 ? 'BULLISH' : score <= -2 ? 'BEARISH' : score > 0 ? 'lean bull' : score < 0 ? 'lean bear' : 'MIXED';
-  return { score, label, votes };
+  const nVotes = votes.length;
+  // v0.9.5: dynamiczne progi — BULLISH/BEARISH gdy ≥50% głosów zgadza się w jednym kierunku
+  const bullThresh = Math.max(2, Math.ceil(nVotes * 0.4));
+  const label = score >= bullThresh ? 'BULLISH' : score <= -bullThresh ? 'BEARISH' : score > 0 ? 'lean bull' : score < 0 ? 'lean bear' : 'MIXED';
+  return { score, label, votes, nVotes };
 }
 
 // Tag przy decyzji fusion: smart money zgodne / przeciwne wobec kierunku decyzji
@@ -5446,7 +5457,7 @@ function renderSmartMoneyPanel() {
   const slot = document.getElementById('smart-money-slot');
   if (!slot) return;
   const ago = ms => ms < 60000 ? `${Math.floor(ms / 1000)}s` : `${Math.floor(ms / 60000)}min`;
-  const ratioCol = r => r == null || isNaN(r) ? 'var(--text-dim)' : r >= 1.3 ? 'var(--green)' : r <= 0.8 ? 'var(--red)' : 'var(--text-muted)';
+  const ratioCol = r => r == null || isNaN(r) ? 'var(--text-dim)' : r >= 1.25 ? 'var(--green)' : r >= 1.15 ? 'rgba(52,211,153,0.7)' : r <= 0.8 ? 'var(--red)' : r <= 0.87 ? 'rgba(248,113,113,0.7)' : 'var(--text-muted)';
   const usdM = v => `$${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)}M`;
   const anyB = Object.keys(smartMoney.binance).length > 0, anyBy = Object.keys(smartMoney.bybit).length > 0;
   const hlOk = smartMoney.hl.ts > 0;
@@ -5460,11 +5471,11 @@ function renderSmartMoneyPanel() {
       <td style="padding:6px 6px;font-weight:800;color:var(--gold);font-family:var(--mono)">${tkr}</td>
       <td style="padding:6px;text-align:right;font-family:var(--mono)">${b ? `<span style="color:${ratioCol(b.topPosRatio)};font-weight:800">${b.topPosRatio.toFixed(2)}</span><div style="font-size:9px;color:var(--text-dim)">${b.topPosLong.toFixed(0)}% L · Δ3h <span style="color:${b.topPosDelta3h > 0.02 ? 'var(--green)' : b.topPosDelta3h < -0.02 ? 'var(--red)' : 'var(--text-dim)'}">${b.topPosDelta3h >= 0 ? '+' : ''}${b.topPosDelta3h.toFixed(2)}</span></div>${b.flipAt ? `<div style="font-size:9px;color:${b.flipTo === 'long' ? 'var(--green)' : 'var(--red)'}">${t('sm_flip')} ${b.flipTo} ${t('sm_since')} ${hhmm(b.flipAt)}</div>` : b.min24 != null ? `<div style="font-size:9px;color:var(--text-dim)">${t('sm_no_flip')}</div>` : ''}` : '<span style="color:var(--text-dim)">—</span>'}</td>
       <td style="padding:6px;text-align:right;font-family:var(--mono)">${b ? `<span style="color:${ratioCol(b.globalRatio)}">${b.globalRatio.toFixed(2)}</span><div style="font-size:9px;color:var(--text-dim)">${b.globalLong.toFixed(0)}% L</div>` : by ? `<span style="color:var(--text-muted)">${by.buy.toFixed(0)}% L</span><div style="font-size:9px;color:var(--text-dim)">Bybit</div>` : '<span style="color:var(--text-dim)">—</span>'}</td>
-      <td style="padding:6px;text-align:center;font-family:var(--mono)">${b ? (() => { const d = b.topPosRatio - b.globalRatio; return `<span style="color:${d > 0.35 ? 'var(--green)' : d < -0.35 ? 'var(--red)' : 'var(--text-dim)'};font-weight:700">${d > 0.35 ? '▲ ' + t('sm_big_long') : d < -0.35 ? '▼ ' + t('sm_big_short') : '≈'}</span>`; })() : '—'}</td>
+      <td style="padding:6px;text-align:center;font-family:var(--mono)">${b ? (() => { const d = b.topPosRatio - b.globalRatio; const ad = Math.abs(d); const col = ad >= 0.25 ? (d > 0 ? 'var(--green)' : 'var(--red)') : ad >= 0.15 ? (d > 0 ? 'rgba(52,211,153,0.8)' : 'rgba(248,113,113,0.8)') : ad >= 0.08 ? 'var(--gold)' : 'var(--text-dim)'; const arrow = d > 0.15 ? '▲' : d < -0.15 ? '▼' : ''; return `<span style="color:${col};font-weight:700">${arrow} ${d >= 0 ? '+' : ''}${d.toFixed(2)}</span><div style="font-size:9px;color:var(--text-dim)">${ad >= 0.25 ? (d > 0 ? t('sm_big_long') : t('sm_big_short')) : ad >= 0.15 ? (d > 0 ? 'big lean L' : 'big lean S') : 'balanced'}</div>`; })() : '—'}</td>
       <td style="padding:6px;text-align:right;font-family:var(--mono)">${b ? `<span style="color:${b.takerRatio >= 1.1 ? 'var(--green)' : b.takerRatio <= 0.9 ? 'var(--red)' : 'var(--text-muted)'}">${b.takerRatio.toFixed(2)}</span>` : '—'}</td>
       <td style="padding:6px;font-family:var(--mono);min-width:120px">${h && (h.long + h.short) > 0 ? `<span style="color:var(--green)">${usdM(h.long)}</span> <span style="color:var(--text-dim)">/</span> <span style="color:var(--red)">${usdM(h.short)}</span> <span style="font-size:9px;color:var(--text-dim)">(${h.nL}L/${h.nS}S)</span>${hlBar}` : `<span style="color:var(--text-dim)">${hlOk ? t('sm_hl_none') : '—'}</span>`}</td>
       <td style="padding:6px;font-family:var(--mono);min-width:110px">${(() => { const f = smWhaleFlow24h(tkr); if (!f.n) return `<span style="color:var(--text-dim)">—</span>`; const c = f.net > 0 ? 'var(--green)' : f.net < 0 ? 'var(--red)' : 'var(--text-muted)'; return `<span style="color:${c};font-weight:800">${f.net >= 0 ? '+' : '-'}${usdM(Math.abs(f.net))}</span> <span style="font-size:9px;color:var(--text-dim)">${f.n}×</span><div style="font-size:9px;color:var(--text-dim)">${t('sm_last')}: ${dirShort(f.last.dir)} ${usdM(f.last.usd)} · ${hhmm(f.last.end)}</div>`; })()}</td>
-      <td style="padding:6px;text-align:center"><span style="font-weight:800;color:${vCol};font-size:11px" title="${v.votes.map(x => `${x.src}: ${x.txt}`).join('&#10;')}">${v.label}</span></td>
+      <td style="padding:6px;text-align:center"><span style="font-weight:800;color:${vCol};font-size:11px" title="${v.votes.map(x => `${x.src}: ${x.txt}`).join('&#10;')}">${v.label}</span><div style="font-size:9px;color:var(--text-dim)">${v.score >= 0 ? '+' : ''}${v.score}/${v.nVotes} ${_lang === 'pl' ? 'głosów' : 'votes'}${b && b.topPosDelta3h != null ? ` · Δ3h <span style="color:${b.topPosDelta3h > 0.03 ? 'var(--green)' : b.topPosDelta3h < -0.03 ? 'var(--red)' : 'var(--text-dim)'}">${b.topPosDelta3h >= 0 ? '+' : ''}${b.topPosDelta3h.toFixed(2)}</span>` : ''}</div></td>
     </tr>`;
   }).join('');
 
