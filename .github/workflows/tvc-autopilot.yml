@@ -92,6 +92,22 @@ jobs:
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 paper_bot.py refresh
 
+      # v0.9.3 — EOD check przeniesiony z Cowork scheduled task (wymagał Maca)
+      # do GitHub Actions. Odpala się raz dziennie w oknie 20:00-20:14 UTC
+      # (= 22:00-22:14 CEST). Poza tym oknem krok jest no-opem.
+      # Zamyka pozycje na SL/TP, drukuje EOD summary + wysyła Telegram alert.
+      - name: Paper Bot EOD check (raz dziennie ~22:00 CEST)
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
+        run: |
+          HOUR=$(date -u +%H)
+          MIN=$(date -u +%M)
+          if [ "$HOUR" = "20" ] && [ "$MIN" -lt "15" ]; then
+            echo "=== EOD window (20:00-20:14 UTC / 22:00-22:14 CEST) ==="
+            python3 paper_bot.py eod
+          else
+            echo "Poza oknem EOD ($HOUR:$MIN UTC) — pomijam."
+          fi
+
       - name: Commit zaktualizowany stan z powrotem do repo
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         env:
