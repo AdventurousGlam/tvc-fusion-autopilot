@@ -2222,17 +2222,29 @@ setInterval(updateStatusBadge, 60 * 1000);
 /* ============================================================
    LIVE PRICES + GLOBAL DATA
    ============================================================ */
+let _priceBackoffUntil = 0;  // timestamp — stop REST price fetching after Binance 418/429
 async function fetchPrices() {
   if (!lastFusion) return;
   const tickers = new Set(['BTC', 'ETH', 'SOL']);
   (lastFusion.decisions || []).forEach(d => tickers.add(d.ticker));
   const symbols = [...tickers].map(t => BINANCE_SYMBOLS[t]).filter(Boolean);
   if (!symbols.length) return;
+  // 418 backoff — Binance IP-banned us, don't hammer REST
+  if (Date.now() < _priceBackoffUntil) {
+    _fillPricesFromWS(tickers);
+    return;
+  }
   try {
     // Binance batch ticker — one call for all symbols, 1200 req/min limit
     const symParam = JSON.stringify(symbols);
     const url = `https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(symParam)}`;
     const resp = await fetch(url);
+    if (resp.status === 418 || resp.status === 429) {
+      _priceBackoffUntil = Date.now() + 120000;  // back off 2 min
+      console.warn(`[prices] Binance ${resp.status} — backing off 120s, using WS fallback`);
+      _fillPricesFromWS(tickers);
+      return;
+    }
     if (!resp.ok) throw new Error(`Binance HTTP ${resp.status}`);
     const data = await resp.json();
     for (const [ticker, symbol] of Object.entries(BINANCE_SYMBOLS)) {
@@ -2240,7 +2252,28 @@ async function fetchPrices() {
       if (item) livePrices[ticker] = { price: parseFloat(item.lastPrice), change24h: parseFloat(item.priceChangePercent) };
     }
     updatePriceCells();
-  } catch (e) { console.warn('Binance price fetch failed:', e); }
+  } catch (e) {
+    console.warn('Binance price fetch failed:', e);
+    _fillPricesFromWS(tickers);  // fallback on network error too
+  }
+}
+// Fallback: derive prices from live WebSocket orderbook mid-price
+// when Binance REST API is banned (418) or unreachable.
+// WS runs on stream.binance.com:9443 (different service), usually still works.
+function _fillPricesFromWS(tickers) {
+  let filled = 0;
+  for (const ticker of tickers) {
+    const ob = liveOrderbook[ticker];
+    if (!ob || !ob.mid) continue;
+    const existing = livePrices[ticker];
+    // Always update price from WS mid; keep change24h if we had it, else 0
+    livePrices[ticker] = { price: ob.mid, change24h: existing?.change24h ?? 0 };
+    filled++;
+  }
+  if (filled > 0) {
+    updatePriceCells();
+    console.log(`[prices] WS fallback: updated ${filled} prices from orderbook mid`);
+  }
 }
 async function fetchGlobal() {
   try {
@@ -3071,6 +3104,7 @@ const wallEvents = {};      // { ticker: [{ts, type: 'appear'|'gone'|'grow'|'shr
 const setupAlerts = {};     // { ticker: [{ts, type, msg, expires}] }
 const alertSounds = {};     // { ticker: Set of alert types shown (dedup) }
 const confluenceHistory = {}; // { ticker: [{type: 'CONFLUENCE_BUY'|'CONFLUENCE_SELL', ts}] } — do wykrywania range (obie strony naprzemiennie)
+let _wsPriceUpdateScheduled = false;  // throttle for WS→livePrices bridge UI updates
 
 // ─── LIQUIDITY HEATMAP — rolling orderbook depth history, do wizualizacji i wykrywania trwałych stref płynności ───
 const depthHistory = {};        // { ticker: [{ts, mid, bidMap: {pctBucket: notionalUSD}, askMap: {...}, bucketPct}] }
@@ -3145,6 +3179,16 @@ function openOrderbookStream(ticker) {
         const mid = (bestBid + bestAsk) / 2;
         const now = Date.now();
         liveOrderbook[ticker] = { bids, asks, ts: now, mid };
+        // ─── WS→livePrices bridge (fallback when REST is banned) ───
+        if (Date.now() < _priceBackoffUntil) {
+          const existing = livePrices[ticker];
+          livePrices[ticker] = { price: mid, change24h: existing?.change24h ?? 0 };
+          // Throttle UI updates to max 2/sec (not every 100ms WS tick)
+          if (!_wsPriceUpdateScheduled) {
+            _wsPriceUpdateScheduled = true;
+            setTimeout(() => { _wsPriceUpdateScheduled = false; updatePriceCells(); }, 500);
+          }
+        }
         // Heatmapę zasila WYŁĄCZNIE _pollHeatmapDepth (REST, pełne 1000 poziomów) —
         // NIE ten WS depth20 handler. Top-20 WS mieści się w ~0.01% od mid, więc
         // mieszanie go z szerokim REST snapshotem tylko zawężało wspólny EMA bucketPct.
