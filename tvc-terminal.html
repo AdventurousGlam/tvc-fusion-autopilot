@@ -3037,6 +3037,7 @@ function closeTokenDetail(ticker) {
   document.getElementById('sec-fusion')?.classList.remove('td-wide');
   if (row) row.classList.remove('expanded');
   if (tokenLiveRefresh[ticker]) { clearInterval(tokenLiveRefresh[ticker]); delete tokenLiveRefresh[ticker]; }
+  stopHeatmapPolling(ticker);  // stop REST depth polling (only runs for expanded token)
   // NOTE: nie zamykamy WS przy collapse — background monitoring wszystkich tokenów
   // WS zamykane tylko na page unload. Alerts + journal działają dla wszystkich fusion tickers.
   expandedToken = null;
@@ -3051,7 +3052,8 @@ function openAllOrderbookStreams() {
     if (!orderbookWS[ticker]) {
       openOrderbookStream(ticker);
     }
-    startHeatmapPolling(ticker);
+    // NOTE: heatmap REST polling startuje TYLKO przy otwarciu token detail
+    // (nie w tle — 5 tickerów × 4s = 75 req/min powoduje Binance 418 ban)
   }
   console.log(`[background] Monitoring ${tickers.length} tickers w tle:`, tickers.join(', '));
 }
@@ -3083,11 +3085,22 @@ const _heatmapZonesCache = {};  // { ticker: {ts, zones} } — cache computeHeat
 // pełne ~1000 poziomów na stronę, co dla ETH pokrywa realnie ±0.3-0.7% od mid —
 // wystarczająco szeroko żeby heatmapa wyglądała jak grzebień, a nie jedna linia.
 const heatmapPollTimers = {};
+const HEATMAP_POLL_MS = 10000;  // 10s (was 4s — too aggressive, caused Binance 418 ban)
+let _heatmapBackoffUntil = 0;   // timestamp — stop polling until this time after 418
 async function _pollHeatmapDepth(ticker) {
   const symbol = BINANCE_SYMBOLS[ticker];
   if (!symbol) return;
+  // 418 backoff — Binance banned us, wait before retrying
+  if (Date.now() < _heatmapBackoffUntil) return;
   try {
     const r = await fetch(`https://data-api.binance.vision/api/v3/depth?symbol=${symbol}&limit=1000`);
+    if (r.status === 418 || r.status === 429) {
+      // Binance rate-limit — back off 60s, stop hammering
+      _heatmapBackoffUntil = Date.now() + 60000;
+      console.warn(`[heatmap] Binance ${r.status} — backing off 60s`);
+      return;
+    }
+    if (!r.ok) return;
     const d = await r.json();
     const bids = (d.bids || []).map(([p, q]) => [parseFloat(p), parseFloat(q)]);
     const asks = (d.asks || []).map(([p, q]) => [parseFloat(p), parseFloat(q)]);
@@ -3101,7 +3114,13 @@ async function _pollHeatmapDepth(ticker) {
 function startHeatmapPolling(ticker) {
   if (heatmapPollTimers[ticker]) return; // już działa
   _pollHeatmapDepth(ticker);
-  heatmapPollTimers[ticker] = setInterval(() => _pollHeatmapDepth(ticker), 4000);
+  heatmapPollTimers[ticker] = setInterval(() => _pollHeatmapDepth(ticker), HEATMAP_POLL_MS);
+}
+function stopHeatmapPolling(ticker) {
+  if (heatmapPollTimers[ticker]) {
+    clearInterval(heatmapPollTimers[ticker]);
+    delete heatmapPollTimers[ticker];
+  }
 }
 
 function openOrderbookStream(ticker) {
@@ -8211,6 +8230,8 @@ async function openTokenDetail(ticker) {
 
   // Open live Binance L2 orderbook stream for this ticker (WebSocket, 100ms updates)
   openOrderbookStream(ticker);
+  // Heatmap REST polling — only for EXPANDED ticker (not background for all)
+  startHeatmapPolling(ticker);
 
   // Live news + on-chain fetch (parallel with OHLC)
   fetchLiveNews(ticker);
