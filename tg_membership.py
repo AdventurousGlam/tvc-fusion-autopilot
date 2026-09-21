@@ -16,7 +16,7 @@ Env vars (GitHub Secrets):
   TELEGRAM_BOT_TOKEN      — ten sam bot co alerty (TVC Alerts)
   STRIPE_SECRET_KEY        — sk_live_... z dashboardu Stripe
   STRIPE_WEBHOOK_SECRET    — whsec_... z Stripe webhook settings
-  STRIPE_PRICE_ID          — price_... dla planu $15/mo
+  STRIPE_PRICE_ID          — price_... dla planu $29/mo
 """
 import json
 import os
@@ -170,7 +170,7 @@ def stripe_api(method, endpoint, params=None):
 
 
 def create_checkout_session(success_url="https://tradingventureclub.com/terminal/?welcome=pro",
-                            cancel_url="https://tradingventureclub.com/#pricing"):
+                            cancel_url="https://tvc-membership.onrender.com/join"):
     """Tworzy Stripe Checkout Session dla planu PRO."""
     result = stripe_api("POST", "checkout/sessions", {
         "mode": "subscription",
@@ -293,7 +293,7 @@ def handle_bot_start(telegram_user_id, telegram_username, text):
         send_dm(telegram_user_id,
                 "👋 Witaj w TVC Fusion!\n\n"
                 "🆓 Darmowy kanał: @TVCFusionSignals\n"
-                "💎 PRO ($15/mo): https://tradingventureclub.com/#pricing\n\n"
+                "💎 PRO ($29/mo): https://tvc-membership.onrender.com/join\n\n"
                 "Już zapłaciłeś? Kliknij link z emaila lub napisz swój email.")
         return
 
@@ -323,7 +323,7 @@ def handle_bot_start(telegram_user_id, telegram_username, text):
         send_dm(telegram_user_id,
                 "❌ Nie znalazłem aktywnej subskrypcji dla tego ID.\n"
                 "Sprawdź email z Stripe lub kup subskrypcję:\n"
-                "https://tradingventureclub.com/#pricing")
+                "https://tvc-membership.onrender.com/join")
     conn.close()
 
 
