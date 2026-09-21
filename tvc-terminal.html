@@ -1566,6 +1566,23 @@ const I18N = {
   its_entry_support:  { pl: '+ supportive signals — rozważ entry',             en: '+ supportive signals — consider entry' },
   its_entry_mixed:    { pl: 'ale sygnały mixed — czekaj na potwierdzenie',     en: 'but signals mixed — wait for confirmation' },
   its_skip:           { pl: 'Brak pozycji, brak sygnału — no action needed',   en: 'No position, no signal — no action needed' },
+  // ─── smVerdict() texts (flow into CC reasoning) ───
+  sm_top_traders:     { pl: 'top traderzy',                                    en: 'top traders' },
+  sm_neutral:         { pl: 'neutralni',                                       en: 'neutral' },
+  sm_big_long_crowd:  { pl: 'duzi bardziej long niż tłum',                     en: 'big traders more long than crowd' },
+  sm_big_short_crowd: { pl: 'duzi bardziej short niż tłum',                    en: 'big traders more short than crowd' },
+  sm_top_accumulate:  { pl: 'top traderzy akumulują',                          en: 'top traders accumulating' },
+  sm_top_reducing:    { pl: 'top traderzy redukują',                           en: 'top traders reducing' },
+  sm_hl_net_long:     { pl: 'wieloryby HL netto long',                         en: 'HL whales net long' },
+  sm_hl_net_short:    { pl: 'wieloryby HL netto short',                        en: 'HL whales net short' },
+  sm_hl_split:        { pl: 'wieloryby HL podzielone',                         en: 'HL whales split' },
+  sm_cme_adding:      { pl: 'asset managers CME dokupują',                     en: 'CME asset managers adding' },
+  sm_cme_reducing:    { pl: 'asset managers CME redukują',                     en: 'CME asset managers reducing' },
+  // ─── Alert system texts (flow into CC reasoning) ───
+  alert_heatmap_liq:  { pl: 'trwała płynność w heatmapie (5 min)',             en: 'persistent heatmap liquidity (5 min)' },
+  alert_range_sides:  { pl: 'RANGE — obie strony aktywne',                     en: 'RANGE — both sides active' },
+  // ─── renderCommandCenter tooltip ───
+  cc_click_hint:      { pl: 'Click aby zaznaczyć, Cmd+C do kopiowania',        en: 'Click to select, Cmd+C to copy' },
   // ─── CRYPTO PICKS ───
   picks_title:        { pl: 'Crypto Picks · poranny shortlist',          en: 'Crypto Picks · morning shortlist' },
   picks_setups:       { pl: 'setupów',                                   en: 'setups' },
@@ -3261,7 +3278,7 @@ function detectSetupAlerts(ticker, walls, now) {
           severity: 'high',
           heatmapConfirmed: heatmapMatch,
           level: wall.price, zoneLow: zone.priceLow, zoneHigh: zone.priceHigh, touches: zone.touches, wallNotional: wall.notional,
-          msg: `${heatmapMatch ? '🔥⚠️ STRONG SELL confluence' : '⚠️ SELL confluence'} @ ${fmt(wall.price)} — historical rejection (${zone.touches}× touch) + live wall $${(wall.notional/1e6).toFixed(2)}M standing ${(wall.ageMs/1000).toFixed(0)}s${heatmapMatch ? ' + trwała płynność w heatmapie (5 min)' : ''}`,
+          msg: `${heatmapMatch ? '🔥⚠️ STRONG SELL confluence' : '⚠️ SELL confluence'} @ ${fmt(wall.price)} — historical rejection (${zone.touches}× touch) + live wall $${(wall.notional/1e6).toFixed(2)}M standing ${(wall.ageMs/1000).toFixed(0)}s${heatmapMatch ? ` + ${t('alert_heatmap_liq')}` : ''}`,
         });
       }
     }
@@ -3281,7 +3298,7 @@ function detectSetupAlerts(ticker, walls, now) {
           severity: 'high',
           heatmapConfirmed: heatmapMatch,
           level: wall.price, zoneLow: zone.priceLow, zoneHigh: zone.priceHigh, touches: zone.touches, wallNotional: wall.notional,
-          msg: `${heatmapMatch ? '🔥✅ STRONG BUY confluence' : '✅ BUY confluence'} @ ${fmt(wall.price)} — historical support (${zone.touches}× touch) + live wall $${(wall.notional/1e6).toFixed(2)}M standing ${(wall.ageMs/1000).toFixed(0)}s${heatmapMatch ? ' + trwała płynność w heatmapie (5 min)' : ''}`,
+          msg: `${heatmapMatch ? '🔥✅ STRONG BUY confluence' : '✅ BUY confluence'} @ ${fmt(wall.price)} — historical support (${zone.touches}× touch) + live wall $${(wall.notional/1e6).toFixed(2)}M standing ${(wall.ageMs/1000).toFixed(0)}s${heatmapMatch ? ` + ${t('alert_heatmap_liq')}` : ''}`,
         });
       }
     }
@@ -3333,7 +3350,7 @@ function detectSetupAlerts(ticker, walls, now) {
           displayA = {
             ...a,
             rangeBound: true,
-            msg: `🔁 RANGE — obie strony aktywne · ${a.msg}`,
+            msg: `🔁 ${t('alert_range_sides')} · ${a.msg}`,
           };
         }
       }
@@ -5466,16 +5483,16 @@ function smVerdict(tkr) {
   const votes = [];
   if (b) {
     // v0.9.5: obniżone progi — 1.15/0.87 zamiast 1.3/0.8 (te prawie nigdy nie wchodziły)
-    if (b.topPosRatio >= 1.15) votes.push({ src: 'Binance top', v: 1, txt: `top traderzy ${b.topPosLong.toFixed(0)}% long (ratio ${b.topPosRatio.toFixed(2)})` });
-    else if (b.topPosRatio <= 0.87) votes.push({ src: 'Binance top', v: -1, txt: `top traderzy ${(100 - b.topPosLong).toFixed(0)}% short (ratio ${b.topPosRatio.toFixed(2)})` });
-    else votes.push({ src: 'Binance top', v: 0, txt: `top traderzy neutralni (${b.topPosLong.toFixed(0)}% long, ratio ${b.topPosRatio.toFixed(2)})` });
+    if (b.topPosRatio >= 1.15) votes.push({ src: 'Binance top', v: 1, txt: `${t('sm_top_traders')} ${b.topPosLong.toFixed(0)}% long (ratio ${b.topPosRatio.toFixed(2)})` });
+    else if (b.topPosRatio <= 0.87) votes.push({ src: 'Binance top', v: -1, txt: `${t('sm_top_traders')} ${(100 - b.topPosLong).toFixed(0)}% short (ratio ${b.topPosRatio.toFixed(2)})` });
+    else votes.push({ src: 'Binance top', v: 0, txt: `${t('sm_top_traders')} ${t('sm_neutral')} (${b.topPosLong.toFixed(0)}% long, ratio ${b.topPosRatio.toFixed(2)})` });
     // rozjazd: duzi vs tłum — próg 0.15 zamiast 0.35
     const div = b.topPosRatio - b.globalRatio;
-    if (div > 0.15) votes.push({ src: 'Divergence', v: 1, txt: `duzi bardziej long niż tłum (Δ${div >= 0 ? '+' : ''}${div.toFixed(2)})` });
-    else if (div < -0.15) votes.push({ src: 'Divergence', v: -1, txt: `duzi bardziej short niż tłum (Δ${div.toFixed(2)})` });
+    if (div > 0.15) votes.push({ src: 'Divergence', v: 1, txt: `${t('sm_big_long_crowd')} (Δ${div >= 0 ? '+' : ''}${div.toFixed(2)})` });
+    else if (div < -0.15) votes.push({ src: 'Divergence', v: -1, txt: `${t('sm_big_short_crowd')} (Δ${div.toFixed(2)})` });
     // Δ3h momentum — jeśli top ratio zmienił się wyraźnie w 3h, dodaj dodatkowy głos
-    if (b.topPosDelta3h > 0.08) votes.push({ src: 'Momentum 3h', v: 1, txt: `top traderzy akumulują (Δ3h +${b.topPosDelta3h.toFixed(2)})` });
-    else if (b.topPosDelta3h < -0.08) votes.push({ src: 'Momentum 3h', v: -1, txt: `top traderzy redukują (Δ3h ${b.topPosDelta3h.toFixed(2)})` });
+    if (b.topPosDelta3h > 0.08) votes.push({ src: 'Momentum 3h', v: 1, txt: `${t('sm_top_accumulate')} (Δ3h +${b.topPosDelta3h.toFixed(2)})` });
+    else if (b.topPosDelta3h < -0.08) votes.push({ src: 'Momentum 3h', v: -1, txt: `${t('sm_top_reducing')} (Δ3h ${b.topPosDelta3h.toFixed(2)})` });
     // Taker flow — agresywne kupno/sprzedaż jako głos
     if (b.takerRatio >= 1.15) votes.push({ src: 'Taker flow', v: 1, txt: `taker buy dominant (${b.takerRatio.toFixed(2)})` });
     else if (b.takerRatio <= 0.87) votes.push({ src: 'Taker flow', v: -1, txt: `taker sell dominant (${b.takerRatio.toFixed(2)})` });
@@ -5483,13 +5500,13 @@ function smVerdict(tkr) {
   if (h && (h.long + h.short) > 0) {
     const net = (h.long - h.short) / (h.long + h.short);
     // v0.9.5: próg 0.15 zamiast 0.3
-    if (net > 0.15) votes.push({ src: 'HL whales', v: 1, txt: `wieloryby HL netto long $${((h.long - h.short) / 1e6).toFixed(0)}M` });
-    else if (net < -0.15) votes.push({ src: 'HL whales', v: -1, txt: `wieloryby HL netto short $${((h.short - h.long) / 1e6).toFixed(0)}M` });
-    else votes.push({ src: 'HL whales', v: 0, txt: 'wieloryby HL podzielone' });
+    if (net > 0.15) votes.push({ src: 'HL whales', v: 1, txt: `${t('sm_hl_net_long')} $${((h.long - h.short) / 1e6).toFixed(0)}M` });
+    else if (net < -0.15) votes.push({ src: 'HL whales', v: -1, txt: `${t('sm_hl_net_short')} $${((h.short - h.long) / 1e6).toFixed(0)}M` });
+    else votes.push({ src: 'HL whales', v: 0, txt: t('sm_hl_split') });
   }
   if (c) {
-    if (c.am_chg > 0 && c.am_net > 0) votes.push({ src: 'CME asset mgrs', v: 1, txt: `asset managers CME dokupują (+${c.am_chg})` });
-    else if (c.am_chg < 0) votes.push({ src: 'CME asset mgrs', v: -1, txt: `asset managers CME redukują (${c.am_chg})` });
+    if (c.am_chg > 0 && c.am_net > 0) votes.push({ src: 'CME asset mgrs', v: 1, txt: `${t('sm_cme_adding')} (+${c.am_chg})` });
+    else if (c.am_chg < 0) votes.push({ src: 'CME asset mgrs', v: -1, txt: `${t('sm_cme_reducing')} (${c.am_chg})` });
   }
   const score = votes.reduce((s, v) => s + v.v, 0);
   const nVotes = votes.length;
@@ -6147,7 +6164,7 @@ function renderCommandCenter() {
             <span style="background:${a.color};color:#000;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:800;letter-spacing:0.05em">${a.urgency}</span>
           </div>
           <div style="font-size:10.5px;color:var(--text-muted);line-height:1.5;margin-bottom:4px">${a.reasoning}</div>
-          ${a.command ? `<div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);background:rgba(0,0,0,0.25);padding:4px 8px;border-radius:3px;user-select:all;cursor:text" title="Click aby zaznaczyć, Cmd+C do kopiowania">→ ${a.command}</div>` : ''}
+          ${a.command ? `<div style="font-family:var(--mono);font-size:10px;color:var(--text-dim);background:rgba(0,0,0,0.25);padding:4px 8px;border-radius:3px;user-select:all;cursor:text" title="${t('cc_click_hint')}">→ ${a.command}</div>` : ''}
         </div>
       `).join('')}
     </section>
