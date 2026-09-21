@@ -1510,6 +1510,62 @@ const I18N = {
   pr_cheap_vol:       { pl: 'Tani vol — ruch niedowartościowany',          en: 'Cheap vol — move underpriced' },
   cc_pump_title:      { pl: 'układ pod short squeeze',                     en: 'short-squeeze setup' },
   cc_pump_cmd:        { pl: 'Nie shortuj · long tylko z CONFLUENCE_BUY lub reclaim poziomu · stop pod ostatnim swing low', en: 'Do not short · long only with CONFLUENCE_BUY or level reclaim · stop under last swing low' },
+  // ─── COMMAND CENTER actions (generateCommandCenterActions) ───
+  cc_partial_title:   { pl: 'Rozważ partial 30-50%',                        en: 'Consider partial 30-50%' },
+  cc_range_title:     { pl: 'RANGE — ściany aktywne po obu stronach',        en: 'RANGE — walls active on both sides' },
+  cc_range_reason:    { pl: 'orderbook pokazuje kupno na dole i sprzedaż na górze zakresu naprzemiennie. To nie kierunkowy sygnał — traktuj jako informację o konsolidacji, nie wezwanie do akcji.', en: 'orderbook shows buying at the bottom and selling at the top of range alternately. Not a directional signal — treat as consolidation info, not a call to action.' },
+  cc_range_cmd:       { pl: 'Obserwuj — brak kierunkowej konwikcji, ewentualnie graj brzegi zakresu', en: 'Watch — no directional conviction, optionally play range edges' },
+  cc_extreme_title:   { pl: 'Fusion flags extreme risk — obserwuj',          en: 'Fusion flags extreme risk — watch' },
+  cc_watch_trailing:  { pl: 'Obserwuj — trailing SL chroni automatycznie',   en: 'Watch — trailing SL protects automatically' },
+  cc_tighten_title:   { pl: 'Rozważ zacieśnienie SL',                       en: 'Consider tightening SL' },
+  cc_tighten_cmd:     { pl: 'Trailing SL aktywny — rozważ ręczne dostrojenie', en: 'Trailing SL active — consider manual adjustment' },
+  cc_entry_title:     { pl: 'Entry warunki spełnione',                       en: 'Entry conditions met' },
+  cc_wall_buy_cmd:    { pl: 'Wsparcie formuje się — dobry kontekst',          en: 'Support forming — good context' },
+  cc_wall_sell_cmd:   { pl: 'Opór — obserwuj reakcję ceny',                   en: 'Resistance — watch price reaction' },
+  cc_dom:             { pl: 'dominują',                                       en: 'dominate' },
+  cc_imb_bull_reason: { pl: 'momentum sprzyja long',                          en: 'momentum supports long' },
+  cc_imb_bear_reason: { pl: 'chwilowa presja sprzedaży',                      en: 'short-term selling pressure' },
+  cc_imb_bull_cmd:    { pl: 'Momentum wspiera — trzymaj',                     en: 'Momentum supports — hold' },
+  // ─── interpretTokenState reasoning & actions ───
+  its_no_data:        { pl: 'Brak fusion decision lub price data',            en: 'No fusion decision or price data' },
+  its_from_entry:     { pl: 'od entry',                                       en: 'from entry' },
+  its_profit_strong:  { pl: 'silny profit',                                   en: 'strong profit' },
+  its_profit_good:    { pl: 'dobry profit',                                   en: 'good profit' },
+  its_profit:         { pl: 'profit',                                         en: 'profit' },
+  its_breakeven:      { pl: 'breakeven+',                                     en: 'breakeven+' },
+  its_neutral_pos:    { pl: 'neutral — brak wpływu na score',                 en: 'neutral — no impact on score' },
+  its_underwater:     { pl: 'underwater',                                      en: 'underwater' },
+  its_asks_dom:       { pl: 'asks dominują',                                   en: 'asks dominate' },
+  its_bids_dom:       { pl: 'bids dominują',                                   en: 'bids dominate' },
+  its_slight_bear:    { pl: 'lekko bearish (info)',                            en: 'slightly bearish (info)' },
+  its_slight_bull:    { pl: 'lekko bullish (info)',                            en: 'slightly bullish (info)' },
+  its_flip:           { pl: 'coś się zmienia TERAZ',                           en: 'something is changing NOW' },
+  its_ws_connecting:  { pl: 'WS łączy się (poczekaj 5-10s)',                   en: 'WS connecting (wait 5-10s)' },
+  its_spoof:          { pl: 'spoof walls (lived <5s) — nie ufaj walls',        en: 'spoof walls (lived <5s) — don\'t trust walls' },
+  its_buy_zone:       { pl: 'Cena w BUY zone',                                en: 'Price in BUY zone' },
+  its_sell_zone:      { pl: 'Cena w SELL zone',                                en: 'Price in SELL zone' },
+  its_heatmap_buy:    { pl: 'Cena przy trwałej heatmap buy zone',              en: 'Price near persistent heatmap buy zone' },
+  its_heatmap_sell:   { pl: 'Cena przy trwałej heatmap sell zone',             en: 'Price near persistent heatmap sell zone' },
+  its_hm_depth:       { pl: 'śr. głębokość',                                  en: 'avg depth' },
+  its_hm_time:        { pl: 'czasu ost. 5 min',                               en: 'of last 5 min' },
+  its_range:          { pl: 'RANGE — kupno i sprzedaż aktywne naprzemiennie, brak kierunku', en: 'RANGE — buy and sell active alternately, no direction' },
+  its_flush_high:     { pl: 'WYSOKI',                                          en: 'HIGH' },
+  its_flush_elev:     { pl: 'podwyższony',                                     en: 'elevated' },
+  its_entry_trigger:  { pl: 'Trigger warunki spełnione — rozważ entry z size', en: 'Trigger conditions met — consider entry with size' },
+  its_watch_wait:     { pl: 'Watch — czekaj na trigger',                       en: 'Watch — wait for trigger' },
+  its_check_risk:     { pl: 'sprawdź risk_flag',                               en: 'check risk_flag' },
+  its_no_alert:       { pl: 'brak alert',                                      en: 'no alert' },
+  its_hold_strong:    { pl: 'Trzymaj — wszystkie sygnały wspierają pozycję',   en: 'Hold — all signals support position' },
+  its_trailing_auto:  { pl: 'Trailing SL chroni zyski automatycznie',          en: 'Trailing SL protects profits automatically' },
+  its_hold_mixed:     { pl: 'Trzymaj — sygnały mixed ale brak zagrożenia',     en: 'Hold — signals mixed but no threat' },
+  its_tighten:        { pl: 'Rozważ zacieśnienie SL (nie panikuj — trailing chroni)', en: 'Consider tightening SL (don\'t panic — trailing protects)' },
+  its_cut:            { pl: 'Rozważ partial 30-50%',                           en: 'Consider partial 30-50%' },
+  its_cut_rest:       { pl: 'Reszta trailing SL 1% pod current price',         en: 'Rest trailing SL 1% below current price' },
+  its_near_sell:      { pl: 'Cena blisko sell zone — obserwuj reakcję, nie spiesz się', en: 'Price near sell zone — watch reaction, don\'t rush' },
+  its_extreme_risk:   { pl: 'Fusion flaguje ekstremalny risk — rozważ partial', en: 'Fusion flags extreme risk — consider partial' },
+  its_entry_support:  { pl: '+ supportive signals — rozważ entry',             en: '+ supportive signals — consider entry' },
+  its_entry_mixed:    { pl: 'ale sygnały mixed — czekaj na potwierdzenie',     en: 'but signals mixed — wait for confirmation' },
+  its_skip:           { pl: 'Brak pozycji, brak sygnału — no action needed',   en: 'No position, no signal — no action needed' },
   // ─── CRYPTO PICKS ───
   picks_title:        { pl: 'Crypto Picks · poranny shortlist',          en: 'Crypto Picks · morning shortlist' },
   picks_setups:       { pl: 'setupów',                                   en: 'setups' },
@@ -5886,7 +5942,7 @@ function generateCommandCenterActions() {
         ticker, urgency: 'URGENT',
         icon: '🚨',
         color: 'var(--red)',
-        title: `${ticker}: Rozważ partial 30-50%`,
+        title: `${ticker}: ${t('cc_partial_title')}`,
         reasoning: state.reasoning.slice(0, 3).join(' · '),
         command: `python3 ~/Claude/TVCFusion/paper_bot.py close ${ticker}`,
       });
@@ -5914,9 +5970,9 @@ function generateCommandCenterActions() {
         ticker, urgency: 'LOW',
         icon: '🔁',
         color: '#A78BFA',
-        title: `${ticker}: RANGE — ściany aktywne po obu stronach`,
-        reasoning: `${rangeConf.msg} — orderbook pokazuje kupno na dole i sprzedaż na górze zakresu naprzemiennie. To nie kierunkowy sygnał — traktuj jako informację o konsolidacji, nie wezwanie do akcji.`,
-        command: `Obserwuj — brak kierunkowej konwiktcji, ewentualnie graj brzegi zakresu`,
+        title: `${ticker}: ${t('cc_range_title')}`,
+        reasoning: `${rangeConf.msg} — ${t('cc_range_reason')}`,
+        command: t('cc_range_cmd'),
       });
     }
     // 3. Fusion risk_flag "extreme" — only if real position AND truly extreme (score < 30)
@@ -5927,9 +5983,9 @@ function generateCommandCenterActions() {
         ticker, urgency: 'MEDIUM',
         icon: '💰',
         color: 'var(--amber)',
-        title: `${ticker}: Fusion flags extreme risk — obserwuj`,
+        title: `${ticker}: ${t('cc_extreme_title')}`,
         reasoning: dec.risk_flag.substring(0, 180),
-        command: `Obserwuj — trailing SL chroni automatycznie`,
+        command: t('cc_watch_trailing'),
       });
     }
     // 4. TIGHTEN_SL verdict — only if real position
@@ -5940,9 +5996,9 @@ function generateCommandCenterActions() {
         ticker, urgency: 'MEDIUM',
         icon: '⚠️',
         color: 'var(--amber)',
-        title: `${ticker}: Rozważ zacieśnienie SL`,
+        title: `${ticker}: ${t('cc_tighten_title')}`,
         reasoning: state.reasoning.slice(0, 3).join(' · '),
-        command: 'Trailing SL aktywny — rozważ ręczne dostrojenie',
+        command: t('cc_tighten_cmd'),
       });
     }
     // 5. ENTRY_SETUP (WATCH triggered)
@@ -5952,7 +6008,7 @@ function generateCommandCenterActions() {
         ticker, urgency: 'MEDIUM',
         icon: '🎯',
         color: 'var(--gold)',
-        title: `${ticker}: Entry warunki spełnione — size ${dec.size_pct}%`,
+        title: `${ticker}: ${t('cc_entry_title')} — size ${dec.size_pct}%`,
         reasoning: state.reasoning.slice(0, 2).join(' · '),
         command: `python3 ~/Claude/TVCFusion/paper_bot.py open (fresh fusion needed)`,
       });
@@ -5970,7 +6026,7 @@ function generateCommandCenterActions() {
           color: isBuy ? '#38BDF8' : '#FB923C',
           title: `${ticker}: Big ${isBuy?'BUY':'SELL'} wall $${(wall.notional/1e6).toFixed(1)}M @ ${fmt(wall.price)}`,
           reasoning: `Distance ${wall.distance}% · age ${Math.round((wall.ageMs||0)/1000)}s · ${isBuy?'support':'resistance'}`,
-          command: isBuy ? `Wsparcie formuje się — dobry kontekst` : `Opór — obserwuj reakcję ceny`,
+          command: isBuy ? t('cc_wall_buy_cmd') : t('cc_wall_sell_cmd'),
         });
       }
     }
@@ -5983,9 +6039,9 @@ function generateCommandCenterActions() {
         ticker, urgency: 'LOW',
         icon: isBull ? '🚀' : '📉',
         color: isBull ? 'var(--green)' : 'var(--red)',
-        title: `${ticker}: ${isBull?'BULLS':'BEARS'} dominują ${(smoothedImb*100).toFixed(0)}%`,
-        reasoning: `5s avg imbalance · ${isBull ? 'momentum sprzyja long' : 'chwilowa presja sprzedaży'}`,
-        command: isBull ? `Momentum wspiera — trzymaj` : `Obserwuj — trailing SL chroni automatycznie`,
+        title: `${ticker}: ${isBull?'BULLS':'BEARS'} ${t('cc_dom')} ${(smoothedImb*100).toFixed(0)}%`,
+        reasoning: `5s avg imbalance · ${isBull ? t('cc_imb_bull_reason') : t('cc_imb_bear_reason')}`,
+        command: isBull ? t('cc_imb_bull_cmd') : t('cc_watch_trailing'),
       });
     }
     // 8. FLUSH RISK WYSOKI — nie otwieraj longów, zacieśnij trailing (prio 90)
@@ -6113,7 +6169,7 @@ function interpretTokenState(ticker) {
   const ob = liveOrderbook[ticker];
 
   if (!dec || !price) {
-    return { verdict: 'NO_DATA', color: 'var(--text-dim)', confidence: 'low', reasoning: ['Brak fusion decision lub price data'], actions: [] };
+    return { verdict: 'NO_DATA', color: 'var(--text-dim)', confidence: 'low', reasoning: [t('its_no_data')], actions: [] };
   }
 
   const reasoning = [];
@@ -6141,17 +6197,17 @@ function interpretTokenState(ticker) {
     const entryPrice = openPos.entry_price;
     const pctFromEntry = ((price - entryPrice) / entryPrice * 100);
     if (pctFromEntry > 5) {
-      score += 4; reasoning.push(`💰 Position +${pctFromEntry.toFixed(1)}% od entry (silny profit → score +4)`);
+      score += 4; reasoning.push(`💰 Position +${pctFromEntry.toFixed(1)}% ${t('its_from_entry')} (${t('its_profit_strong')} → score +4)`);
     } else if (pctFromEntry > 3) {
-      score += 3; reasoning.push(`💰 Position +${pctFromEntry.toFixed(1)}% od entry (dobry profit → score +3)`);
+      score += 3; reasoning.push(`💰 Position +${pctFromEntry.toFixed(1)}% ${t('its_from_entry')} (${t('its_profit_good')} → score +3)`);
     } else if (pctFromEntry > 1) {
-      score += 2; reasoning.push(`📈 Position +${pctFromEntry.toFixed(1)}% od entry (profit → score +2)`);
+      score += 2; reasoning.push(`📈 Position +${pctFromEntry.toFixed(1)}% ${t('its_from_entry')} (${t('its_profit')} → score +2)`);
     } else if (pctFromEntry > 0) {
-      score += 1; reasoning.push(`📈 Position +${pctFromEntry.toFixed(1)}% od entry (breakeven+ → score +1)`);
+      score += 1; reasoning.push(`📈 Position +${pctFromEntry.toFixed(1)}% ${t('its_from_entry')} (${t('its_breakeven')} → score +1)`);
     } else if (pctFromEntry > -2) {
-      reasoning.push(`Position ${pctFromEntry.toFixed(1)}% od entry (neutral — brak wpływu na score)`);
+      reasoning.push(`Position ${pctFromEntry.toFixed(1)}% ${t('its_from_entry')} (${t('its_neutral_pos')})`);
     } else {
-      score -= 2; reasoning.push(`⚠️ Position ${pctFromEntry.toFixed(1)}% od entry (underwater → score -2)`);
+      score -= 2; reasoning.push(`⚠️ Position ${pctFromEntry.toFixed(1)}% ${t('its_from_entry')} (${t('its_underwater')} → score -2)`);
     }
   }
 
@@ -6164,25 +6220,25 @@ function interpretTokenState(ticker) {
   if (walls && ob) {
     const smoothedImb = walls.imbalanceSmoothed ?? walls.imbalance;
     const rawImb = walls.imbalance;
-    if (rawImb < -0.5) { score -= 1; reasoning.push(`Orderbook: ${(rawImb*100).toFixed(0)}% BEARS (asks dominują)`); }
-    else if (rawImb > 0.5) { score += 1; reasoning.push(`Orderbook: +${(rawImb*100).toFixed(0)}% BULLS (bids dominują)`); }
+    if (rawImb < -0.5) { score -= 1; reasoning.push(`Orderbook: ${(rawImb*100).toFixed(0)}% BEARS (${t('its_asks_dom')})`); }
+    else if (rawImb > 0.5) { score += 1; reasoning.push(`Orderbook: +${(rawImb*100).toFixed(0)}% BULLS (${t('its_bids_dom')})`); }
     // moderate imbalance (0.25-0.5): informational only, no score impact
-    else if (rawImb < -0.25) { reasoning.push(`Orderbook: ${(rawImb*100).toFixed(0)}% lekko bearish (info)`); }
-    else if (rawImb > 0.25) { reasoning.push(`Orderbook: +${(rawImb*100).toFixed(0)}% lekko bullish (info)`); }
+    else if (rawImb < -0.25) { reasoning.push(`Orderbook: ${(rawImb*100).toFixed(0)}% ${t('its_slight_bear')}`); }
+    else if (rawImb > 0.25) { reasoning.push(`Orderbook: +${(rawImb*100).toFixed(0)}% ${t('its_slight_bull')}`); }
     // Divergence raw vs smoothed
     if (Math.abs(smoothedImb - rawImb) > 0.5) {
-      reasoning.push(`⚡ FLIP! Raw ${(rawImb*100).toFixed(0)}% vs 5s avg ${(smoothedImb*100).toFixed(0)}% — coś się zmienia TERAZ`);
+      reasoning.push(`⚡ FLIP! Raw ${(rawImb*100).toFixed(0)}% vs 5s avg ${(smoothedImb*100).toFixed(0)}% — ${t('its_flip')}`);
       confidence = 'low';
     }
   } else if (BINANCE_SYMBOLS[ticker]) {
-    reasoning.push(`Orderbook: WS łączy się (poczekaj 5-10s)`);
+    reasoning.push(`Orderbook: ${t('its_ws_connecting')}`);
   }
 
   // 4. WALL QUALITY (real vs spoofing)
   const spoofEvents = events.filter(e => e.type === 'gone' && e.lifespanMs && e.lifespanMs < 5000).length;
   const realWalls = walls ? (walls.buyWalls || []).concat(walls.sellWalls || []).filter(w => w.ageMs > 30_000).length : 0;
   if (spoofEvents > 5) {
-    reasoning.push(`⚠️ ${spoofEvents} spoof walls (lived <5s) — nie ufaj walls`);
+    reasoning.push(`⚠️ ${spoofEvents} ${t('its_spoof')}`);
     confidence = 'low';
   }
   if (realWalls > 0) reasoning.push(`✅ ${realWalls} real walls (>30s age) — legit orders`);
@@ -6190,8 +6246,8 @@ function interpretTokenState(ticker) {
   // 5. PRED ZONES proximity
   const nearBuyZone = predZones.buyZones.find(z => price >= z.priceLow * 0.995 && price <= z.priceHigh * 1.01);
   const nearSellZone = predZones.sellZones.find(z => price >= z.priceLow * 0.99 && price <= z.priceHigh * 1.005);
-  if (nearBuyZone) { score += 1; reasoning.push(`✅ Cena w BUY zone $${fmt(nearBuyZone.priceLow)}–${fmt(nearBuyZone.priceHigh)} (${nearBuyZone.touches}×)`); }
-  if (nearSellZone) { score -= 1; reasoning.push(`⚠️ Cena w SELL zone $${fmt(nearSellZone.priceLow)}–${fmt(nearSellZone.priceHigh)} (${nearSellZone.touches}×)`); }
+  if (nearBuyZone) { score += 1; reasoning.push(`✅ ${t('its_buy_zone')} $${fmt(nearBuyZone.priceLow)}–${fmt(nearBuyZone.priceHigh)} (${nearBuyZone.touches}×)`); }
+  if (nearSellZone) { score -= 1; reasoning.push(`⚠️ ${t('its_sell_zone')} $${fmt(nearSellZone.priceLow)}–${fmt(nearSellZone.priceHigh)} (${nearSellZone.touches}×)`); }
 
   // 5b. LIQUIDITY HEATMAP proximity — trwała głębokość orderbooka (śr. z ostatnich
   // 5 min), silniejszy i bardziej aktualny sygnał niż historyczne pred zones (które
@@ -6199,8 +6255,8 @@ function interpretTokenState(ticker) {
   const heatmapZonesForScore = getHeatmapZones(ticker);
   const nearHeatmapBuy = price ? (heatmapZonesForScore.buyZones || []).find(z => Math.abs(price - price * (1 + z.pct / 100)) / price < 0.0015) : null;
   const nearHeatmapSell = price ? (heatmapZonesForScore.sellZones || []).find(z => Math.abs(price - price * (1 + z.pct / 100)) / price < 0.0015) : null;
-  if (nearHeatmapBuy) { score += 1; reasoning.push(`🔥 Cena przy trwałej heatmap buy zone ($${(nearHeatmapBuy.avgNotional/1e6).toFixed(2)}M śr. głębokość, ${Math.round(nearHeatmapBuy.persistence*100)}% czasu ost. 5 min)`); }
-  if (nearHeatmapSell) { score -= 1; reasoning.push(`🔥 Cena przy trwałej heatmap sell zone ($${(nearHeatmapSell.avgNotional/1e6).toFixed(2)}M śr. głębokość, ${Math.round(nearHeatmapSell.persistence*100)}% czasu ost. 5 min)`); }
+  if (nearHeatmapBuy) { score += 1; reasoning.push(`🔥 ${t('its_heatmap_buy')} ($${(nearHeatmapBuy.avgNotional/1e6).toFixed(2)}M ${t('its_hm_depth')}, ${Math.round(nearHeatmapBuy.persistence*100)}% ${t('its_hm_time')})`); }
+  if (nearHeatmapSell) { score -= 1; reasoning.push(`🔥 ${t('its_heatmap_sell')} ($${(nearHeatmapSell.avgNotional/1e6).toFixed(2)}M ${t('its_hm_depth')}, ${Math.round(nearHeatmapSell.persistence*100)}% ${t('its_hm_time')})`); }
 
   // 6. ACTIVE ALERTS — range-bound confluence (obie strony aktywne naprzemiennie)
   // to NIE kierunkowy sygnał, więc nie powinien przesuwać score ani podnosić
@@ -6214,16 +6270,16 @@ function interpretTokenState(ticker) {
     else score -= 2;
     confidence = 'high';
   } else if (rangeBoundConfluence) {
-    reasoning.push(`🔁 RANGE — kupno i sprzedaż aktywne naprzemiennie, brak kierunku`);
+    reasoning.push(`🔁 ${t('its_range')}`);
     // brak zmiany score — celowo neutralne, nie podnosimy ani nie obniżamy confidence
   }
 
   // 7. FLUSH RISK — kruchość rynku (OI dywergencja, kompresja, makro, SFP, funding, wieloryby, opcje)
   const fr = flushRisk[ticker];
   if (fr && !fr.error) {
-    if (fr.level === 'high') { score -= 2; reasoning.push(`🌊 Flush Risk ${fr.score}/100 WYSOKI — ${fr.parts.slice(0, 2).map(p => p.txt).join(' · ')}`); }
-    else if (fr.level === 'elevated') { score -= 1; reasoning.push(`🌊 Flush Risk ${fr.score}/100 podwyższony`); }
-    if (fr.pump && fr.pump.level === 'high') { score += 1; reasoning.push(`🚀 Pump Risk ${fr.pump.score}/100 WYSOKI — ${fr.pump.parts.slice(0, 2).map(p => p.txt).join(' · ')}`); }
+    if (fr.level === 'high') { score -= 2; reasoning.push(`🌊 Flush Risk ${fr.score}/100 ${t('its_flush_high')} — ${fr.parts.slice(0, 2).map(p => p.txt).join(' · ')}`); }
+    else if (fr.level === 'elevated') { score -= 1; reasoning.push(`🌊 Flush Risk ${fr.score}/100 ${t('its_flush_elev')}`); }
+    if (fr.pump && fr.pump.level === 'high') { score += 1; reasoning.push(`🚀 Pump Risk ${fr.pump.score}/100 ${t('its_flush_high')} — ${fr.pump.parts.slice(0, 2).map(p => p.txt).join(' · ')}`); }
   }
   // 8. SMART MONEY — top traderzy Binance + wieloryby HL + COT (werdykt z 3 źródeł)
   const smv = smVerdict(ticker);
@@ -6252,51 +6308,51 @@ function interpretTokenState(ticker) {
     // WATCH/HOLD state — no real position, waiting for entry trigger
     verdict = score > 2 ? 'ENTRY_SETUP' : 'WATCH';
     color = score > 2 ? 'var(--gold)' : 'var(--text-muted)';
-    if (score > 2) actions.push(`✅ Trigger warunki spełnione — rozważ entry z size ${dec.size_pct}%`);
-    else actions.push(`👀 Watch — czekaj na trigger (Fusion: ${dec.risk_flag ? 'sprawdź risk_flag' : 'brak alert'})`);
+    if (score > 2) actions.push(`✅ ${t('its_entry_trigger')} ${dec.size_pct}%`);
+    else actions.push(`👀 ${t('its_watch_wait')} (Fusion: ${dec.risk_flag ? t('its_check_risk') : t('its_no_alert')})`);
   } else if (hasOpenPos) {
     // Has REAL open position — decide HOLD / TIGHTEN / PARTIAL / CUT
     if (score >= 3) {
       verdict = 'HOLD_STRONG'; color = 'var(--green)';
-      actions.push('✅ Trzymaj — wszystkie sygnały wspierają pozycję');
-      actions.push('Trailing SL chroni zyski automatycznie');
+      actions.push(`✅ ${t('its_hold_strong')}`);
+      actions.push(t('its_trailing_auto'));
     } else if (score >= -1) {
       // v0.9: was >= 0, now >= -1 — wider HOLD zone, less trigger-happy
       verdict = 'HOLD'; color = 'var(--blue)';
-      actions.push('👌 Trzymaj — sygnały mixed ale brak zagrożenia');
-      actions.push(`SL Fusion: $${fmt(dec.sl)} · trailing SL aktywny`);
+      actions.push(`👌 ${t('its_hold_mixed')}`);
+      actions.push(`SL Fusion: $${fmt(dec.sl)} · trailing SL active`);
     } else if (score >= -4) {
       // v0.9: was >= -2, now >= -4 — MUCH harder to trigger TIGHTEN
       verdict = 'TIGHTEN_SL'; color = 'var(--amber)';
-      actions.push('⚠️ Rozważ zacieśnienie SL (nie panikuj — trailing chroni)');
+      actions.push(`⚠️ ${t('its_tighten')}`);
       const be = dec.entry_low && dec.entry_high ? ((dec.entry_low + dec.entry_high) / 2 * 1.005) : dec.sl;
       actions.push(`Suggested SL: $${fmt(be)} (breakeven +0.5%)`);
       confidence = 'medium';
     } else {
       // v0.9: was < -2, now < -4 — needs massive convergence of bearish signals
       verdict = 'CUT_OR_PARTIAL'; color = 'var(--red)';
-      actions.push('🚨 Rozważ partial 30-50%');
-      actions.push('Reszta trailing SL 1% pod current price');
+      actions.push(`🚨 ${t('its_cut')}`);
+      actions.push(t('its_cut_rest'));
       confidence = 'high';
     }
     // Special: near sell zone with profit → suggestion only (not urgent)
     if (nearSellZone && isLong) {
-      actions.push('💡 Cena blisko sell zone — obserwuj reakcję, nie spiesz się');
+      actions.push(`💡 ${t('its_near_sell')}`);
     }
     // Special: extreme extension override — only if REALLY extreme (score < 25)
     if (dec.risk_flag && /extreme/i.test(dec.risk_flag) && dec.score < 25) {
-      actions.unshift('⚠️ Fusion flaguje ekstremalny risk — rozważ partial');
+      actions.unshift(`⚠️ ${t('its_extreme_risk')}`);
     }
   } else if (!hasOpenPos && (dec.action === 'BUY' || dec.action === 'STRONG_BUY')) {
     // No position but Fusion says BUY — potential entry
     verdict = score > 0 ? 'ENTRY_SETUP' : 'WATCH';
     color = score > 0 ? 'var(--gold)' : 'var(--text-muted)';
-    if (score > 0) actions.push(`✅ Fusion ${dec.action} + supportive signals — rozważ entry`);
-    else actions.push(`👀 Fusion ${dec.action} ale sygnały mixed — czekaj na potwierdzenie`);
+    if (score > 0) actions.push(`✅ Fusion ${dec.action} ${t('its_entry_support')}`);
+    else actions.push(`👀 Fusion ${dec.action} ${t('its_entry_mixed')}`);
   } else {
     // No open position, no entry signal — SKIP
     verdict = 'SKIP'; color = 'var(--text-dim)';
-    actions.push('⊘ Brak pozycji, brak sygnału — no action needed');
+    actions.push(`⊘ ${t('its_skip')}`);
   }
 
   return { verdict, color, confidence, reasoning, actions, score };
