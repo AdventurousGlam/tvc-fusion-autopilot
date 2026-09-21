@@ -460,12 +460,29 @@ def generate(force=False, telegram=False):
     return True
 
 
+# ─── Telegram (dual-channel) ───────────────────────────────────────────────
+TG_PRO_CHANNEL = "-1004436927192"   # TVC Fusion PRO
+TG_FREE_CHANNEL = "-1004341989751"  # TVC Fusion Signals (free)
+
+def _tg_send(text, chat_id):
+    token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+    if not token or not chat_id:
+        return
+    import urllib.parse as up
+    try:
+        data = up.urlencode({"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": "true"}).encode()
+        with ur.urlopen(ur.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data), timeout=10, context=SSL_CTX) as r:
+            print(f"[picks] telegram({chat_id[-4:]}) {r.status}")
+    except Exception as e:
+        print(f"[picks] telegram({chat_id[-4:]}) failed: {e}")
+
 def _send_telegram(out):
     token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip(); chat = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
     if not token or not chat:
         return
     icon = {"Momentum": "🚀", "Derivatives": "📊", "Squeeze setup": "🧨", "New listing": "🆕", "Mean reversion": "↩️"}
     arrow = {"long": "▲", "short": "▼", "watch": "👀"}
+    # PRO + personal: pełna wersja z S/R levels
     lines = [f"🎯 <b>Crypto Picks {out['date']}</b>", out["market_context"], ""]
     for p in out["picks"]:
         lines.append(f"{icon.get(p['category'], '📌')} <b>{p['ticker']}</b> {arrow.get(p['direction'], '')} {p['direction']} · {p['change_24h_pct']:+.1f}% 24h · S {p['support']} / R {p['resistance']}")
@@ -474,13 +491,16 @@ def _send_telegram(out):
     if out["radar"]:
         lines.append(""); lines.append("📡 " + " · ".join(f"{r['ticker']}" for r in out["radar"]))
     lines.append(""); lines.append("<i>Szczegóły w terminalu → panel Crypto Picks</i>")
-    import urllib.parse as up
-    try:
-        data = up.urlencode({"chat_id": chat, "text": "\n".join(lines), "parse_mode": "HTML", "disable_web_page_preview": "true"}).encode()
-        with ur.urlopen(ur.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data), timeout=10, context=SSL_CTX) as r:
-            print(f"[picks] telegram {r.status}")
-    except Exception as e:
-        print(f"[picks] telegram failed: {e}")
+    pro_text = "\n".join(lines)
+    # FREE: tickery + kierunek, bez S/R levels
+    free_lines = [f"🎯 <b>Crypto Picks {out['date']}</b>", out["market_context"], ""]
+    for p in out["picks"]:
+        free_lines.append(f"{icon.get(p['category'], '📌')} <b>{p['ticker']}</b> {arrow.get(p['direction'], '')} {p['direction']}")
+    free_lines.append(""); free_lines.append("<i>Poziomy S/R i risk flags → kanał PRO</i>")
+    free_text = "\n".join(free_lines)
+    _tg_send(pro_text, chat)              # osobisty
+    _tg_send(pro_text, TG_PRO_CHANNEL)    # PRO kanał
+    _tg_send(free_text, TG_FREE_CHANNEL)  # FREE kanał
 
 
 if __name__ == "__main__":

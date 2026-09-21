@@ -341,29 +341,36 @@ def _mid_entry(entry_low, entry_high, ticker, ex) -> float:
         return 0.0
 
 
-# --- Telegram notifications (v0.3) --------------------------------------
-# Wymaga env: TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID (GitHub Secrets w workflow).
-# Bez nich funkcja jest no-op — bot działa jak dotąd, tylko bez powiadomień.
+# --- Telegram notifications (v0.6 — dual-channel) -------------------------
+# Env: TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID (GitHub Secrets w workflow).
+# Kanały hardcoded (to publiczne ID, nie sekrety):
+TG_PRO_CHANNEL = "-1004436927192"   # TVC Fusion PRO (płatny)
+TG_FREE_CHANNEL = "-1004341989751"  # TVC Fusion Signals (darmowy)
+# PRO = pełny sygnał natychmiast, FREE = stripped (bez cen/SL/TP/score).
 
 _TELEGRAM_LAST_ERROR = None   # ostatni błąd wysyłki — trafia do health w gist (widoczny w terminalu)
 _TELEGRAM_LAST_OK = None      # ISO czasu ostatniej udanej wysyłki
 
+def _tg_ssl():
+    import ssl
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
 
-def _telegram_send(text: str) -> bool:
+def _telegram_send(text: str, chat_id: str | None = None) -> bool:
+    """Wyślij wiadomość na jeden chat/kanał. Domyślnie: osobisty chat z env."""
     global _TELEGRAM_LAST_ERROR, _TELEGRAM_LAST_OK
     token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
-    chat_id = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
+    if not chat_id:
+        chat_id = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
     if not token or not chat_id:
         return False
     import urllib.request as ur
     import urllib.parse as up
     import urllib.error as ue
-    import ssl
-    try:
-        import certifi
-        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
-    except ImportError:
-        ssl_ctx = ssl.create_default_context()
+    ssl_ctx = _tg_ssl()
     try:
         data = up.urlencode({"chat_id": chat_id, "text": text, "parse_mode": "HTML",
                              "disable_web_page_preview": "true"}).encode()
@@ -379,8 +386,17 @@ def _telegram_send(text: str) -> bool:
         _TELEGRAM_LAST_ERROR = f"HTTP {e.code}: {body}"
     except Exception as e:
         _TELEGRAM_LAST_ERROR = f"{type(e).__name__}: {e}"
-    print(f"[telegram] send failed: {_TELEGRAM_LAST_ERROR}")
+    print(f"[telegram] send failed ({chat_id[-4:]}): {_TELEGRAM_LAST_ERROR}")
     return False
+
+
+def _telegram_broadcast(pro_text: str, free_text: str | None = None):
+    """Wyślij na 3 kanały: osobisty + PRO (pełny), FREE (stripped). Zwraca True jeśli osobisty OK."""
+    ok = _telegram_send(pro_text)           # osobisty chat — pełna wersja
+    _telegram_send(pro_text, TG_PRO_CHANNEL)  # PRO kanał — pełna wersja
+    if free_text:
+        _telegram_send(free_text, TG_FREE_CHANNEL)  # FREE kanał — stripped
+    return ok
 
 
 def _telegram_api(method: str, params: dict | None = None):
@@ -419,29 +435,41 @@ def _fmt_px(v) -> str:
 
 
 def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime, override=False):
-    """Telegram: otwarcie pozycji. No-op bez sekretów; nigdy nie rzuca wyjątku."""
+    """Telegram: otwarcie pozycji na 3 kanały. PRO = pełny, FREE = bez cen."""
     try:
         arrow = "🟢 LONG" if direction == "long" else "🔴 SHORT"
-        _telegram_send(
+        pro_text = (
             f"<b>{arrow} {ticker}</b> otwarty @ {_fmt_px(entry)}\n"
             f"Size ${size_usd:.0f} · score {score} · {regime}{' · ⚡CHoCH' if override else ''}\n"
             f"SL {_fmt_px(sl)} · TP1 {_fmt_px(tp1)} · TP2 {_fmt_px(tp2)}"
         )
+        free_text = (
+            f"<b>{arrow} {ticker}</b>\n"
+            f"Sygnał wygenerowany automatycznie przez TVC Fusion Bot.\n"
+            f"<i>Pełne dane (entry, SL, TP, score) → kanał PRO</i>"
+        )
+        _telegram_broadcast(pro_text, free_text)
     except Exception as e:
         print(f"[telegram] notify_open failed: {e}")
 
 
 def _notify_close(ticker, direction, entry, exit_price, pnl_pct, pnl_usd, reason):
-    """Telegram: zamknięcie pozycji. No-op bez sekretów; nigdy nie rzuca wyjątku."""
+    """Telegram: zamknięcie pozycji na 3 kanały. PRO = pełny, FREE = wynik bez cen."""
     try:
         icon = {"hit_tp1": "🎯 TP1", "hit_tp2": "🎯🎯 TP2", "hit_sl": "🛑 SL",
                 "hit_trailing_sl": "📈🛑 Trailing SL", "flip_choch": "🔁 Flip", "sl_rescan_bug": "🐛 SL re-scan",
                 "manual_close": "✋ Manual"}.get(reason, reason)
         res = "✅" if pnl_usd > 0 else "❌" if pnl_usd < 0 else "➖"
-        _telegram_send(
+        pro_text = (
             f"{res} <b>{ticker} {direction.upper()}</b> zamknięty — {icon}\n"
             f"{_fmt_px(entry)} → {_fmt_px(exit_price)} · <b>{pnl_pct:+.2f}%</b> (${pnl_usd:+.2f})"
         )
+        free_text = (
+            f"{res} <b>{ticker} {direction.upper()}</b> zamknięty — {icon}\n"
+            f"Wynik: <b>{pnl_pct:+.2f}%</b>\n"
+            f"<i>Ceny entry/exit → kanał PRO</i>"
+        )
+        _telegram_broadcast(pro_text, free_text)
     except Exception as e:
         print(f"[telegram] notify_close failed: {e}")
 
@@ -530,8 +558,15 @@ def _maybe_daily_digest_inner(conn):
                      f"· WR {wr_all:.0f}% ({stats['total_closed']} trade'ów)"
                      f"{' · PF ' + format(pf, '.2f') if pf else ''}"
                      f" · maxDD {stats.get('max_drawdown_pct', 0) or 0:.1f}%")
+    # FREE kanał dostaje skrócony digest (bez equity details)
+    free_lines = [f"📊 <b>TVC Fusion — raport dzienny {today}</b>",
+                  f"Zamkniętych: {len(closed)}" + (f" ({wins}W/{len(closed)-wins}L)" if closed else ""),
+                  f"Otwartych teraz: {len(open_now)}",
+                  "<i>Pełne statystyki (equity, PF, DD) → kanał PRO</i>"]
     try:
-        if _telegram_send("\n".join(lines)):
+        pro_text = "\n".join(lines)
+        free_text = "\n".join(free_lines)
+        if _telegram_broadcast(pro_text, free_text):
             _meta_set(conn, "last_digest_date", today)
             _meta_set(conn, "digest_last_error", "")
         else:
@@ -1829,9 +1864,11 @@ def cmd_upload(args):
     health = {
         "autopilot_last_cycle": datetime.now(timezone.utc).isoformat(),
         "cycle_interval_min": 5,
-        "bot_version": "0.5",
+        "bot_version": "0.6",
         "telegram_enabled": bool(os.environ.get("TELEGRAM_BOT_TOKEN") and os.environ.get("TELEGRAM_CHAT_ID")),
         "telegram_chat_id_tail": (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()[-4:] or None,
+        "telegram_pro_channel": TG_PRO_CHANNEL,
+        "telegram_free_channel": TG_FREE_CHANNEL,
         "telegram_last_error": _TELEGRAM_LAST_ERROR,
         "telegram_last_ok": _TELEGRAM_LAST_OK,
         "telegram_test_result": tg_meta.get("telegram_test_result"),

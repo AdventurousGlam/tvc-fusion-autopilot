@@ -471,13 +471,27 @@ def stats(alerts):
             "hit_def": f"+{HIT_1H_PCT}% w 1h / +{HIT_4H_PCT}% w 4h"}
 
 
-# ─── Telegram ───────────────────────────────────────────────────────────────
+# ─── Telegram (dual-channel v2) ────────────────────────────────────────────
+TG_PRO_CHANNEL = "-1004436927192"   # TVC Fusion PRO
+TG_FREE_CHANNEL = "-1004341989751"  # TVC Fusion Signals (free)
+
+def _tg_send(text, chat_id):
+    token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
+    if not token or not chat_id:
+        return
+    try:
+        data = up.urlencode({"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": "true"}).encode()
+        with ur.urlopen(ur.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data), timeout=10, context=SSL_CTX) as r:
+            log(f"telegram({chat_id[-4:]}) {r.status}")
+    except Exception as e:
+        log(f"telegram({chat_id[-4:]}) failed: {e}")
 
 def send_telegram(new_alerts, st):
     token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip(); chat = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
     highs = [a for a in new_alerts if a["level"] == "HIGH"]
     if not token or not chat or not highs:
         return
+    # PRO + personal: pełny alert z cenami i score
     lines = ["🚀 <b>Pump Radar v2 — HIGH</b>"]
     for a in highs[:5]:
         parts = " · ".join(f"{k} {v:+d}" for k, v in a["parts"].items())
@@ -485,12 +499,16 @@ def send_telegram(new_alerts, st):
     if st["all"]["n_1h"]:
         lines.append(f"\n<i>Track record: {st['all']['n']} alertów · hit 1h {st['all']['hit_1h']}% · hit 4h {st['all']['hit_4h']}%</i>")
     lines.append("<i>To nie jest sygnał wejścia. Sprawdź strukturę w terminalu → Pump Radar.</i>")
-    try:
-        data = up.urlencode({"chat_id": chat, "text": "\n".join(lines), "parse_mode": "HTML", "disable_web_page_preview": "true"}).encode()
-        with ur.urlopen(ur.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data), timeout=10, context=SSL_CTX) as r:
-            log(f"telegram {r.status}")
-    except Exception as e:
-        log(f"telegram failed: {e}")
+    pro_text = "\n".join(lines)
+    # FREE: tylko tickery, bez cen/score/parts
+    free_lines = ["🚀 <b>Pump Radar — HIGH alert</b>"]
+    for a in highs[:5]:
+        free_lines.append(f"<b>{a['ticker']}</b> — wykryto sygnał pump")
+    free_lines.append("<i>Pełne dane (score, ceny, składniki) → kanał PRO</i>")
+    free_text = "\n".join(free_lines)
+    _tg_send(pro_text, chat)           # osobisty
+    _tg_send(pro_text, TG_PRO_CHANNEL) # PRO kanał
+    _tg_send(free_text, TG_FREE_CHANNEL) # FREE kanał
 
 
 # ─── Main ───────────────────────────────────────────────────────────────────
