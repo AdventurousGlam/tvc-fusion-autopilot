@@ -1471,6 +1471,25 @@ const I18N = {
   nav_radar:          { pl: 'Pump Radar',         en: 'Pump Radar' },
   nav_watchlist:      { pl: 'Watchlista',         en: 'Watchlist' },
   nav_checklist:      { pl: 'Checklista',         en: 'Checklist' },
+  nav_rsi_mtf:        { pl: 'RSI Multi-TF',       en: 'RSI Multi-TF' },
+  nav_vpvr:           { pl: 'Volume Profile',     en: 'Volume Profile' },
+  rsi_title:          { pl: '📊 RSI Multi-Timeframe — 1h · 4h · Daily', en: '📊 RSI Multi-Timeframe — 1h · 4h · Daily' },
+  rsi_sub:            { pl: 'RSI(14) na trzech ramach czasowych jednocześnie. Oversold na wielu TF = silny sygnał odbicia. Overbought na wielu TF = ryzyko korekty.', en: 'RSI(14) across three timeframes simultaneously. Multi-TF oversold = strong bounce signal. Multi-TF overbought = correction risk.' },
+  rsi_oversold:       { pl: 'Wyprzedany', en: 'Oversold' },
+  rsi_overbought:     { pl: 'Wykupiony', en: 'Overbought' },
+  rsi_neutral:        { pl: 'Neutralny', en: 'Neutral' },
+  rsi_loading:        { pl: 'Ładowanie RSI...', en: 'Loading RSI...' },
+  rsi_confluence:     { pl: 'Konfluencja', en: 'Confluence' },
+  rsi_no_confluence:  { pl: 'Brak konfluencji', en: 'No confluence' },
+  rsi_multi_oversold: { pl: '🟢 Multi-TF Oversold — rozważ LONG', en: '🟢 Multi-TF Oversold — consider LONG' },
+  rsi_multi_overbought: { pl: '🔴 Multi-TF Overbought — ostrożność', en: '🔴 Multi-TF Overbought — caution' },
+  vpvr_title:         { pl: '📊 Volume Profile (VPVR) — rozkład wolumenu po cenach', en: '📊 Volume Profile (VPVR) — volume distribution by price' },
+  vpvr_sub:           { pl: 'High Volume Nodes = silne S/R. Low Volume Nodes = cena przechodzi szybko. POC = najsilniejszy poziom.', en: 'High Volume Nodes = strong S/R. Low Volume Nodes = price passes fast. POC = strongest level.' },
+  vpvr_poc:           { pl: 'POC (Point of Control)', en: 'POC (Point of Control)' },
+  vpvr_hvn:           { pl: 'HVN — silne S/R', en: 'HVN — strong S/R' },
+  vpvr_lvn:           { pl: 'LVN — fast move zone', en: 'LVN — fast move zone' },
+  vpvr_va:            { pl: 'Value Area (70% wolumenu)', en: 'Value Area (70% volume)' },
+  vpvr_loading:       { pl: 'Ładowanie VPVR...', en: 'Loading VPVR...' },
   nav_corr:           { pl: 'Korelacje',          en: 'Correlations' },
   nav_pred:           { pl: 'Predykcje',          en: 'Predictions' },
   pr_title:           { pl: '🚀 Pump Radar — paliwo · wieloryby · katalizator · zapłon', en: '🚀 Pump Radar — fuel · whales · catalyst · ignition' },
@@ -2874,6 +2893,10 @@ function render() {
       </div>
       <!-- FLUSH / PUMP RISK — kruchość rynku per token -->
       <div id="flush-risk-slot" style="grid-column: span 12; width: 100%;"></div>
+      <!-- RSI MULTI-TIMEFRAME — RSI(14) na 1h/4h/daily per token -->
+      <div id="rsi-multi-slot" style="grid-column: span 12; width: 100%;"></div>
+      <!-- VOLUME PROFILE (VPVR) — rozkład wolumenu po cenach per token -->
+      <div id="vpvr-slot" style="grid-column: span 12; width: 100%;"></div>
       <!-- PUMP RADAR — skan całego rynku pod krótkoterminowe pumpy -->
       ${data.pump_radar ? `<div id="pump-radar-slot" class="hide-eod" style="grid-column: span 12; width: 100%;">${renderPumpRadar(data.pump_radar)}</div>` : ''}
       <!-- CRYPTO PICKS — poranny shortlist (auto_picks.py) -->
@@ -2980,7 +3003,7 @@ function render() {
   `;
 
   updatePriceCells();
-  try { renderSmartMoneyPanel(); updateSmartMoneyTags(); renderFlushRiskPanel(); renderOptionsPanel(); renderCyclePanel(); renderCvdPanel(); } catch (e) {}
+  try { renderSmartMoneyPanel(); updateSmartMoneyTags(); renderFlushRiskPanel(); renderOptionsPanel(); renderCyclePanel(); renderCvdPanel(); renderRsiMultiPanel(); renderVpvrPanel(); } catch (e) {}
   setTimeout(buildPanelNav, 300); setTimeout(buildPanelNav, 6000);   // po wypełnieniu slotów asynchronicznych
   renderBreakdownChart();
   updateFngGauge();
@@ -4166,7 +4189,7 @@ const NAV_ITEMS = [
   // [id, ikona, klucz i18n] — kolejność = kolejność sekcji: A DECYZJE / B PALIWO I RYZYKO / C KTO KUPUJE / D KONTEKST / E WYNIKI
   ['command-center-slot', '⚡', 'nav_cc'], ['sec-fusion', '🧠', 'nav_fusion'], ['sec-positions', '📈', 'nav_positions'], ['portfolio-health-slot', '🌐', 'nav_portfolio'],
   'sep',
-  ['flush-risk-slot', '🌊', 'nav_flush'], ['pump-radar-slot', '🚀', 'nav_radar'], ['crypto-picks-slot', '🎯', 'nav_picks'],
+  ['flush-risk-slot', '🌊', 'nav_flush'], ['rsi-multi-slot', '📊', 'nav_rsi_mtf'], ['vpvr-slot', '📊', 'nav_vpvr'], ['pump-radar-slot', '🚀', 'nav_radar'], ['crypto-picks-slot', '🎯', 'nav_picks'],
   'sep',
   ['smart-money-slot', '🏦', 'nav_smart'], ['cvd-slot', '⚖️', 'nav_cvd'], ['options-slot', '🎭', 'nav_options'], ['macro-etf-slot', '🏛', 'nav_etf'], ['sec-whales', '🐋', 'nav_whales'],
   'sep',
@@ -5141,6 +5164,286 @@ async function refreshCycle() {
   }
   cycleData.ts = Date.now();
   renderCyclePanel();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RSI MULTI-TIMEFRAME PANEL — RSI(14) na 1h · 4h · Daily per token
+// ═══════════════════════════════════════════════════════════════
+function computeRSI(closes, period = 14) {
+  if (closes.length < period + 1) return null;
+  const deltas = [];
+  for (let i = 1; i < closes.length; i++) deltas.push(closes[i] - closes[i - 1]);
+  const gains = deltas.map(d => d > 0 ? d : 0);
+  const losses = deltas.map(d => d < 0 ? -d : 0);
+  let avgGain = gains.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  let avgLoss = losses.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  for (let i = period; i < deltas.length; i++) {
+    avgGain = (avgGain * (period - 1) + gains[i]) / period;
+    avgLoss = (avgLoss * (period - 1) + losses[i]) / period;
+  }
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - (100 / (1 + rs));
+}
+
+function rsiColor(val) {
+  if (val == null) return '#888';
+  if (val <= 30) return '#22c55e'; // oversold — green (buy opp)
+  if (val >= 70) return '#ef4444'; // overbought — red (caution)
+  if (val <= 40) return '#86efac'; // slightly oversold
+  if (val >= 60) return '#fca5a5'; // slightly overbought
+  return '#d4d4d4'; // neutral
+}
+
+function rsiLabel(val, lang) {
+  if (val == null) return '—';
+  if (val <= 30) return lang === 'pl' ? 'Wyprzedany' : 'Oversold';
+  if (val >= 70) return lang === 'pl' ? 'Wykupiony' : 'Overbought';
+  return lang === 'pl' ? 'Neutralny' : 'Neutral';
+}
+
+async function renderRsiMultiPanel() {
+  const slot = document.getElementById('rsi-multi-slot');
+  if (!slot) return;
+  const lang = window._lang || 'pl';
+  const T = k => (i18n[k] || {})[lang] || (i18n[k] || {}).en || k;
+  slot.innerHTML = `<div class="panel"><h2>${T('rsi_title')}</h2><p class="panel-sub" style="margin-bottom:12px">${T('rsi_sub')}</p><div style="text-align:center;padding:30px 0;color:#888">${T('rsi_loading')}</div></div>`;
+
+  const tickers = typeof SM_TICKERS !== 'undefined' ? SM_TICKERS : ['BTC','ETH','SOL','XRP','SUI'];
+  const intervals = [{tf:'1h',label:'1h'},{tf:'4h',label:'4h'},{tf:'1D',label:'Daily'}];
+  const results = {}; // { BTC: { '1h': 45.2, '4h': 61.3, '1D': 55.0 }, ... }
+
+  await Promise.all(tickers.map(async ticker => {
+    results[ticker] = {};
+    await Promise.all(intervals.map(async iv => {
+      try {
+        const ohlc = await fetchOhlc(ticker, iv.tf);
+        if (ohlc && !ohlc.error && ohlc.length >= 15) {
+          const closes = ohlc.map(c => c[4]); // close is index 4 in fetchOhlc
+          results[ticker][iv.tf] = computeRSI(closes);
+        } else { results[ticker][iv.tf] = null; }
+      } catch { results[ticker][iv.tf] = null; }
+    }));
+  }));
+
+  // Confluence detection
+  const confluences = [];
+  for (const tk of tickers) {
+    const vals = intervals.map(iv => results[tk][iv.tf]).filter(v => v != null);
+    const allOversold = vals.length >= 2 && vals.every(v => v <= 35);
+    const allOverbought = vals.length >= 2 && vals.every(v => v >= 65);
+    if (allOversold) confluences.push({ ticker: tk, type: 'oversold' });
+    else if (allOverbought) confluences.push({ ticker: tk, type: 'overbought' });
+  }
+
+  let confHtml = '';
+  if (confluences.length > 0) {
+    confHtml = `<div style="margin-bottom:12px">`;
+    for (const c of confluences) {
+      if (c.type === 'oversold') confHtml += `<span style="display:inline-block;padding:4px 10px;border-radius:6px;background:rgba(34,197,94,0.15);color:#22c55e;font-weight:600;margin:2px 4px">🟢 ${c.ticker} — ${T('rsi_multi_oversold')}</span>`;
+      else confHtml += `<span style="display:inline-block;padding:4px 10px;border-radius:6px;background:rgba(239,68,68,0.15);color:#ef4444;font-weight:600;margin:2px 4px">🔴 ${c.ticker} — ${T('rsi_multi_overbought')}</span>`;
+    }
+    confHtml += `</div>`;
+  }
+
+  // Build table
+  let rows = '';
+  for (const tk of tickers) {
+    rows += `<tr>`;
+    rows += `<td style="font-weight:700;padding:8px 12px">${tk}</td>`;
+    for (const iv of intervals) {
+      const val = results[tk][iv.tf];
+      const color = rsiColor(val);
+      const label = rsiLabel(val, lang);
+      const display = val != null ? val.toFixed(1) : '—';
+      // Mini gauge bar
+      const pct = val != null ? Math.min(100, Math.max(0, val)) : 50;
+      rows += `<td style="padding:8px 12px;text-align:center">
+        <div style="font-size:1.2em;font-weight:700;color:${color}">${display}</div>
+        <div style="width:100%;height:4px;background:#333;border-radius:2px;margin:4px 0">
+          <div style="width:${pct}%;height:4px;background:${color};border-radius:2px"></div>
+        </div>
+        <div style="font-size:0.75em;color:${color}">${label}</div>
+      </td>`;
+    }
+    // Confluence badge
+    const vals = intervals.map(iv => results[tk][iv.tf]).filter(v => v != null);
+    const avg = vals.length > 0 ? vals.reduce((a,b) => a+b, 0) / vals.length : null;
+    let badge = '';
+    if (vals.length >= 2 && vals.every(v => v <= 35)) badge = `<span style="color:#22c55e;font-weight:700">🟢 ${T('rsi_confluence')}</span>`;
+    else if (vals.length >= 2 && vals.every(v => v >= 65)) badge = `<span style="color:#ef4444;font-weight:700">🔴 ${T('rsi_confluence')}</span>`;
+    else badge = `<span style="color:#666;font-size:0.8em">${T('rsi_no_confluence')}</span>`;
+    rows += `<td style="padding:8px 12px;text-align:center">${badge}</td>`;
+    rows += `</tr>`;
+  }
+
+  slot.innerHTML = `<div class="panel"><h2>${T('rsi_title')}</h2><p class="panel-sub" style="margin-bottom:12px">${T('rsi_sub')}</p>
+    ${confHtml}
+    <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse">
+      <thead><tr style="border-bottom:1px solid #333">
+        <th style="text-align:left;padding:8px 12px">Token</th>
+        ${intervals.map(iv => `<th style="text-align:center;padding:8px 12px">${iv.label}</th>`).join('')}
+        <th style="text-align:center;padding:8px 12px">${T('rsi_confluence')}</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>
+    <p style="margin-top:10px;font-size:0.75em;color:#666">RSI(14) Wilder's smoothing · ${T('rsi_oversold')} ≤30 · ${T('rsi_overbought')} ≥70</p>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// VOLUME PROFILE (VPVR) — rozkład wolumenu po cenach per token
+// ═══════════════════════════════════════════════════════════════
+async function renderVpvrPanel() {
+  const slot = document.getElementById('vpvr-slot');
+  if (!slot) return;
+  const lang = window._lang || 'pl';
+  const T = k => (i18n[k] || {})[lang] || (i18n[k] || {}).en || k;
+  slot.innerHTML = `<div class="panel"><h2>${T('vpvr_title')}</h2><p class="panel-sub" style="margin-bottom:12px">${T('vpvr_sub')}</p><div style="text-align:center;padding:30px 0;color:#888">${T('vpvr_loading')}</div></div>`;
+
+  const tickers = typeof SM_TICKERS !== 'undefined' ? SM_TICKERS : ['BTC','ETH','SOL','XRP','SUI'];
+  const profiles = {};
+
+  // Fetch 100 daily candles per ticker for volume profile
+  await Promise.all(tickers.map(async ticker => {
+    try {
+      const ohlc = await fetchOhlc(ticker, '1D');
+      if (!ohlc || ohlc.error || ohlc.length < 20) { profiles[ticker] = null; return; }
+      // ohlc format from fetchOhlc: [time, open, high, low, close, volume, takerBuyVol]
+      const allLows = ohlc.map(c => c[3]);
+      const allHighs = ohlc.map(c => c[2]);
+      const minPrice = Math.min(...allLows);
+      const maxPrice = Math.max(...allHighs);
+      const range = maxPrice - minPrice;
+      if (range <= 0) { profiles[ticker] = null; return; }
+
+      // Create 30 price buckets
+      const numBuckets = 30;
+      const bucketSize = range / numBuckets;
+      const buckets = Array(numBuckets).fill(0);
+      const bucketPrices = [];
+      for (let i = 0; i < numBuckets; i++) {
+        bucketPrices.push(minPrice + bucketSize * i + bucketSize / 2);
+      }
+
+      // Distribute volume into buckets (proportional to candle overlap)
+      for (const c of ohlc) {
+        const low = c[3], high = c[2], vol = c[5] || 0;
+        const candleRange = high - low || 1;
+        for (let b = 0; b < numBuckets; b++) {
+          const bLow = minPrice + bucketSize * b;
+          const bHigh = bLow + bucketSize;
+          const overlap = Math.max(0, Math.min(high, bHigh) - Math.max(low, bLow));
+          buckets[b] += vol * (overlap / candleRange);
+        }
+      }
+
+      // Find POC (Point of Control) — bucket with max volume
+      const maxVol = Math.max(...buckets);
+      const pocIdx = buckets.indexOf(maxVol);
+
+      // Value Area — 70% of total volume around POC
+      const totalVol = buckets.reduce((a, b) => a + b, 0);
+      const targetVol = totalVol * 0.70;
+      let vaVol = buckets[pocIdx];
+      let vaLow = pocIdx, vaHigh = pocIdx;
+      while (vaVol < targetVol && (vaLow > 0 || vaHigh < numBuckets - 1)) {
+        const belowVol = vaLow > 0 ? buckets[vaLow - 1] : 0;
+        const aboveVol = vaHigh < numBuckets - 1 ? buckets[vaHigh + 1] : 0;
+        if (belowVol >= aboveVol && vaLow > 0) { vaLow--; vaVol += buckets[vaLow]; }
+        else if (vaHigh < numBuckets - 1) { vaHigh++; vaVol += buckets[vaHigh]; }
+        else if (vaLow > 0) { vaLow--; vaVol += buckets[vaLow]; }
+        else break;
+      }
+
+      // HVN/LVN detection — buckets > 80th percentile = HVN, < 20th = LVN
+      const sorted = [...buckets].sort((a, b) => a - b);
+      const p80 = sorted[Math.floor(numBuckets * 0.80)];
+      const p20 = sorted[Math.floor(numBuckets * 0.20)];
+
+      const currentPrice = ohlc[ohlc.length - 1][4]; // last close
+
+      profiles[ticker] = { buckets, bucketPrices, maxVol, pocIdx, vaLow, vaHigh, p80, p20, currentPrice, numBuckets, minPrice, maxPrice };
+    } catch { profiles[ticker] = null; }
+  }));
+
+  // Render
+  let html = `<div class="panel"><h2>${T('vpvr_title')}</h2><p class="panel-sub" style="margin-bottom:12px">${T('vpvr_sub')}</p>`;
+
+  for (const tk of tickers) {
+    const p = profiles[tk];
+    if (!p) { html += `<div style="margin-bottom:16px"><strong>${tk}</strong> — no data</div>`; continue; }
+
+    const pocPrice = p.bucketPrices[p.pocIdx];
+    const vaLowPrice = p.minPrice + (p.vaLow * (p.maxPrice - p.minPrice) / p.numBuckets);
+    const vaHighPrice = p.minPrice + ((p.vaHigh + 1) * (p.maxPrice - p.minPrice) / p.numBuckets);
+    const priceAbovePoc = p.currentPrice > pocPrice;
+
+    // Format price helper
+    const fmtP = v => v >= 1000 ? '$' + v.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') : v >= 1 ? '$' + v.toFixed(2) : '$' + v.toFixed(4);
+
+    html += `<div style="margin-bottom:20px;padding:12px;background:rgba(255,255,255,0.03);border-radius:8px">`;
+    html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">`;
+    html += `<strong style="font-size:1.1em">${tk}</strong>`;
+    html += `<span style="font-size:0.85em;color:#888">Current: <span style="color:#fff;font-weight:600">${fmtP(p.currentPrice)}</span></span>`;
+    html += `</div>`;
+
+    // Key levels badges
+    html += `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">`;
+    html += `<span style="padding:3px 8px;border-radius:4px;background:rgba(251,191,36,0.15);color:#fbbf24;font-size:0.8em;font-weight:600">${T('vpvr_poc')}: ${fmtP(pocPrice)}</span>`;
+    html += `<span style="padding:3px 8px;border-radius:4px;background:rgba(96,165,250,0.15);color:#60a5fa;font-size:0.8em">${T('vpvr_va')}: ${fmtP(vaLowPrice)} – ${fmtP(vaHighPrice)}</span>`;
+    html += `</div>`;
+
+    // Horizontal bar chart (volume profile)
+    html += `<div style="display:flex;flex-direction:column;gap:1px">`;
+    for (let b = p.numBuckets - 1; b >= 0; b--) {
+      const pct = p.maxVol > 0 ? (p.buckets[b] / p.maxVol * 100) : 0;
+      const price = p.bucketPrices[b];
+      const isPoc = b === p.pocIdx;
+      const isVA = b >= p.vaLow && b <= p.vaHigh;
+      const isHVN = p.buckets[b] >= p.p80;
+      const isLVN = p.buckets[b] <= p.p20;
+      const isCurrent = Math.abs(price - p.currentPrice) <= (p.maxPrice - p.minPrice) / p.numBuckets;
+
+      let barColor = 'rgba(255,255,255,0.15)';
+      if (isPoc) barColor = 'rgba(251,191,36,0.6)';        // POC — gold
+      else if (isHVN) barColor = 'rgba(96,165,250,0.4)';   // HVN — blue
+      else if (isLVN) barColor = 'rgba(239,68,68,0.25)';   // LVN — red
+      else if (isVA) barColor = 'rgba(255,255,255,0.1)';   // VA — subtle
+
+      const border = isCurrent ? 'border-left:3px solid #fff;' : '';
+
+      html += `<div style="display:flex;align-items:center;height:14px;${border}">`;
+      html += `<div style="width:55px;font-size:0.65em;color:#888;text-align:right;padding-right:4px;flex-shrink:0">${fmtP(price)}</div>`;
+      html += `<div style="flex:1;position:relative;height:12px;background:rgba(255,255,255,0.03);border-radius:2px">`;
+      html += `<div style="height:100%;width:${Math.max(1, pct)}%;background:${barColor};border-radius:2px"></div>`;
+      html += `</div>`;
+      if (isPoc) html += `<div style="font-size:0.6em;color:#fbbf24;padding-left:4px;flex-shrink:0">POC</div>`;
+      else if (isHVN) html += `<div style="font-size:0.6em;color:#60a5fa;padding-left:4px;flex-shrink:0">HVN</div>`;
+      else if (isLVN) html += `<div style="font-size:0.6em;color:#ef4444;padding-left:4px;flex-shrink:0">LVN</div>`;
+      else html += `<div style="width:28px;flex-shrink:0"></div>`;
+      html += `</div>`;
+    }
+    html += `</div>`;
+
+    // Position interpretation
+    let posNote = '';
+    if (p.currentPrice >= vaLowPrice && p.currentPrice <= vaHighPrice) {
+      posNote = `<span style="color:#60a5fa">📍 ${lang === 'pl' ? 'Cena w Value Area — konsolidacja prawdopodobna' : 'Price in Value Area — consolidation likely'}</span>`;
+    } else if (p.currentPrice > vaHighPrice) {
+      posNote = `<span style="color:#22c55e">📍 ${lang === 'pl' ? 'Cena powyżej VA — momentum bycze, POC jako wsparcie' : 'Price above VA — bullish momentum, POC as support'}</span>`;
+    } else {
+      posNote = `<span style="color:#ef4444">📍 ${lang === 'pl' ? 'Cena poniżej VA — niedźwiedzi, POC jako opór' : 'Price below VA — bearish, POC as resistance'}</span>`;
+    }
+    html += `<div style="margin-top:6px;font-size:0.8em">${posNote}</div>`;
+    html += `</div>`;
+  }
+
+  html += `<p style="margin-top:10px;font-size:0.75em;color:#666">${lang === 'pl' ? '100 dziennych świec · 30 przedziałów cenowych · POC = max wolumen · VA = 70% wolumenu' : '100 daily candles · 30 price buckets · POC = max volume · VA = 70% volume'}</p>`;
+  html += `</div>`;
+  slot.innerHTML = html;
 }
 
 function renderCyclePanel() {
