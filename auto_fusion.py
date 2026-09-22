@@ -68,7 +68,9 @@ def _get_json(url, timeout=15, retries=3):
 
 
 def fetch_prices():
-    """Batch fetch 24h ticker data for all tickers."""
+    """Batch fetch 24h ticker data for all tickers.
+    v1.0 fix: also computes change_7d (from 7d klines) and volume_change_24h
+    (from Binance 24hr ticker data) so altcoin onchain scoring actually works."""
     from urllib.parse import quote
     # Compact JSON (no spaces) + URL-encode żeby uniknąć control characters w URL
     symbols_json = json.dumps(list(BINANCE.values()), separators=(",", ":"))
@@ -79,6 +81,9 @@ def fetch_prices():
     for item in data:
         for ticker, sym in BINANCE.items():
             if item["symbol"] == sym:
+                # volume_change_24h: compare current 24h volume to the average
+                # Binance doesn't give volume change directly, but we can derive it
+                # from quoteVolume. We'll compute 7d avg volume below.
                 result[ticker] = {
                     "price": float(item["lastPrice"]),
                     "change_24h": float(item["priceChangePercent"]),
@@ -86,6 +91,25 @@ def fetch_prices():
                     "high_24h": float(item["highPrice"]),
                     "low_24h": float(item["lowPrice"]),
                 }
+    # v1.0 fix: enrich with change_7d and volume_change_24h from klines
+    for ticker in list(result.keys()):
+        try:
+            klines_7d = fetch_klines(ticker, interval="1d", limit=8)
+            if klines_7d and len(klines_7d) >= 2:
+                # change_7d: (current_close / close_7d_ago - 1) * 100
+                current_close = float(klines_7d[-1][4])
+                close_7d = float(klines_7d[0][4]) if len(klines_7d) >= 8 else float(klines_7d[0][4])
+                if close_7d > 0:
+                    result[ticker]["change_7d"] = round((current_close / close_7d - 1) * 100, 2)
+                # volume_change_24h: today's volume vs 7d average (%)
+                volumes = [float(k[5]) for k in klines_7d[:-1] if float(k[5]) > 0]  # exclude today
+                if volumes:
+                    avg_vol = sum(volumes) / len(volumes)
+                    today_vol = float(klines_7d[-1][5])
+                    if avg_vol > 0:
+                        result[ticker]["volume_change_24h"] = round((today_vol / avg_vol - 1) * 100, 1)
+        except Exception as e:
+            print(f"[prices] 7d enrichment failed for {ticker}: {e}")
     return result
 
 
@@ -627,12 +651,16 @@ def compute_score(ticker, price_data, ta_score, fng, etf_flows):
         flow_val = etf_flows["eth_1d"]
         onchain_score = 65 + min(20, (flow_val / 100_000_000) * 5)
     else:
-        # v0.7 improved altcoin onchain: blend 24h change, 7d change, and volume signal
+        # v1.0 improved altcoin onchain: blend 24h change, 7d change, and volume signal.
+        # v0.7 miał chg_24h*1.5 — w RANGING dawało ±3 pkt, za mało.
+        # Teraz: wzmocniony impact (×2.5 + ×1.0) + volume multiplier.
         chg_24h = price_data.get("change_24h", 0)
         chg_7d = price_data.get("change_7d", 0)
         vol_chg = price_data.get("volume_change_24h", 0)  # % change in volume
-        # Weighted blend: recent price action + medium-term trend + volume confirmation
-        onchain_score = 50 + (chg_24h * 1.5) + (chg_7d * 0.5) + (vol_chg * 0.02 if vol_chg else 0)
+        # Volume confirmation amplifier: high volume = stronger conviction
+        vol_mult = 1.3 if (vol_chg or 0) > 30 else 1.0 if (vol_chg or 0) > -10 else 0.7
+        # Weighted blend: recent price action + medium-term trend, amplified by volume
+        onchain_score = 50 + (chg_24h * 2.5 + chg_7d * 1.0) * vol_mult
 
     onchain_score = max(0, min(100, onchain_score))
 
@@ -651,9 +679,22 @@ def compute_score(ticker, price_data, ta_score, fng, etf_flows):
         + sentiment_score * 0.15
         + news_score * 0.05
     )
-    return int(total), {
+
+    # v1.0 — CONFLUENCE BONUS: gdy 2+ sub-scores zgadzają się (bullish > 58
+    # lub bearish < 42), dodajemy +5/−5 do total. To nagradza sytuacje gdzie
+    # kilka niezależnych źródeł mówi to samo — score przebija próg BUY/SELL
+    # częściej, ale TYLKO gdy jest realna konfluencja, nie przypadkowy szum.
+    bullish_count = sum(1 for s in [onchain_score, ta_score, sentiment_score] if s >= 58)
+    bearish_count = sum(1 for s in [onchain_score, ta_score, sentiment_score] if s <= 42)
+    if bullish_count >= 2:
+        total += 5
+    elif bearish_count >= 2:
+        total -= 5
+
+    return int(max(0, min(100, total))), {
         "onchain": int(onchain_score),
         "ta": int(ta_score),
+        "technical": int(ta_score),  # v1.0 fix: alias for paper_bot compatibility
         "news": news_score,
         "sentiment": int(sentiment_score),
     }
@@ -1278,15 +1319,16 @@ def compute_layers(ticker, direction, price, change_24h, klines_1h, inputs):
             "funding_h": funding, "flush": flush, "pump": pump, "agree": agree, "confirms": conf, "veto": veto, "note": note}
 
 
-def detect_regime(btc_price_data, fng, btc_dominance):
+def detect_regime(btc_price_data, fng, btc_dominance, btc_klines_d=None):
     """
-    Regime detection:
-    - BTC 24h < -8% → CRASH (price-led, no F&G gate — crashes don't wait for sentiment to catch up)
-    - BTC 24h < -3% → TRENDING_DOWN (price-led — F&G LAGS price, requiring F&G<40 too often
-      blocked real downtrends where sentiment hadn't caught up yet, e.g. F&G still "Greed"
-      the same day BTC dropped -3%+. Price action is the primary signal for direction.)
-    - BTC 24h > +3% + F&G > 60 → TRENDING_UP (kept F&G-gated: chasing pumps without sentiment
-      confirmation is a worse failure mode than being slow to catch an uptrend)
+    Regime detection v1.0:
+    - BTC 24h < -8% → CRASH
+    - BTC 24h < -3% → TRENDING_DOWN
+    - BTC 24h > +3% + F&G > 60 → TRENDING_UP (strong move + sentiment confirmation)
+    - v1.0 NEW: BTC 7d > +2% + price > EMA20 → TRENDING_UP (catches sustained uptrends
+      that move <3%/day but are clearly bullish over a week — the old logic missed these
+      entirely, defaulting to RANGING even when BTC was grinding higher for days)
+    - BTC 7d < -2% + price < EMA20 → TRENDING_DOWN (symmetric for downtrends)
     - Wysoki volatility (24h range > 5%) → *_VOLATILE variant
     - Inaczej → RANGING
     """
@@ -1304,6 +1346,22 @@ def detect_regime(btc_price_data, fng, btc_dominance):
         return "TRENDING_DOWN_VOLATILE" if range_pct > 5 else "TRENDING_DOWN"
     if change > 3 and fng and fng.get("current", 50) > 60:
         return "TRENDING_UP_VOLATILE" if range_pct > 5 else "TRENDING_UP"
+
+    # v1.0 — 7-DAY TREND DETECTION: jeśli BTC rósł/spadał >2% przez tydzień
+    # i cena jest po właściwej stronie EMA20, to jest trend — nie RANGING.
+    # To łapie "ciche" trendy +0.5%/dzień × 7 dni = +3.5% tygodniowo,
+    # które stary 24h-only logic ignorował (każdy pojedynczy dzień < 3%).
+    if btc_klines_d and len(btc_klines_d) >= 20:
+        closes = [float(k[4]) for k in btc_klines_d]
+        ema20 = closes[0]
+        for c in closes[-20:]:
+            ema20 = ema20 * 0.9 + c * 0.1
+        chg_7d = (closes[-1] - closes[-7]) / closes[-7] * 100 if len(closes) >= 7 else 0
+        if chg_7d > 2.0 and price > ema20:
+            return "TRENDING_UP_VOLATILE" if range_pct > 5 else "TRENDING_UP"
+        if chg_7d < -2.0 and price < ema20:
+            return "TRENDING_DOWN_VOLATILE" if range_pct > 5 else "TRENDING_DOWN"
+
     return "RANGING"
 
 
@@ -1330,7 +1388,9 @@ def generate_fusion():
     except Exception as e:
         print(f"[macro] failed: {e}"); macro_ctx = None
 
-    regime = detect_regime(prices.get("BTC"), fng, dom)
+    # v1.0 — fetch BTC daily klines for 7d trend detection in regime
+    btc_klines_d = fetch_klines("BTC", limit=30) or []
+    regime = detect_regime(prices.get("BTC"), fng, dom, btc_klines_d=btc_klines_d)
     print(f"[regime] {regime}")
 
     try:
@@ -1357,7 +1417,17 @@ def generate_fusion():
         # Blend: dzienny trend (kontekst) + 1h momentum (świeże ruchy) + market structure
         # (BOS/CHoCH 15m+1h — łapie change of character zanim zrobi to reszta wskaźników)
         ta_score = int(daily_ta_score * 0.40 + short_term_score * 0.25 + ms_score * 0.35)
+
+        # v1.0 — TA SPREAD AMPLIFIER: sub-scores uśredniają się do ~50 w RANGING,
+        # produkując final scores 49-58 (za wąsko dla BUY gate 60+). Amplifikator
+        # rozciąga odchylenie od neutralnego 50 o ×1.4, więc 55→57, 60→64, 45→43.
+        # Efekt: silniejsze sygnały (gdy TA + momo + MS zgadzają się) łatwiej
+        # przebijają próg 60 w fusion score; słabe dalej filtrowane.
+        ta_score = int(50 + (ta_score - 50) * 1.4)
+        ta_score = max(0, min(100, ta_score))
+
         score, sources = compute_score(ticker, prices.get(ticker, {}), ta_score, fng, etf_flows)
+        sources["momentum"] = int(short_term_score)  # v1.0 fix: inject for paper_bot DB
         action = score_to_action(score, regime)
         size = compute_size(score, regime, ticker)
         current_price = prices.get(ticker, {}).get("price", 0)
@@ -1447,6 +1517,7 @@ def generate_fusion():
             "direction": direction,
             "score": score,
             "action": action,
+            "regime": regime,  # v1.0 fix: propagate regime to each decision for paper_bot
             "size_pct": size,
             "entry_low": entry_low,
             "entry_high": entry_high,
@@ -1454,6 +1525,7 @@ def generate_fusion():
             "tp1": tp1,
             "tp2": tp2,
             "sources": sources,
+            "momentum_score": short_term_score,  # v1.0 fix: expose for paper_bot DB
             "onchain_data_thin": False,
             "market_structure": {"1h": ms_1h, "15m": ms_15m},
             "levels": ({k: levels[k] for k in ("rr", "atr_pct", "ema21_1h", "supports", "resistances")} if levels else None),
@@ -1488,7 +1560,7 @@ def generate_fusion():
             f"Weekday sizing ×1.0"
             f"{' (weekend ×0.7 applied)' if datetime.now().weekday() in (5, 6) else ''}."
         ),
-        "weights": {"onchain": 0.40, "ta": 0.30, "news": 0.20, "sentiment": 0.10},
+        "weights": {"onchain": 0.40, "ta": 0.40, "sentiment": 0.15, "news": 0.05},
         "data_provenance": "Auto-fetched: Binance prices/klines, alternative.me F&G, CoinGecko BTC.D, Farside ETF flows. NO Claude credits used.",
         "decisions": decisions,
         "aggregate_long_risk_pct": round(aggregate_risk, 1),

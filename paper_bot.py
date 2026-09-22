@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Paper Trading Bot v0.9
+TVC Fusion Paper Trading Bot v1.0
+
+v1.0 (2026-09-22) — EFFECTIVENESS UPGRADE
+  - Regime-aware score gate: TRENDING_UP→55, RANGING→58, TRENDING_DOWN→62
+  - MAX_NEW_TRADES_PER_DAY: 3→5 (more opportunities)
+  - Fib threshold RANGING: 0.70→0.80 (less restrictive)
+  - REOPEN_COOLDOWN_MINUTES: 120→90 (faster re-entry)
+  - Tiered sizing extended: 55-60→5% micro positions
+  - STATS_SINCE reset to 2026-09-22 (clean slate)
+  - Works with auto_fusion v1.0 wider score spread
 
 v0.9 (2026-09-22) — REGIME-AWARE FIBONACCI + ZOMBIE CLEANUP
   - Fibonacci pullback threshold depends on market regime:
@@ -81,6 +90,7 @@ EXCHANGE_ID = os.environ.get("TVC_EXCHANGE", "bybit")
 # v0.8 — TIERED SIZING by fusion score (higher conviction = bigger position)
 # Replaces flat 3% cap. Shorts stay conservative (unlimited upside risk).
 TIERED_LONG_SIZES = {        # (min_score, max_score): size_pct
+    (55, 60): 5.0,           # v1.0: micro position (trending regime only)
     (60, 65): 8.0,           # low conviction — probe position
     (65, 75): 20.0,          # normal conviction
     (75, 85): 40.0,          # high conviction
@@ -111,11 +121,21 @@ SHORT_SIZE_CAP_PCT = 0.5    # max % capital per SHORT trade (unlimited upside ri
 # dla shortów, MIN_HOLD flip protection.
 # Zachowane: trailing SL, reopen cooldown, daily limit, Telegram, equity.
 # ═══════════════════════════════════════════════════════════════════════════
-MIN_LONG_SCORE = 60            # Reguła #1: minimalny score dla LONG (v0.8: back to 60, tiered sizing handles risk)
-MAX_SHORT_SCORE = 40           # Reguła #1: SHORT gdy score jest bearish (v0.6: 35→40, symmetric)
+MIN_LONG_SCORE = 58            # Reguła #1: bazowy minimalny score dla LONG (v1.0: 60→58)
+MAX_SHORT_SCORE = 42           # Reguła #1: SHORT gdy score jest bearish (v1.0: 40→42, symmetric)
 MIN_RR_AT_ENTRY = 1.0          # Reguła #1b: min R:R w momencie wejścia (ochrona przed stale TP)
-REOPEN_COOLDOWN_MINUTES = 120  # anty-overtrading: po zamknięciu tickera 2h przerwy
-MAX_NEW_TRADES_PER_DAY = 3     # anty-overtrading: max 3 nowe trade'y dziennie
+REOPEN_COOLDOWN_MINUTES = 90   # anty-overtrading: po zamknięciu tickera 90min przerwy (v1.0: 120→90)
+MAX_NEW_TRADES_PER_DAY = 5     # anty-overtrading: max 5 nowych trade'ów dziennie (v1.0: 3→5)
+
+# v1.0 — Regime-aware score thresholds: w TRENDING_UP łatwiej otworzyć LONG,
+# w TRENDING_DOWN trudniej (kontrt-trendowe pozycje wymagają wyższej konwikcji)
+MIN_LONG_SCORE_BY_REGIME = {
+    "TRENDING_UP":          55,
+    "TRENDING_UP_VOLATILE": 55,
+    "RANGING":              58,
+    "TRENDING_DOWN":        62,
+    "TRENDING_DOWN_VOLATILE": 65,
+}
 MAX_HOLD_DAYS = 5              # v0.9 — auto-close zombie pozycji po 5 dniach
 
 # v0.9 — Fibonacci pullback threshold zależny od reżimu rynku.
@@ -125,13 +145,14 @@ MAX_HOLD_DAYS = 5              # v0.9 — auto-close zombie pozycji po 5 dniach
 FIB_THRESHOLD_BY_REGIME = {
     "TRENDING_UP":          0.90,
     "TRENDING_UP_VOLATILE": 0.90,
-    "RANGING":              0.70,
+    "RANGING":              0.80,   # v1.0: 0.70→0.80 (mniej restrykcyjny w konsolidacji)
     "TRENDING_DOWN":        0.50,
+    "TRENDING_DOWN_VOLATILE": 0.50,
 }
-FIB_THRESHOLD_DEFAULT = 0.70  # fallback dla nieznanych reżimów
+FIB_THRESHOLD_DEFAULT = 0.80  # v1.0: fallback 0.70→0.80
 
 # STATYSTYKI — liczone od wdrożenia bramek v0.3 (trade'y v0.2 = archiwum).
-STATS_SINCE = "2026-09-02T19:00:00"
+STATS_SINCE = "2026-09-22T00:00:00"  # v1.0 — czysty start (stare trade'y = archiwum)
 STATS_WHERE = "status='closed' AND opened_at >= ? AND COALESCE(excluded,0)=0"
 
 # --- ccxt lazy import (bot still runs `init` without it) ---------------
@@ -464,7 +485,11 @@ def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime
         rr1 = f"1:{reward1/risk:.1f}" if risk > 0 else "—"
         rr2 = f"1:{reward2/risk:.1f}" if risk > 0 else "—"
         # Regime context
-        regime_label = {"trending": "Trending", "range": "Range", "volatile": "Volatile"}.get(regime, regime.capitalize() if regime else "—")
+        regime_label = {
+            "TRENDING_UP": "Trending Up ▲", "TRENDING_UP_VOLATILE": "Trending Up ⚡",
+            "TRENDING_DOWN": "Trending Down ▼", "TRENDING_DOWN_VOLATILE": "Trending Down ⚡",
+            "RANGING": "Range-bound ↔", "CRASH": "Crash ⛔",
+        }.get(regime, regime or "—")
         pro_lines = [
             f"📈 <b>NEW TRADE — {ticker}</b>",
             "",
@@ -650,9 +675,12 @@ def _send_free_delayed_signal(sig):
 
     # "Why now?" context from regime + score
     regime_ctx = {
-        "trending": "Market is trending — momentum confirms the setup.",
-        "range": "Range-bound market — mean reversion play near key level.",
-        "volatile": "High volatility regime — wider stops, bigger potential.",
+        "TRENDING_UP": "Market is trending up — momentum confirms the setup.",
+        "TRENDING_UP_VOLATILE": "Strong uptrend with volatility — momentum confirms.",
+        "RANGING": "Range-bound market — mean reversion play near key level.",
+        "TRENDING_DOWN": "Downtrend regime — counter-trend or short setup.",
+        "TRENDING_DOWN_VOLATILE": "High volatility downtrend — wider stops, bigger potential.",
+        "CRASH": "Crash regime — extreme caution, defensive positioning.",
     }
     why_now = regime_ctx.get(regime, f"Multi-layer signal (score {score}).")
 
@@ -880,10 +908,14 @@ def cmd_open(args):
         ticker = dec["ticker"]
         score = int(dec.get("score") or 0)
 
-        # v0.5 — REGUŁA #1: SCORE GATE (jeden próg, bez rozróżnienia regime)
+        # v1.0 — REGUŁA #1: REGIME-AWARE SCORE GATE
+        # W TRENDING_UP łatwiej otworzyć LONG (55), w TRENDING_DOWN trudniej (62+)
+        # v1.0 fix: read regime from decision dict first, fall back to top-level data.get("regime")
+        regime = dec.get("regime") or data.get("regime") or "RANGING"
+        min_long = MIN_LONG_SCORE_BY_REGIME.get(regime, MIN_LONG_SCORE)
         if direction == "long":
-            if score < MIN_LONG_SCORE:
-                print(f"[skip] {ticker} LONG score {score} < {MIN_LONG_SCORE} — za niska konwikcja")
+            if score < min_long:
+                print(f"[skip] {ticker} LONG score {score} < {min_long} (regime={regime}) — za niska konwikcja")
                 skipped += 1
                 continue
         else:
