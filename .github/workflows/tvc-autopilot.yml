@@ -92,6 +92,28 @@ jobs:
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 paper_bot.py refresh
 
+      # v1.0 — Content Engine: generuje posty na X + LinkedIn + YouTube z danych bota.
+      # Odpala się po paper_bot refresh, żeby mieć świeże dane o zamkniętych trade'ach.
+      # Wynik: content_queue.json + opcjonalny Telegram digest do osobistego czatu.
+      - name: Content Engine (generuj posty z danych bota)
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
+        run: python3 content_engine.py || true
+
+      # v1.0 — Weekly Recap: niedzielna kompilacja (X thread + LinkedIn newsletter + YT script).
+      # Odpala się raz w tygodniu w niedzielę 18:00-18:14 UTC (20:00-20:14 CEST).
+      - name: Weekly Recap (niedzielna kompilacja, ~20:00 CEST)
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
+        run: |
+          DOW=$(date -u +%u)
+          HOUR=$(date -u +%H)
+          MIN=$(date -u +%M)
+          if [ "$DOW" = "7" ] && [ "$HOUR" = "18" ] && [ "$MIN" -lt "15" ]; then
+            echo "=== Weekly Recap (Sunday 18:00-18:14 UTC) ==="
+            python3 weekly_recap.py
+          else
+            echo "Not Sunday recap window ($DOW $HOUR:$MIN UTC) — skip."
+          fi
+
       # v0.9.3 — EOD check przeniesiony z Cowork scheduled task (wymagał Maca)
       # do GitHub Actions. Odpala się raz dziennie w oknie 20:00-20:14 UTC
       # (= 22:00-22:14 CEST). Poza tym oknem krok jest no-opem.
@@ -116,7 +138,7 @@ jobs:
           git config user.name "tvc-autopilot"
           git config user.email "autopilot@tvcfusion.local"
           git add fusion_*.json paper_trades.db
-          for f in crypto_picks.json layers_cache.json pump_radar.json pump_radar_alerts.json correlation_data.json market_predictions.json; do [ -e "$f" ] && git add "$f"; done; true
+          for f in crypto_picks.json layers_cache.json pump_radar.json pump_radar_alerts.json correlation_data.json market_predictions.json content_queue.json weekly_recap.json; do [ -e "$f" ] && git add "$f"; done; true
           if git diff --cached --quiet; then
             echo "Brak zmian do commitu."
             exit 0
@@ -143,7 +165,7 @@ jobs:
               git checkout --theirs -- paper_trades.db 2>/dev/null || true
               git checkout --theirs -- crypto_picks.json 2>/dev/null || true
               git checkout --theirs -- layers_cache.json pump_radar.json pump_radar_alerts.json 2>/dev/null || true
-              git checkout --theirs -- correlation_data.json market_predictions.json 2>/dev/null || true
+              git checkout --theirs -- correlation_data.json market_predictions.json content_queue.json weekly_recap.json 2>/dev/null || true
               git add -A
               if git rebase --continue; then
                 echo "Konflikt rozwiązany automatycznie."
