@@ -291,58 +291,58 @@ def build_pick(cat, r, a, mcap, score):
     f = r["funding"]
     flags = []
     if r["turnover"] < 20e6:
-        flags.append(f"płytka płynność — obrót 24h ${r['turnover']/1e6:.0f}M")
+        flags.append(f"thin liquidity — 24h volume ${r['turnover']/1e6:.0f}M")
     if f >= 0.05:
         flags.append(f"crowded long, funding {f:+.3f}%/8h")
     if f <= -0.03:
-        flags.append(f"funding ujemny {f:+.3f}%/8h (shorty płacą)")
+        flags.append(f"negative funding {f:+.3f}%/8h (shorts paying)")
     if r["r24"] > 15:
-        flags.append(f"+{r['r24']:.0f}% w 24h — pościg, czekaj na retest")
+        flags.append(f"+{r['r24']:.0f}% in 24h — chasing, wait for retest")
     if datetime.now(timezone.utc).weekday() >= 5:
-        flags.append("weekend — cienka książka")
+        flags.append("weekend — thin order book")
 
     if cat == "Momentum":
         direction = "long"
-        thesis = (f"7d {r['r7']:+.1f}%, 24h {r['r24']:+.1f}%, cena nad EMA20{' > EMA50' if a and a['ema50'] else ''}"
-                  f"{', wolumen ' + format(a['vol_ratio'], '.1f') + '× śr. 30d' if a and a['vol_ratio'] else ''}"
-                  f"{', wyższe szczyty tygodniowe' if a and a['hh'] else ''}. Trend z paliwem — wejście na cofnięciu do EMA20, nie na świecy.")
+        thesis = (f"7d {r['r7']:+.1f}%, 24h {r['r24']:+.1f}%, price above EMA20{' > EMA50' if a and a['ema50'] else ''}"
+                  f"{', volume ' + format(a['vol_ratio'], '.1f') + '× avg 30d' if a and a['vol_ratio'] else ''}"
+                  f"{', higher weekly highs' if a and a['hh'] else ''}. Trend with fuel — enter on pullback to EMA20, not on the candle.")
         lo5 = a["lo5"] if a else lo
         support, resistance, inval = (a["ema20"] if a else lo), hi, lo5 * 0.98
     elif cat == "Derivatives":
         lo5 = a["lo5"] if a else lo
         if f <= -0.03:
             direction = "long"
-            thesis = (f"Funding {f:+.3f}%/8h — shorty płacą za utrzymanie pozycji, a cena się trzyma ({r['r24']:+.1f}% 24h). "
-                      f"Klasyczny układ pod short squeeze: wybicie nad {fmtp(hi)} zmusza shorty do zamknięcia.")
+            thesis = (f"Funding {f:+.3f}%/8h — shorts paying to hold, price holding ({r['r24']:+.1f}% 24h). "
+                      f"Classic short squeeze setup: breakout above {fmtp(hi)} forces shorts to cover.")
             support, resistance, inval = lo5, hi, lo5 * 0.97
         else:
             direction = "short" if r["r24"] < 0 else "watch"
-            thesis = (f"Funding {f:+.3f}%/8h — longi przepłacają, a cena nie idzie ({r['r24']:+.1f}% 24h). "
-                      f"Crowded long = paliwo na flush; utrata {fmtp(lo)} uruchamia likwidacje.")
+            thesis = (f"Funding {f:+.3f}%/8h — longs overpaying, price not moving ({r['r24']:+.1f}% 24h). "
+                      f"Crowded long = fuel for a flush; losing {fmtp(lo)} triggers liquidations.")
             support, resistance, inval = lo, hi, hi * 1.03
     elif cat == "Squeeze setup":
         direction = "long"
         oi_ratio = r["oi"] * r.get("contract_size", 1) * px / r["turnover"] if r["turnover"] else 0
         compress = a and a["range20"] and a["range5"] <= 0.45 * a["range20"]
         sfp = a and a["sfp_bull"]
-        thesis = (f"Paliwo na squeeze: funding {f:+.3f}%/8h (shorty płacą), OI = {oi_ratio:.1f}× dziennego obrotu (dużo pozycji trzymanych)"
-                  f"{', zakres 5d ' + format(a['range5'], '.1f') + '% vs 20d ' + format(a['range20'], '.1f') + '% — sprężyna' if compress else ''}"
-                  f"{', SFP bull na dołku ' + fmtp(sfp['low']).__str__() + ' → odzyskane ' + fmtp(sfp['level']).__str__() if sfp else ''}. "
-                  f"To potencjał, nie sygnał: wejście dopiero na wybiciu nad {fmtp(hi)} lub CONFLUENCE_BUY w terminalu.")
+        thesis = (f"Squeeze fuel: funding {f:+.3f}%/8h (shorts paying), OI = {oi_ratio:.1f}× daily volume (heavy positioning)"
+                  f"{', 5d range ' + format(a['range5'], '.1f') + '% vs 20d ' + format(a['range20'], '.1f') + '% — coiled spring' if compress else ''}"
+                  f"{', SFP bull at low ' + fmtp(sfp['low']).__str__() + ' → reclaimed ' + fmtp(sfp['level']).__str__() if sfp else ''}. "
+                  f"Potential, not a trigger: enter only on breakout above {fmtp(hi)} or CONFLUENCE_BUY in terminal.")
         lo5 = a["lo5"] if a else lo
         support, resistance, inval = (sfp["low"] if sfp else lo5), hi, (sfp["low"] * 0.98 if sfp else lo5 * 0.97)
-        flags.append("setup, nie trigger — squeeze może nie nastąpić; stop pod dołkiem SFP/5d")
+        flags.append("setup, not trigger — squeeze may not materialize; stop below SFP/5d low")
     elif cat == "New listing":
         age = (time.time() - r["created"]) / 86400
         direction = "watch" if r["r24"] < 0 else "long"
-        thesis = (f"Listing perp na MEXC {age:.0f} dni temu, obrót 24h ${r['turnover']/1e6:.0f}M, {r['r24']:+.1f}% 24h. "
-                  f"Nowe listingi mają największą zmienność w pierwszych 2 tygodniach — grać małym rozmiarem, tylko z jasnym poziomem.")
+        thesis = (f"Perp listed on MEXC {age:.0f} days ago, 24h volume ${r['turnover']/1e6:.0f}M, {r['r24']:+.1f}% 24h. "
+                  f"New listings have peak volatility in the first 2 weeks — trade small size only, with clear levels.")
         support, resistance, inval = r["low24"], r["high24"], r["low24"] * 0.95
-        flags.append("nowy listing — brak historii, ekstremalna zmienność")
+        flags.append("new listing — no history, extreme volatility")
     else:  # Mean reversion
         direction = "long"
-        thesis = (f"RSI14 {a['rsi']:.0f} (wyprzedany), 7d {r['r7']:+.1f}%, {a['dist_lo20']:.1f}% nad 20-dniowym dołkiem, mcap ${mcap/1e9:.1f}B. "
-                  f"Quality large-cap na wsparciu{' — pierwsza zielona świeca' if r['r24'] > 0 else ' — jeszcze bez potwierdzenia'}. Cel: powrót do EMA20 {fmtp(a['ema20'])}.")
+        thesis = (f"RSI14 {a['rsi']:.0f} (oversold), 7d {r['r7']:+.1f}%, {a['dist_lo20']:.1f}% above 20-day low, mcap ${mcap/1e9:.1f}B. "
+                  f"Quality large-cap at support{' — first green candle' if r['r24'] > 0 else ' — no confirmation yet'}. Target: reversion to EMA20 {fmtp(a['ema20'])}.")
         support, resistance, inval = lo, (a["ema20"] if a else hi), lo * 0.97
 
     return {
