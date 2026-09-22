@@ -391,11 +391,11 @@ def _telegram_send(text: str, chat_id: str | None = None) -> bool:
 
 
 def _telegram_broadcast(pro_text: str, free_text: str | None = None):
-    """Wyślij na 3 kanały: osobisty + PRO (pełny), FREE (stripped). Zwraca True jeśli osobisty OK."""
+    """Wyślij na 3 kanały: osobisty + PRO (pełny) + FREE (jeśli podany)."""
     ok = _telegram_send(pro_text)           # osobisty chat — pełna wersja
     _telegram_send(pro_text, TG_PRO_CHANNEL)  # PRO kanał — pełna wersja
     if free_text:
-        _telegram_send(free_text, TG_FREE_CHANNEL)  # FREE kanał — stripped
+        _telegram_send(free_text, TG_FREE_CHANNEL)  # FREE kanał — ograniczona wersja
     return ok
 
 
@@ -435,41 +435,64 @@ def _fmt_px(v) -> str:
 
 
 def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime, override=False):
-    """Telegram: otwarcie pozycji na 3 kanały. PRO = pełny, FREE = bez cen."""
+    """Telegram: otwarcie pozycji. PRO = natychmiast (pełny). FREE = kolejkowany z 15-min opóźnieniem."""
     try:
-        arrow = "🟢 LONG" if direction == "long" else "🔴 SHORT"
-        pro_text = (
-            f"<b>{arrow} {ticker}</b> otwarty @ {_fmt_px(entry)}\n"
-            f"Size ${size_usd:.0f} · score {score} · {regime}{' · ⚡CHoCH' if override else ''}\n"
-            f"SL {_fmt_px(sl)} · TP1 {_fmt_px(tp1)} · TP2 {_fmt_px(tp2)}"
-        )
-        free_text = (
-            f"<b>{arrow} {ticker}</b>\n"
-            f"Sygnał wygenerowany automatycznie przez TVC Fusion Bot.\n"
-            f"<i>Pełne dane (entry, SL, TP, score) → kanał PRO</i>"
-        )
-        _telegram_broadcast(pro_text, free_text)
+        dir_label = "🟢 LONG" if direction == "long" else "🔴 SHORT"
+        # R:R ratio
+        risk = abs(entry - sl) if sl else 0
+        reward1 = abs(tp1 - entry) if tp1 else 0
+        reward2 = abs(tp2 - entry) if tp2 else 0
+        rr1 = f"1:{reward1/risk:.1f}" if risk > 0 else "—"
+        rr2 = f"1:{reward2/risk:.1f}" if risk > 0 else "—"
+        # Regime context
+        regime_label = {"trending": "Trending", "range": "Range", "volatile": "Volatile"}.get(regime, regime.capitalize() if regime else "—")
+        pro_lines = [
+            f"📈 <b>NEW TRADE — {ticker}</b>",
+            "",
+            f"<b>{dir_label}</b> @ <code>{_fmt_px(entry)}</code>",
+            f"Size: <b>${size_usd:.0f}</b> · Score: <b>{score}</b>",
+            "",
+            f"SL: <code>{_fmt_px(sl)}</code>",
+            f"TP1: <code>{_fmt_px(tp1)}</code>  (R:R {rr1})",
+            f"TP2: <code>{_fmt_px(tp2)}</code>  (R:R {rr2})",
+            "",
+            f"Regime: {regime_label}{' · ⚡ CHoCH override' if override else ''}",
+            f"✅ Smart Money confirmed (≥2/3 layers aligned)",
+        ]
+        pro_text = "\n".join(pro_lines)
+        _telegram_broadcast(pro_text)  # osobisty + PRO — natychmiast
+
+        # FREE: kolejkuj z 15-min opóźnieniem (pełne dane, max 2/dzień)
+        try:
+            conn = db()
+            _queue_free_signal(conn, {
+                "ticker": ticker, "direction": direction,
+                "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2,
+                "score": score, "regime": regime,
+            })
+            conn.close()
+        except Exception as qe:
+            print(f"[telegram] queue_free failed: {qe}")
     except Exception as e:
         print(f"[telegram] notify_open failed: {e}")
 
 
 def _notify_close(ticker, direction, entry, exit_price, pnl_pct, pnl_usd, reason):
-    """Telegram: zamknięcie pozycji na 3 kanały. PRO = pełny, FREE = wynik bez cen."""
+    """Telegram: zamknięcie pozycji — tylko osobisty + PRO (FREE dostaje wyłącznie sygnały open)."""
     try:
-        icon = {"hit_tp1": "🎯 TP1", "hit_tp2": "🎯🎯 TP2", "hit_sl": "🛑 SL",
-                "hit_trailing_sl": "📈🛑 Trailing SL", "flip_choch": "🔁 Flip", "sl_rescan_bug": "🐛 SL re-scan",
-                "manual_close": "✋ Manual"}.get(reason, reason)
+        exit_label = {"hit_tp1": "🎯 TP1 Hit", "hit_tp2": "🎯🎯 TP2 Hit", "hit_sl": "🛑 Stop Loss",
+                      "hit_trailing_sl": "📈 Trailing Stop", "flip_choch": "🔁 Flip Exit", "sl_rescan_bug": "🐛 SL re-scan",
+                      "manual_close": "✋ Manual Close"}.get(reason, reason)
         res = "✅" if pnl_usd > 0 else "❌" if pnl_usd < 0 else "➖"
-        pro_text = (
-            f"{res} <b>{ticker} {direction.upper()}</b> zamknięty — {icon}\n"
-            f"{_fmt_px(entry)} → {_fmt_px(exit_price)} · <b>{pnl_pct:+.2f}%</b> (${pnl_usd:+.2f})"
-        )
-        free_text = (
-            f"{res} <b>{ticker} {direction.upper()}</b> zamknięty — {icon}\n"
-            f"Wynik: <b>{pnl_pct:+.2f}%</b>\n"
-            f"<i>Ceny entry/exit → kanał PRO</i>"
-        )
-        _telegram_broadcast(pro_text, free_text)
+        pro_lines = [
+            f"{res} <b>CLOSED — {ticker} {direction.upper()}</b>",
+            "",
+            f"Exit reason: <b>{exit_label}</b>",
+            f"Entry: <code>{_fmt_px(entry)}</code> → Exit: <code>{_fmt_px(exit_price)}</code>",
+            f"P&L: <b>{pnl_pct:+.2f}%</b> (${pnl_usd:+.2f})",
+        ]
+        pro_text = "\n".join(pro_lines)
+        _telegram_broadcast(pro_text)  # osobisty + PRO; FREE nie dostaje close'ów
     except Exception as e:
         print(f"[telegram] notify_close failed: {e}")
 
@@ -515,6 +538,128 @@ def _meta_set(conn, key, value):
     conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
     conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, str(value)))
     conn.commit()
+
+
+# --- FREE channel: opóźnione sygnały (15 min) z pełnymi danymi, max 2/dzień ---
+
+FREE_DELAY_SECONDS = 15 * 60   # 15 minut opóźnienia vs PRO
+FREE_MAX_SIGNALS_PER_DAY = 2   # max 2 trade signals dziennie na FREE
+
+
+def _queue_free_signal(conn, signal_data: dict):
+    """Dodaj sygnał do kolejki FREE (meta key = free_pending). Wysyłka po 15 min."""
+    raw = _meta_get(conn, "free_pending", "[]")
+    try:
+        queue = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        queue = []
+    signal_data["queued_at"] = datetime.now(timezone.utc).isoformat()
+    queue.append(signal_data)
+    _meta_set(conn, "free_pending", json.dumps(queue))
+    print(f"[free-queue] dodano sygnał {signal_data.get('ticker')} — w kolejce: {len(queue)}")
+
+
+def _process_free_queue(conn):
+    """Sprawdź kolejkę FREE i wyślij sygnały starsze niż 15 min (max 2/dzień)."""
+    raw = _meta_get(conn, "free_pending", "[]")
+    try:
+        queue = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        queue = []
+    if not queue:
+        return
+
+    now = datetime.now(timezone.utc)
+    today = now.strftime("%Y-%m-%d")
+
+    # Licznik wysłanych dziś
+    sent_date = _meta_get(conn, "free_sent_date", "")
+    sent_count = int(_meta_get(conn, "free_sent_count", "0")) if sent_date == today else 0
+
+    remaining = []
+    for sig in queue:
+        queued_at_str = sig.get("queued_at", "")
+        try:
+            queued_at = datetime.fromisoformat(queued_at_str)
+            if queued_at.tzinfo is None:
+                queued_at = queued_at.replace(tzinfo=timezone.utc)
+        except (ValueError, TypeError):
+            # Nie da się sparsować — wyrzuć z kolejki
+            print(f"[free-queue] pominięto sygnał z nieprawidłowym queued_at: {queued_at_str}")
+            continue
+
+        elapsed = (now - queued_at).total_seconds()
+        if elapsed < FREE_DELAY_SECONDS:
+            # Za wcześnie — zostaje w kolejce
+            remaining.append(sig)
+            continue
+
+        if sent_count >= FREE_MAX_SIGNALS_PER_DAY:
+            # Limit dzienny osiągnięty — wyrzuć z kolejki (nie wysyłaj, nie kumuluj)
+            print(f"[free-queue] limit {FREE_MAX_SIGNALS_PER_DAY}/dzień osiągnięty — pomijam {sig.get('ticker')}")
+            continue
+
+        # Wyślij na FREE kanał z pełnymi danymi + notą o opóźnieniu
+        _send_free_delayed_signal(sig)
+        sent_count += 1
+        _meta_set(conn, "free_sent_date", today)
+        _meta_set(conn, "free_sent_count", str(sent_count))
+
+    # Zaktualizuj kolejkę (zostają tylko te, które jeszcze nie minęły 15 min)
+    _meta_set(conn, "free_pending", json.dumps(remaining))
+    if queue:
+        print(f"[free-queue] przetworzone: {len(queue) - len(remaining)}, pozostało: {len(remaining)}, wysłane dziś: {sent_count}")
+
+
+def _send_free_delayed_signal(sig):
+    """Send delayed signal to FREE channel — Learn2Trade-inspired format with R:R + context."""
+    ticker = sig.get("ticker", "???")
+    direction = sig.get("direction", "long")
+    entry = sig.get("entry", 0)
+    sl = sig.get("sl", 0)
+    tp1 = sig.get("tp1", 0)
+    tp2 = sig.get("tp2", 0)
+    score = sig.get("score", 0)
+    regime = sig.get("regime", "")
+
+    dir_label = "🟢 LONG" if direction == "long" else "🔴 SHORT"
+
+    # Compute R:R ratio (risk = |entry - sl|, reward = |tp1 - entry|)
+    risk = abs(entry - sl) if sl else 0
+    reward = abs(tp1 - entry) if tp1 else 0
+    rr = f"{reward / risk:.1f}" if risk > 0 else "—"
+
+    # "Why now?" context from regime + score
+    regime_ctx = {
+        "trending": "Market is trending — momentum confirms the setup.",
+        "range": "Range-bound market — mean reversion play near key level.",
+        "volatile": "High volatility regime — wider stops, bigger potential.",
+    }
+    why_now = regime_ctx.get(regime, f"Multi-layer signal (score {score}).")
+
+    lines = [
+        f"📈 <b>Trade Signal — {ticker}</b>",
+        "",
+        f"<b>{dir_label}</b>",
+        f"Entry: <code>{_fmt_px(entry)}</code>",
+        f"SL: <code>{_fmt_px(sl)}</code>",
+        f"TP1: <code>{_fmt_px(tp1)}</code> · TP2: <code>{_fmt_px(tp2)}</code>",
+        f"R:R → <b>1:{rr}</b>",
+        "",
+        f"<b>Why now?</b>",
+        f"{why_now}",
+        "",
+        f"⏱ <i>15 min delayed — PRO gets signals instantly</i>",
+        f"👉 <b>@TVCAlertsBot</b> — $29/mo, cancel anytime",
+        "",
+        "<i>Not financial advice. DYOR.</i>",
+    ]
+    free_text = "\n".join(lines)
+    try:
+        _telegram_send(free_text, TG_FREE_CHANNEL)
+        print(f"[free-queue] ✅ sent to FREE: {ticker} {direction}")
+    except Exception as e:
+        print(f"[free-queue] ❌ send failed: {e}")
 
 
 DAILY_DIGEST_HOUR_UTC = 6   # 08:00 CEST / 07:00 CET
@@ -2010,13 +2155,20 @@ def cmd_close(args):
 
 
 def cmd_refresh(args):
-    """Szybki refresh — check + upload (dla auto-loop lub manual)."""
+    """Szybki refresh — check + upload + FREE queue (dla auto-loop lub manual)."""
     db_init()
     print("[refresh] check pozycji...")
     try:
         cmd_check(args)
     except Exception as e:
         print(f"[refresh] check failed: {e}")
+    # Przetwórz kolejkę opóźnionych sygnałów FREE (15 min delay, max 2/dzień)
+    try:
+        conn = db()
+        _process_free_queue(conn)
+        conn.close()
+    except Exception as e:
+        print(f"[refresh] free queue failed: {e}")
     print("[refresh] upload do Gist...")
     try:
         cmd_upload(args)

@@ -500,15 +500,9 @@ def send_telegram(new_alerts, st):
         lines.append(f"\n<i>Track record: {st['all']['n']} alertów · hit 1h {st['all']['hit_1h']}% · hit 4h {st['all']['hit_4h']}%</i>")
     lines.append("<i>To nie jest sygnał wejścia. Sprawdź strukturę w terminalu → Pump Radar.</i>")
     pro_text = "\n".join(lines)
-    # FREE: tylko tickery, bez cen/score/parts
-    free_lines = ["🚀 <b>Pump Radar — HIGH alert</b>"]
-    for a in highs[:5]:
-        free_lines.append(f"<b>{a['ticker']}</b> — wykryto sygnał pump")
-    free_lines.append("<i>Pełne dane (score, ceny, składniki) → kanał PRO</i>")
-    free_text = "\n".join(free_lines)
+    # FREE kanał: wyłączony — FREE tier dostaje tylko Crypto Picks (auto_picks.py)
     _tg_send(pro_text, chat)           # osobisty
     _tg_send(pro_text, TG_PRO_CHANNEL) # PRO kanał
-    _tg_send(free_text, TG_FREE_CHANNEL) # FREE kanał
 
 
 # ─── Main ───────────────────────────────────────────────────────────────────

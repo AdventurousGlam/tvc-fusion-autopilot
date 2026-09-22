@@ -482,25 +482,65 @@ def _send_telegram(out):
         return
     icon = {"Momentum": "🚀", "Derivatives": "📊", "Squeeze setup": "🧨", "New listing": "🆕", "Mean reversion": "↩️"}
     arrow = {"long": "▲", "short": "▼", "watch": "👀"}
-    # PRO + personal: pełna wersja z S/R levels
-    lines = [f"🎯 <b>Crypto Picks {out['date']}</b>", out["market_context"], ""]
-    for p in out["picks"]:
-        lines.append(f"{icon.get(p['category'], '📌')} <b>{p['ticker']}</b> {arrow.get(p['direction'], '')} {p['direction']} · {p['change_24h_pct']:+.1f}% 24h · S {p['support']} / R {p['resistance']}")
+    # PRO + personal: full version with S/R levels + thesis
+    # Market context — translate key Polish phrases for EN channel
+    mctx = out["market_context"]
+    mctx = mctx.replace("szerokość rynku:", "Market breadth:").replace("płynnych perpów na plusie 24h", "liquid perps green 24h").replace("Nastrój:", "Sentiment:")
+    mctx = mctx.replace("mieszany", "mixed")
+
+    lines = [f"🎯 <b>Crypto Picks — {out['date']}</b>", f"<i>{mctx}</i>", ""]
+    for i, p in enumerate(out["picks"]):
+        dir_label = "🟢 LONG" if p["direction"] == "long" else ("🔴 SHORT" if p["direction"] == "short" else "👀 WATCH")
+        lines.append(f"{icon.get(p['category'], '📌')} <b>{p['ticker']}</b>  {dir_label}  ({p['change_24h_pct']:+.1f}% 24h)")
+        lines.append(f"   S: <code>{p['support']}</code> · R: <code>{p['resistance']}</code>")
         if p.get("risk_flag"):
-            lines.append(f"   ⚠ {p['risk_flag']}")
+            lines.append(f"   ⚠️ {p['risk_flag']}")
+        if i < len(out["picks"]) - 1:
+            lines.append("")
     if out["radar"]:
-        lines.append(""); lines.append("📡 " + " · ".join(f"{r['ticker']}" for r in out["radar"]))
-    lines.append(""); lines.append("<i>Szczegóły w terminalu → panel Crypto Picks</i>")
+        lines.append(""); lines.append("📡 <b>Pump Radar:</b> " + " · ".join(f"{r['ticker']}" for r in out["radar"]))
+    lines.append(""); lines.append("<i>Full analysis in TVC Fusion Terminal</i>")
     pro_text = "\n".join(lines)
-    # FREE: tickery + kierunek, bez S/R levels
-    free_lines = [f"🎯 <b>Crypto Picks {out['date']}</b>", out["market_context"], ""]
-    for p in out["picks"]:
-        free_lines.append(f"{icon.get(p['category'], '📌')} <b>{p['ticker']}</b> {arrow.get(p['direction'], '')} {p['direction']}")
-    free_lines.append(""); free_lines.append("<i>Poziomy S/R i risk flags → kanał PRO</i>")
-    free_text = "\n".join(free_lines)
+    # FREE: 1 najlepszy pick — Learn2Trade-style z kontekstem "Why this pick?"
+    top = out["picks"][0] if out["picks"] else None
+    if top:
+        cat_reason = {
+            "Momentum": "Strong momentum breakout — price above key moving averages with rising volume.",
+            "Derivatives": "Derivatives signal — extreme funding rate creates squeeze potential.",
+            "Squeeze setup": "Short squeeze setup — negative funding + rising OI = fuel for a move up.",
+            "New listing": "New listing with strong early traction — high volume relative to market cap.",
+            "Mean reversion": "Oversold bounce play — RSI in deep oversold territory near key support.",
+        }
+        dir_label = "🟢 LONG" if top["direction"] == "long" else ("🔴 SHORT" if top["direction"] == "short" else "👀 WATCH")
+        chg = top["change_24h_pct"]
+        extra_picks = len(out["picks"]) - 1
+
+        free_lines = [
+            f"🎯 <b>Crypto Pick of the Day</b>",
+            f"<i>{out['date']}</i>",
+            "",
+            f"<b>{top['ticker']}</b>  {dir_label}  ({chg:+.1f}% 24h)",
+            "",
+            f"<b>Why this pick?</b>",
+            f"{cat_reason.get(top['category'], 'Algorithmic signal based on multi-factor scoring.')}",
+        ]
+        if top.get("risk_flag"):
+            free_lines.append(f"⚠️ <i>{top['risk_flag']}</i>")
+        free_lines.append("")
+        if extra_picks > 0:
+            free_lines.append(f"📊 <i>{extra_picks} more picks + S/R levels + risk flags in PRO</i>")
+        else:
+            free_lines.append(f"📊 <i>Support/resistance levels + risk flags in PRO</i>")
+        free_lines.append(f"👉 <b>@TVCAlertsBot</b> — $29/mo, cancel anytime")
+        free_lines.append("")
+        free_lines.append("<i>Not financial advice. DYOR.</i>")
+        free_text = "\n".join(free_lines)
+    else:
+        free_text = None
     _tg_send(pro_text, chat)              # osobisty
     _tg_send(pro_text, TG_PRO_CHANNEL)    # PRO kanał
-    _tg_send(free_text, TG_FREE_CHANNEL)  # FREE kanał
+    if free_text:
+        _tg_send(free_text, TG_FREE_CHANNEL)  # FREE kanał — 1 pick
 
 
 if __name__ == "__main__":
