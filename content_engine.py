@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Content Engine v1.0 — auto-generates social media posts from bot data.
+TVC Fusion Content Engine v2.0 — auto-generates social media posts from bot data
++ KOL personal brand + educational content.
+
+THREE CONTENT LAYERS (naturally interleaved):
+  Layer 1 — DATA: trade results, picks, pump alerts, market regime (from bot)
+  Layer 2 — EDUCATION: trading concepts, risk mgmt, Smart Money explainers (KOL)
+  Layer 3 — PERSONAL BRAND: origin story, philosophy, TVC as brand, industry takes
 
 Reads:
   - paper_trades.db (SQLite) — closed/open trades, PnL, win rate
@@ -530,6 +536,781 @@ def _behind_the_build_post():
     ]
 
 
+# --- LAYER 2: KOL Education posts (expertise + authority) ------------------
+
+def _kol_education_posts():
+    """Educational posts that position the author as a trading expert.
+    Each topic blends teaching with real bot data. Rotates by day of year."""
+    stats = get_cumulative_stats()
+    open_pos = get_open_positions()
+    n_open = len(open_pos)
+
+    topics = [
+        # 0 — Smart Money concept
+        {
+            "x": (
+                "Most retail traders watch price charts.\n"
+                "Smart Money watches positioning.\n\n"
+                "3 signals institutional flow leaves behind:\n"
+                "→ Whale wallet clustering on Hyperliquid\n"
+                "→ Top trader L/S ratio divergence on Binance\n"
+                "→ Aggressive taker flow crossing the spread\n\n"
+                "When ≥2/3 align with the technical setup, the probability shifts.\n\n"
+                f"We track all 3 in real-time. {stats['total']} trades, {stats['wr']}% WR.\n\n"
+                "#SmartMoney #CryptoTrading #InstitutionalFlow"
+            ),
+            "li": (
+                "What is Smart Money flow — and why does retail ignore it?\n\n"
+                "After years of researching market microstructure, I noticed a pattern: "
+                "the biggest moves in crypto are preceded by specific footprints that most traders never see.\n\n"
+                "Three signals we track algorithmically:\n\n"
+                "1. Hyperliquid whale wallets — the top 30 addresses by realized PnL. "
+                "When they cluster into the same direction, it's not coincidence.\n\n"
+                "2. Binance Top Trader Long/Short ratio — what the top 20% of traders are doing "
+                "vs the crowd. Divergence = opportunity.\n\n"
+                "3. Taker flow + CVD — who's crossing the spread aggressively? "
+                "Passive limit orders vs active market orders tell a story about conviction.\n\n"
+                "I built a system that reads all three in real-time and only enters when ≥2/3 confirm.\n\n"
+                f"Result so far: {stats['total']} automated trades, {stats['wr']}% win rate, "
+                f"${stats['pnl']:+.0f} cumulative PnL.\n\n"
+                "The data is public. The methodology is transparent. "
+                "That's how Trading Venture Club does things differently.\n\n"
+                "What's your edge in crypto? Price action alone, or something deeper?\n\n"
+                "#SmartMoney #CryptoTrading #QuantFinance #TradingEducation"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: TVC Terminal Smart Money panel (BTC or current top holding):\n"
+                "  - HL whales section (Big vs Crowd indicator)\n"
+                "  - Binance Top Trader L/S ratio\n"
+                "  - Taker flow CVD\n"
+                "  - Add text overlay: \"Smart Money 101: What whales see before you do\"\n"
+                "  Format: 1200x627 (LI) or 1080x1080 (X)"
+            ),
+        },
+        # 1 — Risk management
+        {
+            "x": (
+                "Risk management isn't exciting.\n"
+                "But it's the only reason we're still profitable.\n\n"
+                "Our rules:\n"
+                "• Max 3 new trades/day\n"
+                "• 2h cooldown between same ticker\n"
+                "• Mandatory SL at entry (no exceptions)\n"
+                "• Zombie close after 5 days (cut dead weight)\n"
+                "• Smart Money veto overrides any score\n\n"
+                f"{stats['total']} trades later: {stats['wr']}% WR, ${stats['pnl']:+.0f} PnL.\n\n"
+                "Systems > emotions.\n\n"
+                "#RiskManagement #Trading #CryptoTrading"
+            ),
+            "li": (
+                "Risk management is not sexy. But it's why we're still profitable.\n\n"
+                "I've seen too many traders obsess over entries and completely ignore risk. "
+                "After years of studying what separates consistent performers from gamblers, "
+                "I built these rules into our algorithm:\n\n"
+                "→ Maximum 3 new positions per day — prevents overtrading in FOMO conditions\n"
+                "→ 2-hour cooldown between reopening the same ticker — stops revenge trading\n"
+                "→ Mandatory stop-loss at entry — no trade exists without a defined invalidation\n"
+                "→ 5-day max hold — zombie positions that go nowhere get cut automatically\n"
+                "→ Smart Money veto — even a perfect score gets rejected if institutional flow disagrees\n"
+                "→ R:R gate — won't enter if reward/risk is below 1.0\n\n"
+                "These aren't suggestions. They're hard-coded. The bot physically cannot break them.\n\n"
+                "That's the advantage of algorithmic trading: your rules don't bend "
+                "when you're tired, emotional, or overconfident.\n\n"
+                f"Running stats: {stats['total']} trades, {stats['wr']}% win rate, ${stats['pnl']:+.0f} PnL.\n\n"
+                "What's the one risk rule you wish you'd followed from day one?\n\n"
+                "#RiskManagement #TradingPsychology #AlgoTrading #TradingVentureClub"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: Create a clean infographic or screenshot showing:\n"
+                "  Option A: Terminal with positions panel + P&L history showing consistent equity curve\n"
+                "  Option B: Text graphic listing the 6 risk rules (Canva/simple design)\n"
+                "  Add: TVC Fusion logo/brand if available\n"
+                "  Format: 1200x627 or 1080x1080"
+            ),
+        },
+        # 2 — Market regimes
+        {
+            "x": (
+                "The same strategy that prints money in a trend will destroy you in a range.\n\n"
+                "That's why our bot detects market regime FIRST:\n"
+                "• TRENDING UP → aggressive entries, wide TP\n"
+                "• RANGING → tight range plays only\n"
+                "• TRENDING DOWN → short bias, strict SL\n\n"
+                "Most traders use one strategy in all conditions. That's why most traders lose.\n\n"
+                "#MarketRegime #CryptoTrading #TradingEducation"
+            ),
+            "li": (
+                "Why the same strategy doesn't work in every market condition — and what to do about it\n\n"
+                "One of the biggest mistakes I see traders make: applying a trending strategy in a ranging market, "
+                "then blaming the strategy when it fails.\n\n"
+                "The problem isn't the strategy. It's the context.\n\n"
+                "In our system, regime detection happens BEFORE any trade decision:\n\n"
+                "→ TRENDING UP — higher highs, higher lows confirmed across timeframes. "
+                "The Fibonacci filter loosens (0.90 threshold), giving more room for pullback entries.\n\n"
+                "→ RANGING — no clear direction. Filter tightens (0.70), only taking "
+                "high-conviction setups near range boundaries.\n\n"
+                "→ TRENDING DOWN — lower highs dominating. Short bias activates, "
+                "filter is strictest (0.50), and we're extremely selective.\n\n"
+                "The bot adapts automatically. No emotional override, no \"I think it'll bounce.\"\n\n"
+                "This is the difference between systematic trading and guessing. "
+                "At Trading Venture Club, the algorithm does what the data says, not what feels right.\n\n"
+                "Do you adapt your strategy to market conditions, or do you use the same approach regardless?\n\n"
+                "#MarketAnalysis #TradingStrategy #AlgoTrading #CryptoEducation"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: TVC Terminal showing BTC with regime label visible:\n"
+                "  - Price chart with regime indicator\n"
+                "  - Fibonacci levels panel\n"
+                "  - Or: simple diagram showing 3 regimes → 3 different filter thresholds\n"
+                "  URL: tradingventureclub.com/terminal/?token=BTC"
+            ),
+        },
+        # 3 — Signal channels trust problem
+        {
+            "x": (
+                "90% of crypto signal channels are scams. Here's how to spot them:\n\n"
+                "🚩 Only show wins\n"
+                "🚩 No entry/exit prices\n"
+                "🚩 \"Trust me\" instead of data\n"
+                "🚩 Delete losing calls\n"
+                "🚩 Sell course after blowing your account\n\n"
+                "We publish EVERY trade — wins AND losses.\n"
+                f"Full track record: {stats['total']} trades, {stats['wr']}% WR.\n\n"
+                "Transparency is the product.\n\n"
+                "#CryptoSignals #Transparency #Trading"
+            ),
+            "li": (
+                "The crypto signal industry has a trust problem. Here's what I'm doing about it.\n\n"
+                "After spending years in crypto markets, I've seen the pattern repeat endlessly:\n"
+                "→ Channel posts 10 winning trades in a row (deletes the 15 losers)\n"
+                "→ Shows percentage gains with no entry/exit proof\n"
+                "→ Sells premium access for $200/month based on fabricated track records\n"
+                "→ Disappears when the drawdown hits\n\n"
+                "I built Trading Venture Club on the opposite principle:\n\n"
+                "Every trade is logged in a public database. Entry, exit, PnL, reason — all recorded.\n"
+                "The bot runs in a public GitHub repository. You can read every line of code.\n"
+                "Losses are posted alongside wins. If the bot gets stopped out, you see it.\n\n"
+                f"Current reality: {stats['total']} trades, {stats['wr']}% win rate, "
+                f"${stats['pnl']:+.0f} total PnL. Not perfect. Real.\n\n"
+                "I believe radical transparency will become the standard for trading signals. "
+                "Until then, ask anyone selling you signals: \"Can I see your full, unedited trade history?\"\n\n"
+                "If the answer is no — you have your answer.\n\n"
+                "#CryptoTrading #Transparency #TradingSignals #TradingVentureClub"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: Side by side comparison:\n"
+                "  Left: generic scam channel (blurred/mocked) with only green trades\n"
+                "  Right: TVC Terminal P&L History showing real equity curve (ups AND downs)\n"
+                "  Or: screenshot of terminal with full trade log visible\n"
+                "  Format: 1200x627"
+            ),
+        },
+        # 4 — Derivatives data
+        {
+            "x": (
+                "Derivatives data tells you what's coming before price does.\n\n"
+                "What to watch:\n"
+                "→ Open Interest surging + price flat = big move incoming\n"
+                "→ Funding rate extreme = crowded trade about to unwind\n"
+                "→ Liquidation clusters = magnets for price\n\n"
+                "Our Pump Radar scans 200+ tokens for these patterns every 5 min.\n\n"
+                "Free alerts: t.me/TVCFusionSignals\n"
+                "#Derivatives #CryptoTrading #OpenInterest"
+            ),
+            "li": (
+                "Why derivatives data is the most underrated edge in crypto trading\n\n"
+                "Price is a lagging indicator. By the time you see a breakout on the chart, "
+                "the move has already been positioned for in derivatives.\n\n"
+                "Three derivatives signals I've found most predictive after years of research:\n\n"
+                "1. Open Interest divergence — when OI surges but price stays flat, "
+                "someone is building a massive position. Direction TBD, but volatility is coming.\n\n"
+                "2. Funding rate extremes — when everyone is long and paying 0.1%+ per 8h, "
+                "the trade is too crowded. The unwind becomes the trade.\n\n"
+                "3. Liquidation clusters — large clusters of liquidations act like magnets. "
+                "Market makers know where the stops are.\n\n"
+                "Our Pump Radar algorithm scans 200+ perpetual contracts every 5 minutes "
+                "for exactly these patterns. When signals cluster, the alert fires.\n\n"
+                "This isn't theory — it's coded, tested, and running live. "
+                "The edge isn't the data (it's public). The edge is systematizing the interpretation.\n\n"
+                "What derivatives metrics do you track in your analysis?\n\n"
+                "#Derivatives #TradingEducation #CryptoMarkets #QuantTrading"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: TVC Terminal Pump Radar panel showing:\n"
+                "  - Active alerts with factor breakdown\n"
+                "  - Track record section\n"
+                "  Or: chart showing OI vs price divergence example\n"
+                "  URL: tradingventureclub.com/terminal/"
+            ),
+        },
+        # 5 — Psychology: systems vs emotions
+        {
+            "x": (
+                "\"I'll just hold a little longer.\"\n"
+                "\"This time is different.\"\n"
+                "\"I'll average down.\"\n\n"
+                "Every blown account starts with one of these sentences.\n\n"
+                "That's why I removed myself from the equation.\n"
+                "The bot doesn't feel. It follows the rules.\n\n"
+                f"{stats['total']} trades. Zero emotional overrides.\n\n"
+                "#TradingPsychology #AlgoTrading #Discipline"
+            ),
+            "li": (
+                "The hardest lesson in trading: you are the biggest risk.\n\n"
+                "I've studied trading psychology extensively — both in books and through my own painful "
+                "experience. The pattern is always the same:\n\n"
+                "→ You hold losers too long because admitting a loss feels like failure\n"
+                "→ You cut winners too early because taking profit feels safe\n"
+                "→ You overtrade after a win streak because confidence becomes overconfidence\n"
+                "→ You revenge-trade after a loss because you want to \"get it back\"\n\n"
+                "The solution isn't more discipline. It's removing the decision from yourself entirely.\n\n"
+                "That's why I built an automated system. The algorithm has rules, and it cannot break them. "
+                "It doesn't care about yesterday's loss. It doesn't get excited about a winning streak. "
+                "It just runs.\n\n"
+                f"After {stats['total']} automated trades with {stats['wr']}% win rate, I'm convinced: "
+                "the best thing I ever did for my trading was stop making trading decisions.\n\n"
+                "What's the emotional trap you fall into most? I'd bet it's one of the four above.\n\n"
+                "#TradingPsychology #AlgoTrading #TradingMindset #TradingVentureClub"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: TVC Terminal equity curve (P&L History panel):\n"
+                "  - Smooth, systematic equity line — no panic spikes\n"
+                "  - Annotate: \"No emotional overrides. Pure algorithmic execution.\"\n"
+                "  Or: Canva text graphic with the 4 emotional traps listed\n"
+                "  Format: 1200x627 or 1080x1080"
+            ),
+        },
+        # 6 — Funding rates explained
+        {
+            "x": (
+                "Funding rates are one of crypto's best-kept secrets.\n\n"
+                "→ Positive + extreme = too many longs → expect a flush\n"
+                "→ Negative + extreme = too many shorts → expect a squeeze\n"
+                "→ Near zero = balanced → follow the trend\n\n"
+                "Our screener checks funding across 200+ tokens every run.\n"
+                "It's free alpha hiding in plain sight.\n\n"
+                "#FundingRate #CryptoTrading #TradingEducation"
+            ),
+            "li": (
+                "Funding rates: the signal most crypto traders overlook entirely\n\n"
+                "Quick primer if you trade perpetual futures (or want to understand them):\n\n"
+                "Perpetual contracts have no expiry date. To keep them anchored to spot price, "
+                "exchanges use a funding mechanism: longs pay shorts (or vice versa) every 8 hours.\n\n"
+                "Why this matters:\n"
+                "→ When funding is extremely positive — everyone is long and paying a premium to stay long. "
+                "The trade is crowded, and a liquidation cascade can wipe it in minutes.\n"
+                "→ When funding is extremely negative — shorts are paying. The squeeze risk is real.\n"
+                "→ When funding is near zero — the market is balanced. Trend-following works best here.\n\n"
+                "Our auto-picks algorithm checks funding rates across 200+ perpetual contracts "
+                "daily. Extreme funding is one of the strongest contrarian signals we track.\n\n"
+                "Understanding this one mechanic gives you an edge over 90% of retail. "
+                "It's public data — the edge is knowing what to do with it.\n\n"
+                "Did you know your exchange shows funding rates? Most traders never check.\n\n"
+                "#TradingEducation #CryptoDerivatives #FundingRate #QuantTrading"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: TVC Terminal or exchange screenshot showing:\n"
+                "  - Funding rates for multiple tokens\n"
+                "  - Highlight extreme values (red = high positive, blue = negative)\n"
+                "  Or: simple diagram explaining funding mechanism\n"
+                "  Format: 1200x627"
+            ),
+        },
+        # 7 — Automation philosophy
+        {
+            "x": (
+                "I stopped checking charts manually.\n\n"
+                "Instead, 7 Python scripts run every 5 minutes:\n"
+                "→ Screening 200+ tokens\n"
+                "→ Tracking whale wallets\n"
+                "→ Computing fusion scores\n"
+                "→ Opening/closing paper trades\n"
+                "→ Alerting via Telegram\n\n"
+                "Total cost: $0 (GitHub Actions free tier).\n"
+                "Total time: <20 min/day (just publishing posts).\n\n"
+                "Automation > hustle.\n\n"
+                "#Automation #Python #CryptoTrading #BuildInPublic"
+            ),
+            "li": (
+                "Why I automated my trading and stopped making discretionary entries\n\n"
+                "A year ago, I was doing what most traders do: staring at charts for hours, "
+                "second-guessing entries, feeling the dopamine of a win and the frustration of a loss.\n\n"
+                "Then I asked myself: if I can define my rules clearly enough to follow them, "
+                "why can't a computer follow them better?\n\n"
+                "So I built it. Seven Python scripts that run every 5 minutes:\n"
+                "→ auto_picks.py — screens 200+ tokens against 4 signal categories\n"
+                "→ pump_radar.py — scans for derivatives anomalies (OI surges, funding extremes)\n"
+                "→ paper_bot.py — opens/manages/closes trades with 12 rejection gates\n"
+                "→ auto_fusion.py — computes a 0-100 Fusion Score per token\n"
+                "→ Plus correlation matrix, macro events, content generation\n\n"
+                "Total infrastructure cost: $0. GitHub Actions free tier covers it.\n"
+                "Total daily time commitment: ~20 minutes (publishing pre-written posts).\n\n"
+                "The irony: I do more analysis now than when I traded manually. "
+                "But the analysis goes into improving the system, not into individual trade decisions.\n\n"
+                "That's what Trading Venture Club is: a research-first, automated-execution approach "
+                "to crypto markets.\n\n"
+                "If you could automate one part of your trading workflow, what would it be?\n\n"
+                "#Automation #BuildInPublic #Python #AlgoTrading #TradingVentureClub"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: Architecture overview:\n"
+                "  Option A: GitHub Actions workflow runs page (screenshot)\n"
+                "  Option B: Terminal bird's eye view with multiple panels\n"
+                "  Option C: Simple flowchart (Canva): cron → scripts → data → terminal + Telegram\n"
+                "  Format: 1200x627"
+            ),
+        },
+        # 8 — Correlation/macro
+        {
+            "x": (
+                "BTC doesn't trade in a vacuum.\n\n"
+                "Our correlation matrix tracks daily:\n"
+                "→ BTC vs Nasdaq (NQ)\n"
+                "→ BTC vs DXY (dollar)\n"
+                "→ BTC vs Gold\n"
+                "→ Cross-crypto correlations\n\n"
+                "When correlations break, the opportunity appears.\n"
+                "When they're high, you're just trading the same macro bet N times.\n\n"
+                "#Bitcoin #Macro #Correlation #TradingEducation"
+            ),
+            "li": (
+                "Why I track cross-asset correlations in my crypto trading system\n\n"
+                "Most crypto traders think they're diversified because they hold 5 altcoins. "
+                "In reality, when BTC dumps, most alts dump harder. \"Diversification\" is an illusion.\n\n"
+                "At Trading Venture Club, our daily correlation matrix tracks:\n"
+                "→ BTC vs Nasdaq (QQQ) — tells you if crypto is in 'risk-on tech' mode\n"
+                "→ BTC vs DXY — dollar strength often precedes crypto weakness\n"
+                "→ BTC vs Gold — when money flows to gold over BTC, the narrative has shifted\n"
+                "→ Cross-crypto — if ETH/BTC correlation is weakening, alt season might be starting\n\n"
+                "This data feeds into our macro layer. Before any trade opens, the system checks "
+                "if the macro environment supports the thesis.\n\n"
+                "Additionally, the algorithm pauses all trading 3 hours before and 1 hour after "
+                "major macro events (FOMC, CPI, NFP). No edge in those conditions — only noise.\n\n"
+                "Understanding what drives the market you're trading is half the edge.\n\n"
+                "#MacroTrading #Correlation #Bitcoin #CryptoAnalysis"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: TVC Terminal Correlation Matrix panel showing:\n"
+                "  - Heatmap with BTC vs NQ, DXY, Gold\n"
+                "  - Cross-crypto correlations\n"
+                "  URL: tradingventureclub.com/terminal/"
+            ),
+        },
+        # 9 — Holy grail myth
+        {
+            "x": (
+                "There is no holy grail indicator.\n\n"
+                "Every strategy has losers.\n"
+                "Every edge degrades over time.\n\n"
+                "What works:\n"
+                "→ Multiple weak signals > one \"perfect\" signal\n"
+                "→ Rigid risk rules > flexible entry rules\n"
+                "→ Adapting to regime changes > one-size-fits-all\n\n"
+                f"Our approach: 5 weighted factors + 3 SM layers + 12 rejection gates = {stats['wr']}% WR.\n\n"
+                "#TradingReality #CryptoTrading #AlgoTrading"
+            ),
+            "li": (
+                "Stop looking for the holy grail indicator. It doesn't exist.\n\n"
+                "Early in my trading journey, I spent months searching for the \"perfect\" indicator. "
+                "RSI, MACD, Bollinger, Ichimoku — I backtested them all. None worked consistently.\n\n"
+                "The breakthrough came when I stopped looking for one signal and started combining many.\n\n"
+                "Our Fusion Score combines 5 weighted factors: on-chain flow, technical structure, "
+                "derivatives data, momentum, and sentiment. No single factor wins consistently. "
+                "But when multiple weak signals align, the edge compounds.\n\n"
+                "On top of that, 12 rejection gates filter out bad setups before any trade opens. "
+                "Smart Money veto. Regime check. R:R minimum. Cooldown timer. "
+                "The system says \"no\" far more often than it says \"yes.\"\n\n"
+                "That selectivity IS the edge. Not the entry signal — the filtration.\n\n"
+                f"Result: {stats['total']} trades, {stats['wr']}% win rate. "
+                "Not because we found the holy grail. Because we stacked imperfect signals correctly.\n\n"
+                "What's the indicator you relied on longest? And did it hold up?\n\n"
+                "#TradingMythBusted #CryptoTrading #QuantFinance #TradingVentureClub"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: TVC Terminal showing multi-factor view:\n"
+                "  - Fusion Score breakdown (5 factors visible)\n"
+                "  - Smart Money panel alongside\n"
+                "  - Or: diagram of 12 rejection gates as a funnel\n"
+                "  Format: 1200x627"
+            ),
+        },
+    ]
+
+    day_of_year = _now().timetuple().tm_yday
+    idx = day_of_year % len(topics)
+    topic = topics[idx]
+
+    posts = []
+
+    # X post (shorter, punchier)
+    posts.append({
+        "platform": "x", "type": "kol_education", "ticker": None,
+        "date": _today(), "ts": _now().isoformat(),
+        "text": topic["x"], "graphic": topic["graphic"], "posted": False,
+    })
+
+    # LinkedIn post (longer, narrative + CTA question)
+    posts.append({
+        "platform": "linkedin", "type": "kol_education", "ticker": None,
+        "date": _today(), "ts": _now().isoformat(),
+        "text": topic["li"], "graphic": topic["graphic"], "posted": False,
+    })
+
+    return posts
+
+
+# --- LAYER 3: Personal Brand posts (narrative + TVC as brand) ---------------
+
+def _personal_brand_posts():
+    """Personal brand posts: origin story, philosophy, industry takes, expertise.
+    References existing knowledge (books, research) without selling them.
+    Rotates by day of year (offset from KOL to avoid same-day collisions)."""
+    stats = get_cumulative_stats()
+
+    topics = [
+        # 0 — Origin story
+        {
+            "x": (
+                "I didn't start as a trader.\n\n"
+                "I started as a researcher. Reading whitepapers. "
+                "Studying market microstructure. Writing about what I found.\n\n"
+                "Then I thought: if I can write the thesis, can I code the execution?\n\n"
+                "Trading Venture Club was born from that question.\n\n"
+                "Now 7 scripts run 24/7, scanning markets while I sleep.\n\n"
+                "Background matters less than curiosity.\n\n"
+                "#BuildInPublic #CryptoTrading #FounderStory"
+            ),
+            "li": (
+                "How Trading Venture Club started — and why it's not just a trading bot\n\n"
+                "I didn't come to crypto as a day trader. I came as a researcher.\n\n"
+                "I spent years diving deep into market microstructure, blockchain analytics, "
+                "and the mechanics of how institutional money moves in crypto. "
+                "I wrote extensively about it — analyzing patterns, testing hypotheses, "
+                "building mental models for how markets actually work.\n\n"
+                "At some point I realized: I have a thesis about how markets move. "
+                "Why am I not testing it systematically?\n\n"
+                "That question became Trading Venture Club. Not a signal channel. "
+                "Not a course. A research-driven, fully automated trading system "
+                "that turns analysis into execution — transparently, publicly, algorithmically.\n\n"
+                "The expertise isn't in picking the right token on a given Tuesday. "
+                "It's in building the system that makes consistent decisions "
+                "across hundreds of market conditions.\n\n"
+                "I'm sharing this journey publicly — the wins, the losses, the code, "
+                "the data — because I believe transparency is what this industry needs most.\n\n"
+                "What's your background? Sometimes the best traders come from the most unexpected places.\n\n"
+                "#FounderStory #TradingVentureClub #BuildInPublic #CryptoEntrepreneur"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: Personal/professional photo or TVC Terminal bird's eye view\n"
+                "  showing the scope of the system (multiple panels visible).\n"
+                "  If no personal photo: terminal screenshot with text overlay:\n"
+                "  \"From research to code. Trading Venture Club.\"\n"
+                "  Format: 1200x627"
+            ),
+        },
+        # 1 — Why radical transparency
+        {
+            "x": (
+                "My controversial take:\n\n"
+                "If a trading signal service won't show you their full history — including losses — "
+                "you're not paying for signals.\n\n"
+                "You're paying for fiction.\n\n"
+                "Every TVC trade: logged, timestamped, public.\n"
+                "That's not a feature. That's the minimum standard.\n\n"
+                "#Transparency #CryptoTrading #TradingSignals"
+            ),
+            "li": (
+                "Why I chose radical transparency over marketing hype\n\n"
+                "When I was building Trading Venture Club, I had a choice:\n\n"
+                "Option A: Only show winning trades. Screenshot the best results. "
+                "Sell the dream of easy money. Scale fast.\n\n"
+                "Option B: Show everything. Every win. Every loss. Every trade that "
+                "looked perfect on paper but got stopped out in reality.\n\n"
+                "I chose B. And I think it's the right long-term strategy, even if it's slower.\n\n"
+                "Here's why: the crypto signal industry is built on survivorship bias. "
+                "Channels that only show wins attract short-term subscribers who churn "
+                "the moment reality hits. Channels that show the full picture attract "
+                "people who understand how trading actually works.\n\n"
+                "Those people stay. They engage. They refer others.\n\n"
+                f"Our real record: {stats['total']} trades, {stats['wr']}% win rate, "
+                f"${stats['pnl']:+.0f} PnL. Not every trade wins. "
+                "That's exactly why the overall track record is credible.\n\n"
+                "I believe this approach will become the industry standard. "
+                "Until then, Trading Venture Club is proving it works.\n\n"
+                "#RadicalTransparency #TradingVentureClub #CryptoSignals #Trust"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: TVC Terminal P&L History showing full equity curve:\n"
+                "  - Both wins and losses visible in the curve\n"
+                "  - Cumulative PnL line trending up despite individual losses\n"
+                "  - Text overlay: \"Every trade. Every result. No edits.\"\n"
+                "  Format: 1200x627"
+            ),
+        },
+        # 2 — Knowledge & research background
+        {
+            "x": (
+                "You don't need a finance degree to build a trading system.\n\n"
+                "You need:\n"
+                "→ Deep research (read everything)\n"
+                "→ Python basics (automate everything)\n"
+                "→ Healthy skepticism (question everything)\n"
+                "→ Patience (test everything)\n\n"
+                "The best traders I know are curious people who happen to trade.\n\n"
+                "#TradingMindset #LifelongLearning #CryptoTrading"
+            ),
+            "li": (
+                "What I learned from years of researching crypto markets — before writing a single line of trading code\n\n"
+                "Before I built any algorithm, I spent a long time just studying.\n\n"
+                "Reading whitepapers on market microstructure. Analyzing how order books "
+                "behave during liquidation cascades. Studying the difference between "
+                "how institutional and retail traders position.\n\n"
+                "Writing about these topics forced me to organize my thinking. "
+                "You can't explain something clearly if you don't understand it deeply.\n\n"
+                "Three insights from that research phase that directly shaped TVC Fusion:\n\n"
+                "1. Markets are not random, but they're not deterministic either. "
+                "The edge lives in probability, not prediction.\n\n"
+                "2. Most retail traders have an information disadvantage — but derivatives data "
+                "and on-chain flow are public. The gap isn't access. It's interpretation.\n\n"
+                "3. Consistency beats brilliance. A system that makes 55% correct decisions "
+                "with proper risk management will outperform a genius who's right 70% of the time "
+                "but sizes positions emotionally.\n\n"
+                "Every feature in the TVC Fusion Terminal came from a research question I couldn't "
+                "find a good answer to. So I built the answer.\n\n"
+                "What's a concept in trading you wish someone had explained properly?\n\n"
+                "#CryptoResearch #TradingEducation #TradingVentureClub #Knowledge"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: TVC Terminal with educational focus:\n"
+                "  Option A: Terminal showing Smart Money + Fusion Score + correlation panel\n"
+                "  Option B: Clean text quote graphic:\n"
+                "    \"The gap isn't access. It's interpretation.\"\n"
+                "    — Trading Venture Club\n"
+                "  Format: 1200x627"
+            ),
+        },
+        # 3 — Industry opinion
+        {
+            "x": (
+                "Hot take: the future of retail trading is transparent, algorithmic, and verifiable.\n\n"
+                "No more guru worship.\n"
+                "No more cherry-picked results.\n"
+                "No more \"just trust me.\"\n\n"
+                "Code. Data. Public track records.\n\n"
+                "That's what I'm building.\n\n"
+                "#FutureOfTrading #CryptoTrading #BuildInPublic"
+            ),
+            "li": (
+                "My prediction: transparent algorithmic trading will replace the guru model\n\n"
+                "The current model of retail trading education is broken:\n"
+                "→ Self-proclaimed experts sell courses based on curated screenshots\n"
+                "→ Signal channels hide their full track record behind paywalls\n"
+                "→ \"Community\" is just a marketing funnel for the next upsell\n\n"
+                "I think the next generation of trading services will look completely different:\n\n"
+                "1. Algorithms that execute defined strategies — no discretionary hand-waving\n"
+                "2. Full trade history published in real-time — not after the fact\n"
+                "3. Open methodology — you understand WHY a trade was taken, not just WHAT was traded\n"
+                "4. Performance verified by data, not testimonials\n\n"
+                "This is what Trading Venture Club is building. "
+                "We're early, but I believe this model wins in the long run because trust compounds.\n\n"
+                "The traders who build trust now will own the next era of this industry.\n\n"
+                "Agree or disagree? I'd love to hear your take in the comments.\n\n"
+                "#FutureOfTrading #CryptoIndustry #TradingVentureClub #Innovation"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: Clean text graphic or terminal screenshot:\n"
+                "  Option A: Quote card: \"The future of retail trading is transparent,\n"
+                "    algorithmic, and verifiable.\" with TVC branding\n"
+                "  Option B: Terminal showing full dashboard as proof of concept\n"
+                "  Format: 1200x627"
+            ),
+        },
+        # 4 — TVC as brand / vision
+        {
+            "x": (
+                "Trading Venture Club isn't a signal channel.\n\n"
+                "It's a system:\n"
+                "→ Research-driven methodology\n"
+                "→ Algorithmic execution (no manual trades)\n"
+                "→ Public track record (every trade logged)\n"
+                "→ Smart Money verification (institutional flow)\n"
+                "→ Adaptive (regime-aware, macro-aware)\n\n"
+                "Building in public. t.me/TVCFusionSignals\n\n"
+                "#TradingVentureClub #AlgoTrading #Crypto"
+            ),
+            "li": (
+                "What is Trading Venture Club — and why does it exist?\n\n"
+                "I get asked this a lot, so let me explain clearly.\n\n"
+                "Trading Venture Club is a research and technology company focused on "
+                "making institutional-grade crypto market analysis accessible to individual traders.\n\n"
+                "What that means in practice:\n\n"
+                "→ A proprietary Fusion Score system that combines 5 market factors "
+                "into a single actionable signal per token\n\n"
+                "→ Real-time Smart Money tracking — whale positions, institutional flow, "
+                "derivatives data — the same information hedge funds use\n\n"
+                "→ A fully automated paper trading system that logs every decision, "
+                "every entry, every exit — transparently\n\n"
+                "→ A live terminal dashboard where you see exactly what the algorithm sees\n\n"
+                "→ Free and premium Telegram channels with real-time signals\n\n"
+                "The vision: take the analytical depth of a crypto research desk, "
+                "combine it with algorithmic execution, and deliver it with radical transparency.\n\n"
+                "We're early. The track record is being built in real-time. "
+                "But every week, the data set gets larger, the signals get refined, "
+                "and the proof accumulates.\n\n"
+                "Follow along: tradingventureclub.com or free signals at t.me/TVCFusionSignals\n\n"
+                "#TradingVentureClub #CryptoTrading #FinTech #AlgoTrading #SmartMoney"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: TVC Terminal full dashboard view (bird's eye):\n"
+                "  - Multiple panels visible: chart, positions, Smart Money, picks\n"
+                "  - Shows the scope and professionalism of the system\n"
+                "  - Text overlay: \"Trading Venture Club — Research. Algorithms. Transparency.\"\n"
+                "  URL: tradingventureclub.com/terminal/"
+            ),
+        },
+        # 5 — Solo builder story
+        {
+            "x": (
+                "Built as a solo founder:\n"
+                "→ 10,000+ lines of terminal code\n"
+                "→ 7 Python scripts running 24/7\n"
+                "→ Dual Telegram channels\n"
+                "→ Stripe membership system\n"
+                "→ Public GitHub repo\n\n"
+                "Total team size: 1.\n"
+                "Total external funding: $0.\n\n"
+                "You don't need a team to build. You need a system.\n\n"
+                "#SoloFounder #BuildInPublic #Startup"
+            ),
+            "li": (
+                "Building a trading technology company as a solo founder — what I've learned\n\n"
+                "Trading Venture Club has no team. No investors. No funding.\n\n"
+                "It has:\n"
+                "→ A ~10,000-line trading terminal built from scratch\n"
+                "→ 7 Python scripts running autonomously every 5 minutes\n"
+                "→ An automated Stripe membership system\n"
+                "→ Dual Telegram channels (free + premium)\n"
+                "→ A content engine that generates posts from bot data\n"
+                "→ A public GitHub repository anyone can audit\n\n"
+                "I'm not sharing this to brag. I'm sharing it because "
+                "the narrative that you need a team, funding, and 18 months to build something "
+                "useful is wrong.\n\n"
+                "You need: a clear problem, the willingness to learn the tools, "
+                "and the discipline to ship something every week.\n\n"
+                "The hardest part isn't building. It's publishing before it's perfect.\n\n"
+                "If you're building something solo — keep going. The compound effect is real.\n\n"
+                "#SoloFounder #BuildInPublic #Entrepreneurship #TradingVentureClub"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: GitHub repository page showing:\n"
+                "  - Commit history (activity graph)\n"
+                "  - Or: GitHub Actions run log (green checkmarks)\n"
+                "  - Or: Terminal screenshot showing the scale of the system\n"
+                "  Format: 1200x627"
+            ),
+        },
+        # 6 — Data-driven decisions
+        {
+            "x": (
+                "Opinions are free.\n"
+                "Data costs effort.\n\n"
+                "Every TVC decision is backed by:\n"
+                "→ 200+ token scans/day\n"
+                "→ 5-factor fusion score\n"
+                "→ 3-layer Smart Money verification\n"
+                "→ Regime-adaptive filtering\n\n"
+                "In a market of hot takes, be the one with receipts.\n\n"
+                "#DataDriven #CryptoTrading #QuantTrading"
+            ),
+            "li": (
+                "In a market of opinions, data is the real edge\n\n"
+                "Crypto Twitter is full of predictions. Everyone has a target. "
+                "Everyone \"called\" the last move. Nobody shows the full history of their calls.\n\n"
+                "At Trading Venture Club, I decided early on: no opinions without data.\n\n"
+                "Every trade the system takes is grounded in measurable, verifiable inputs:\n"
+                "→ A 0-100 Fusion Score computed from 5 weighted factors\n"
+                "→ Smart Money verification from 3 independent data sources\n"
+                "→ Regime detection that adapts the strategy to market conditions\n"
+                "→ 12 rejection gates that filter out low-conviction setups\n\n"
+                "Is it perfect? No. No system is. But it's consistent, documented, and improvable. "
+                "Every losing trade teaches the algorithm something. Every winning pattern gets reinforced.\n\n"
+                "The goal isn't to be right every time. "
+                "It's to make better decisions than a human could under the same conditions.\n\n"
+                "What do you base your trading decisions on? Gut feeling or structured analysis?\n\n"
+                "#DataDrivenTrading #CryptoAnalysis #QuantFinance #TradingVentureClub"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: TVC Terminal Fusion Score breakdown:\n"
+                "  - Score components (on-chain, technical, derivatives, momentum, sentiment)\n"
+                "  - Smart Money verdict\n"
+                "  - Or: stats dashboard with trade counts and win rate\n"
+                "  Format: 1200x627"
+            ),
+        },
+        # 7 — Lessons from losses
+        {
+            "x": (
+                "My best lessons came from losses.\n\n"
+                "→ Lost on a short during a squeeze → added funding rate check\n"
+                "→ Held a zombie trade 10 days → added max-hold timer\n"
+                "→ Re-entered same ticker too fast → added cooldown gate\n\n"
+                "Every bug in the system came from a real loss.\n"
+                "Every fix is permanent.\n\n"
+                "That's how systems improve.\n\n"
+                "#TradingLessons #CryptoTrading #AlgoTrading"
+            ),
+            "li": (
+                "Every feature in our trading system was born from a real loss\n\n"
+                "I don't hide our losing trades. In fact, they're the most valuable part of the journey.\n\n"
+                "Some examples:\n\n"
+                "→ Got squeezed on a short because funding was already extreme negative → "
+                "built a funding rate gate into the screener\n\n"
+                "→ Held a position for 10 days that went nowhere, tying up capital → "
+                "coded a 5-day maximum hold (\"zombie close\") rule\n\n"
+                "→ Re-entered the same ticker 30 minutes after being stopped out → "
+                "added a 2-hour cooldown between same-ticker trades\n\n"
+                "→ Took a low-conviction trade that barely had 1:1 risk-reward → "
+                "built a minimum R:R gate that rejects anything below 1.0\n\n"
+                "Each of these was a painful lesson. But because the system is algorithmic, "
+                "the fix is permanent. A human forgets their rules in the heat of the moment. "
+                "Code doesn't.\n\n"
+                "This is the compounding advantage of systematic trading: "
+                "every mistake makes the system better, permanently.\n\n"
+                "What's the most expensive lesson trading has taught you?\n\n"
+                "#TradingLessons #LearnFromLosses #AlgoTrading #TradingVentureClub"
+            ),
+            "graphic": (
+                "📸 GRAPHIC: TVC Terminal showing a losing trade:\n"
+                "  - Position closed at SL with clear entry/exit\n"
+                "  - Or: before/after comparison — old behavior vs new gate\n"
+                "  - Be authentic: show a real loss, then explain the fix\n"
+                "  Format: 1200x627"
+            ),
+        },
+    ]
+
+    # Offset by 5 so personal brand and KOL education don't pick same index
+    day_of_year = _now().timetuple().tm_yday
+    idx = (day_of_year + 5) % len(topics)
+    topic = topics[idx]
+
+    posts = []
+
+    posts.append({
+        "platform": "x", "type": "personal_brand", "ticker": None,
+        "date": _today(), "ts": _now().isoformat(),
+        "text": topic["x"], "graphic": topic["graphic"], "posted": False,
+    })
+
+    posts.append({
+        "platform": "linkedin", "type": "personal_brand", "ticker": None,
+        "date": _today(), "ts": _now().isoformat(),
+        "text": topic["li"], "graphic": topic["graphic"], "posted": False,
+    })
+
+    return posts
+
+
 # --- Telegram convenience (send posts to personal chat for copy-paste) -----
 
 def _tg_send_personal(text):
@@ -578,7 +1359,7 @@ def _notify_new_posts(posts):
 # --- main logic ------------------------------------------------------------
 
 def run():
-    log(f"Content Engine v1.0 — {_now().isoformat()}")
+    log(f"Content Engine v2.0 — {_now().isoformat()}")
 
     q = _load_queue()
     new_posts = []
@@ -658,6 +1439,40 @@ def run():
                 posts = _behind_the_build_post()
                 new_posts.extend(posts)
                 li_today += 1
+
+    # 6. KOL EDUCATION (X + LinkedIn, Mon/Wed/Fri — expertise & authority)
+    if _now().weekday() in (0, 2, 4):  # Monday, Wednesday, Friday
+        if not any(p.get("type") == "kol_education" and p.get("date") == _today() for p in q["posts"]):
+            log("Generating KOL education posts (expertise layer)")
+            for p in _kol_education_posts():
+                if p["platform"] == "x" and x_today >= MAX_X_PER_DAY:
+                    log(f"  skip X kol_education — daily limit ({MAX_X_PER_DAY})")
+                    continue
+                if p["platform"] == "linkedin" and li_today >= MAX_LI_PER_DAY:
+                    log(f"  skip LinkedIn kol_education — daily limit ({MAX_LI_PER_DAY})")
+                    continue
+                new_posts.append(p)
+                if p["platform"] == "x":
+                    x_today += 1
+                else:
+                    li_today += 1
+
+    # 7. PERSONAL BRAND (X + LinkedIn, Tue/Thu — narrative + TVC as brand)
+    if _now().weekday() in (1, 3):  # Tuesday, Thursday
+        if not any(p.get("type") == "personal_brand" and p.get("date") == _today() for p in q["posts"]):
+            log("Generating personal brand posts (narrative layer)")
+            for p in _personal_brand_posts():
+                if p["platform"] == "x" and x_today >= MAX_X_PER_DAY:
+                    log(f"  skip X personal_brand — daily limit ({MAX_X_PER_DAY})")
+                    continue
+                if p["platform"] == "linkedin" and li_today >= MAX_LI_PER_DAY:
+                    log(f"  skip LinkedIn personal_brand — daily limit ({MAX_LI_PER_DAY})")
+                    continue
+                new_posts.append(p)
+                if p["platform"] == "x":
+                    x_today += 1
+                else:
+                    li_today += 1
 
     # Save queue
     if new_posts:
