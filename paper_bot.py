@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Paper Trading Bot v0.8
+TVC Fusion Paper Trading Bot v0.9
+
+v0.9 (2026-09-22) — REGIME-AWARE FIBONACCI + ZOMBIE CLEANUP
+  - Fibonacci pullback threshold depends on market regime:
+    TRENDING_UP→0.90, RANGING→0.70, TRENDING_DOWN→0.50
+  - MAX_HOLD_DAYS=5: auto-close zombie positions older than 5 days
+  - Fixes bot being completely blocked in trending markets
 
 v0.8 (2026-09-16) — TIERED SIZING: position size scales with conviction
   - Score 60-65→8%, 65-75→20%, 75-85→40%, 85+→80% of capital
@@ -110,6 +116,19 @@ MAX_SHORT_SCORE = 40           # Reguła #1: SHORT gdy score jest bearish (v0.6:
 MIN_RR_AT_ENTRY = 1.0          # Reguła #1b: min R:R w momencie wejścia (ochrona przed stale TP)
 REOPEN_COOLDOWN_MINUTES = 120  # anty-overtrading: po zamknięciu tickera 2h przerwy
 MAX_NEW_TRADES_PER_DAY = 3     # anty-overtrading: max 3 nowe trade'y dziennie
+MAX_HOLD_DAYS = 5              # v0.9 — auto-close zombie pozycji po 5 dniach
+
+# v0.9 — Fibonacci pullback threshold zależny od reżimu rynku.
+# W trendzie wzrostowym bot akceptuje wejścia bliżej szczytu 30d zakresu,
+# bo pullback do 50% może nie nadejść przez tygodnie. W konsolidacji
+# i downtrend — bardziej restrykcyjny (wymaga głębszego pullbacku).
+FIB_THRESHOLD_BY_REGIME = {
+    "TRENDING_UP":          0.90,
+    "TRENDING_UP_VOLATILE": 0.90,
+    "RANGING":              0.70,
+    "TRENDING_DOWN":        0.50,
+}
+FIB_THRESHOLD_DEFAULT = 0.70  # fallback dla nieznanych reżimów
 
 # STATYSTYKI — liczone od wdrożenia bramek v0.3 (trade'y v0.2 = archiwum).
 STATS_SINCE = "2026-09-02T19:00:00"
@@ -958,21 +977,24 @@ def cmd_open(args):
             except (TypeError, ValueError):
                 pass  # missing/bad levels — proceed, SL/TP will be set to None
 
-        # v0.7 — REGUŁA #6: FIBONACCI PULLBACK FILTER
-        # Don't chase! For longs, skip if price is above 70% of 30-day range
-        # (hasn't pulled back enough). For shorts, skip if below 30%.
+        # v0.9 — REGUŁA #6: FIBONACCI PULLBACK FILTER (regime-aware)
+        # Don't chase! Threshold depends on market regime: trending markets
+        # allow entries closer to 30d high (0.90), ranging markets require
+        # deeper pullback (0.70), downtrends even more (0.50).
         fib_pos = dec.get("fib_position")
         if fib_pos is not None:
             try:
                 fib_pos = float(fib_pos)
-                if direction == "long" and fib_pos > 0.70:
+                fib_long_thresh = FIB_THRESHOLD_BY_REGIME.get(regime, FIB_THRESHOLD_DEFAULT)
+                fib_short_thresh = 1.0 - fib_long_thresh  # mirror: 0.90→0.10, 0.70→0.30, 0.50→0.50
+                if direction == "long" and fib_pos > fib_long_thresh:
                     print(f"[skip] {ticker} LONG — chasing: price at {fib_pos:.0%} of 30d range "
-                          f"(above 70% Fib threshold)")
+                          f"(above {fib_long_thresh:.0%} Fib threshold for {regime})")
                     skipped += 1
                     continue
-                if direction == "short" and fib_pos < 0.30:
+                if direction == "short" and fib_pos < fib_short_thresh:
                     print(f"[skip] {ticker} SHORT — chasing bottom: price at {fib_pos:.0%} of 30d range "
-                          f"(below 30% Fib threshold)")
+                          f"(below {fib_short_thresh:.0%} Fib threshold for {regime})")
                     skipped += 1
                     continue
             except (TypeError, ValueError):
@@ -1159,6 +1181,49 @@ def cmd_check(args):
 
     if not open_rows:
         print("[check] no open positions")
+        _maybe_daily_digest(conn)
+        conn.close()
+        return
+
+    # v0.9 — MAX HOLD TIME: zamknij zombie pozycje starsze niż MAX_HOLD_DAYS.
+    # Pozycja, która nie trafiła SL ani TP przez 5 dni, prawdopodobnie ma
+    # nieaktualne poziomy — zamykamy po aktualnej cenie rynkowej.
+    now_utc = datetime.now(timezone.utc)
+    for r in open_rows:
+        try:
+            opened = datetime.fromisoformat(r["opened_at"])
+            if opened.tzinfo is None:
+                opened = opened.replace(tzinfo=timezone.utc)
+            age_days = (now_utc - opened).total_seconds() / 86400
+        except Exception:
+            continue
+        if age_days > MAX_HOLD_DAYS:
+            direction = (r["direction"] or "long").lower()
+            try:
+                exit_price = _fetch_current_price(r["ticker"])
+            except Exception:
+                print(f"[zombie] {r['ticker']} — can't fetch price, skipping auto-close")
+                continue
+            if direction == "long":
+                pnl_pct = (exit_price - r["entry_price"]) / r["entry_price"] * 100
+            else:
+                pnl_pct = (r["entry_price"] - exit_price) / r["entry_price"] * 100
+            pnl_usd = r["size_usd"] * (pnl_pct / 100)
+            close_ts = now_utc.isoformat()
+            conn.execute(
+                """UPDATE positions SET status='closed', exit_price=?, exit_date=?,
+                   pnl_pct=?, pnl_usd=?, hit_or_miss=?, closed_at=? WHERE id=?""",
+                (exit_price, close_ts, pnl_pct, pnl_usd, "max_hold", close_ts, r["id"]),
+            )
+            conn.commit()
+            print(f"[zombie] {r['ticker']} ({direction}) auto-closed after {age_days:.0f} days  "
+                  f"entry {r['entry_price']:.4f} → exit {exit_price:.4f}  PnL {pnl_pct:+.2f}% (${pnl_usd:+.2f})")
+            _notify_close(r["ticker"], direction, r["entry_price"], exit_price, pnl_pct, pnl_usd, "max_hold")
+
+    # Re-fetch open rows after zombie cleanup
+    open_rows = conn.execute("SELECT * FROM positions WHERE status='open'").fetchall()
+    if not open_rows:
+        print("[check] all positions closed (zombie cleanup)")
         _maybe_daily_digest(conn)
         conn.close()
         return
