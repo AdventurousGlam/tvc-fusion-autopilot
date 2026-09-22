@@ -1032,6 +1032,18 @@ def cmd_open(args):
             except (TypeError, ValueError):
                 pass
 
+        # v1.0 — REGUŁA #7: 5-MINUTE MICRO-CONFIRMATION
+        # Don't enter blind! Check 5m candles for momentum confirmation:
+        # ≥1 green candle in last 2 (bounce) + RSI(14) > 35 (not freefall).
+        try:
+            confirm_ok, confirm_reason = _check_5m_confirmation(ticker, direction)
+            if not confirm_ok:
+                print(f"[skip] {ticker} {direction.upper()} — no 5m confirmation: {confirm_reason}")
+                skipped += 1
+                continue
+        except Exception as e:
+            print(f"[5m-confirm] {ticker} — exception: {e}, proceeding anyway")
+
         # v0.8 — Tiered sizing: score determines position size
         if direction == "short":
             size_pct = SHORT_SIZE_CAP_PCT
@@ -2350,6 +2362,87 @@ def _fetch_klines_binance(ticker: str, since_iso: str, interval: str = "5m", lim
         raw = json.loads(resp.read())
     # Binance kline: [openTime, open, high, low, close, volume, closeTime, ...] (wszystko stringi poza openTime)
     return [[k[0], float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])] for k in raw]
+
+
+def _check_5m_confirmation(ticker: str, direction: str = "long") -> tuple[bool, str]:
+    """v1.0 — 5-minute micro-confirmation gate.
+    Fetches last 20 candles (5m) from Binance and checks:
+      1) At least 1 of the last 2 candles is green (close > open) for longs
+         (red for shorts)
+      2) RSI(14) on 5m is > 35 for longs (< 65 for shorts) — not in freefall/overshoot
+    Returns (passed: bool, reason: str).
+    """
+    import urllib.request as ur
+    import ssl
+    try:
+        import certifi
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        ssl_ctx = ssl.create_default_context()
+
+    sym = _binance_symbol(ticker)
+    # Fetch last 20 candles on 5m (no startTime → returns most recent)
+    url = (f"https://data-api.binance.vision/api/v3/klines?symbol={sym}"
+           f"&interval=5m&limit=20")
+    try:
+        req = ur.Request(url, headers={"User-Agent": "Mozilla/5.0 tvc-fusion-bot/0.2"})
+        with ur.urlopen(req, timeout=10, context=ssl_ctx) as resp:
+            raw = json.loads(resp.read())
+        candles = [[float(k[1]), float(k[2]), float(k[3]), float(k[4])] for k in raw]
+        # candles = [open, high, low, close]
+    except Exception as e:
+        # Network error — don't block trade, just warn
+        print(f"[5m-confirm] {ticker} — fetch error: {e}, skipping check (pass)")
+        return True, "5m fetch error (pass-through)"
+
+    if len(candles) < 15:
+        print(f"[5m-confirm] {ticker} — only {len(candles)} candles, need ≥15 (pass)")
+        return True, "insufficient 5m data (pass-through)"
+
+    # --- Check 1: Green candle confirmation ---
+    last_2 = candles[-2:]  # last 2 completed candles
+    if direction == "long":
+        green_count = sum(1 for c in last_2 if c[3] > c[0])  # close > open
+        candle_ok = green_count >= 1
+        candle_reason = f"{green_count}/2 green candles"
+    else:  # short
+        red_count = sum(1 for c in last_2 if c[3] < c[0])  # close < open
+        candle_ok = red_count >= 1
+        candle_reason = f"{red_count}/2 red candles"
+
+    # --- Check 2: RSI(14) on 5m ---
+    closes = [c[3] for c in candles]
+    rsi_period = 14
+    if len(closes) < rsi_period + 1:
+        rsi_val = 50.0  # not enough data — neutral
+    else:
+        deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+        gains = [d if d > 0 else 0 for d in deltas]
+        losses = [-d if d < 0 else 0 for d in deltas]
+        # Initial SMA for first `rsi_period` deltas
+        avg_gain = sum(gains[:rsi_period]) / rsi_period
+        avg_loss = sum(losses[:rsi_period]) / rsi_period
+        # Smoothed (Wilder's) for remaining
+        for i in range(rsi_period, len(deltas)):
+            avg_gain = (avg_gain * (rsi_period - 1) + gains[i]) / rsi_period
+            avg_loss = (avg_loss * (rsi_period - 1) + losses[i]) / rsi_period
+        if avg_loss == 0:
+            rsi_val = 100.0
+        else:
+            rs = avg_gain / avg_loss
+            rsi_val = 100.0 - (100.0 / (1.0 + rs))
+
+    if direction == "long":
+        rsi_ok = rsi_val > 35
+        rsi_reason = f"RSI(14)={rsi_val:.1f} {'>' if rsi_ok else '≤'} 35"
+    else:  # short
+        rsi_ok = rsi_val < 65
+        rsi_reason = f"RSI(14)={rsi_val:.1f} {'<' if rsi_ok else '≥'} 65"
+
+    passed = candle_ok and rsi_ok
+    reason = f"5m confirm: {candle_reason}, {rsi_reason} → {'PASS' if passed else 'FAIL'}"
+    print(f"[5m-confirm] {ticker} {direction.upper()} — {reason}")
+    return passed, reason
 
 
 def main():
