@@ -1,0 +1,270 @@
+<!-- TVC Fusion PRO — Pricing Section for WordPress -->
+<!-- Wklej ten kod w edytorze WordPress jako Custom HTML block -->
+
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<style>
+.tvc-pricing {
+  max-width: 960px;
+  margin: 60px auto;
+  padding: 0 20px;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  color: #B8B3A8;
+}
+.tvc-pricing h2 {
+  text-align: center;
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 2.4rem;
+  font-weight: 700;
+  color: #F3EFE6;
+  margin-bottom: 12px;
+}
+.tvc-pricing .subtitle {
+  text-align: center;
+  color: #B8B3A8;
+  font-size: 1.05rem;
+  margin-bottom: 48px;
+}
+.tvc-tiers {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+@media (max-width: 768px) {
+  .tvc-tiers { grid-template-columns: 1fr; }
+}
+.tvc-tier {
+  background: #111110;
+  border: 1px solid #2a2925;
+  border-radius: 16px;
+  padding: 36px 28px;
+  position: relative;
+  transition: transform 0.2s, border-color 0.2s;
+}
+.tvc-tier:hover {
+  transform: translateY(-4px);
+  border-color: #4a4740;
+}
+.tvc-tier.featured {
+  border-color: #BC09ED;
+  background: linear-gradient(135deg, #111110 0%, #1a0d1f 100%);
+}
+.tvc-tier.featured::before {
+  content: 'MOST POPULAR';
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #BC09ED;
+  color: #fff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 4px 16px;
+  border-radius: 20px;
+  letter-spacing: 1px;
+}
+.tvc-tier .tier-name {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #F3EFE6;
+  margin-bottom: 8px;
+}
+.tvc-tier .tier-price {
+  font-size: 2.4rem;
+  font-weight: 700;
+  color: #F3EFE6;
+  margin-bottom: 4px;
+}
+.tvc-tier .tier-price span {
+  font-size: 1rem;
+  color: #B8B3A8;
+  font-weight: 400;
+}
+.tvc-tier .tier-desc {
+  color: #B8B3A8;
+  font-size: 0.9rem;
+  margin-bottom: 24px;
+  line-height: 1.4;
+}
+.tvc-tier ul {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 28px 0;
+}
+.tvc-tier ul li {
+  padding: 6px 0;
+  font-size: 0.92rem;
+  color: #B8B3A8;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.tvc-tier ul li::before {
+  content: '✓';
+  color: #BC09ED;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.tvc-tier ul li.disabled::before {
+  content: '—';
+  color: #3a3835;
+}
+.tvc-tier ul li.disabled {
+  color: #3a3835;
+}
+.tvc-btn {
+  display: block;
+  width: 100%;
+  padding: 14px;
+  border: none;
+  border-radius: 10px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  text-decoration: none;
+  transition: opacity 0.2s, transform 0.15s;
+}
+.tvc-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+.tvc-btn-free {
+  background: #1e1d1b;
+  border: 1px solid #2a2925;
+  color: #F3EFE6;
+}
+.tvc-btn-pro {
+  background: #BC09ED;
+  color: #fff;
+}
+.tvc-btn-terminal {
+  background: #EFEFEF;
+  color: #0A0A09;
+}
+
+/* How it works */
+.tvc-how {
+  max-width: 700px;
+  margin: 56px auto 0;
+  text-align: center;
+}
+.tvc-how h3 {
+  font-family: 'Playfair Display', Georgia, serif;
+  font-size: 1.4rem;
+  color: #F3EFE6;
+  margin-bottom: 32px;
+}
+.tvc-steps {
+  display: flex;
+  justify-content: center;
+  gap: 40px;
+  flex-wrap: wrap;
+}
+.tvc-step {
+  flex: 0 0 180px;
+  text-align: center;
+}
+.tvc-step .step-num {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #BC09ED;
+  color: #fff;
+  font-weight: 700;
+  font-size: 1.1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+.tvc-step .step-text {
+  font-size: 0.92rem;
+  color: #B8B3A8;
+  line-height: 1.5;
+}
+.tvc-step a {
+  color: #BC09ED;
+  text-decoration: none;
+  font-weight: 600;
+}
+.tvc-step a:hover { text-decoration: underline; }
+</style>
+
+<div class="tvc-pricing" id="pricing">
+  <h2>Choose Your Edge</h2>
+  <p class="subtitle">Real-time crypto signals powered by AI fusion engine — from free alerts to full terminal access.</p>
+
+  <div class="tvc-tiers">
+
+    <!-- FREE -->
+    <div class="tvc-tier">
+      <div class="tier-name">FREE</div>
+      <div class="tier-price">$0 <span>/ forever</span></div>
+      <div class="tier-desc">Daily pick + delayed signals — enough to see the edge.</div>
+      <ul>
+        <li>Crypto Pick of the Day</li>
+        <li>Up to 2 trade signals/day (15 min delay)</li>
+        <li>Entry / SL / TP included</li>
+        <li class="disabled">No Pump Radar alerts</li>
+        <li class="disabled">No Smart Money data</li>
+        <li class="disabled">No daily digest</li>
+        <li class="disabled">No terminal access</li>
+      </ul>
+      <a href="https://t.me/TVCFusionSignals" target="_blank" class="tvc-btn tvc-btn-free">Join Free Channel</a>
+    </div>
+
+    <!-- PRO (featured) -->
+    <div class="tvc-tier featured">
+      <div class="tier-name">PRO Signals</div>
+      <div class="tier-price">$29 <span>/ month</span></div>
+      <div class="tier-desc">Full signals with exact entry, stop-loss &amp; take-profit levels.</div>
+      <ul>
+        <li>Everything in Free</li>
+        <li>Unlimited instant trade signals</li>
+        <li>Smart Money confirmation (whale flow + top traders)</li>
+        <li>Real-time Telegram alerts (0 delay)</li>
+        <li>Pump Radar with targets</li>
+        <li>Fusion score breakdown</li>
+        <li class="disabled">No terminal access</li>
+      </ul>
+      <a href="https://tvc-membership.onrender.com/join" target="_blank" class="tvc-btn tvc-btn-pro">Subscribe to PRO</a>
+    </div>
+
+    <!-- TERMINAL -->
+    <div class="tvc-tier">
+      <div class="tier-name">Terminal</div>
+      <div class="tier-price">$79 <span>/ month</span></div>
+      <div class="tier-desc">Full dashboard — orderbook, heatmaps, whale tracking, charts &amp; more.</div>
+      <ul>
+        <li>Everything in PRO</li>
+        <li>Live trading terminal</li>
+        <li>Orderbook &amp; liquidity heatmap</li>
+        <li>Whale detection (5 chains)</li>
+        <li>Smart Money panel</li>
+        <li>Correlation matrix</li>
+        <li>Paper trading engine</li>
+      </ul>
+      <a href="https://tradingventureclub.com/terminal/" target="_blank" class="tvc-btn tvc-btn-terminal">Coming Soon — Join Waitlist</a>
+    </div>
+
+  </div>
+
+  <!-- How PRO works -->
+  <div class="tvc-how">
+    <h3>How PRO Access Works</h3>
+    <div class="tvc-steps">
+      <div class="tvc-step">
+        <div class="step-num">1</div>
+        <div class="step-text">Open Telegram and message<br><a href="https://t.me/TVCAlertsBot" target="_blank">@TVCAlertsBot</a><br>→ tap <strong>Start</strong></div>
+      </div>
+      <div class="tvc-step">
+        <div class="step-num">2</div>
+        <div class="step-text">Click <strong>"Subscribe to PRO"</strong> above and complete payment via Stripe</div>
+      </div>
+      <div class="tvc-step">
+        <div class="step-num">3</div>
+        <div class="step-text">The bot sends you a <strong>private invite link</strong> to the PRO channel — done!</div>
+      </div>
+    </div>
+  </div>
+
+</div>
