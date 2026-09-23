@@ -521,13 +521,13 @@ def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime
         pro_text = "\n".join(pro_lines)
         _telegram_broadcast(pro_text)  # osobisty + PRO — natychmiast
 
-        # FREE: kolejkuj z 15-min opóźnieniem (pełne dane, max 2/dzień)
+        # FREE: kolejkuj z 15-min opóźnieniem (pełne dane, max 1/dzień)
         try:
             conn = db()
             _queue_free_signal(conn, {
                 "ticker": ticker, "direction": direction,
                 "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2,
-                "score": score, "regime": regime,
+                "score": score, "regime": regime, "size_usd": size_usd,
             })
             conn.close()
         except Exception as qe:
@@ -537,11 +537,11 @@ def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime
 
 
 def _notify_close(ticker, direction, entry, exit_price, pnl_pct, pnl_usd, reason):
-    """Telegram: zamknięcie pozycji — tylko osobisty + PRO (FREE dostaje wyłącznie sygnały open)."""
+    """Telegram: zamknięcie pozycji — osobisty + PRO (pełny) + FREE (wynik + CTA)."""
     try:
         exit_label = {"hit_tp1": "🎯 TP1 Hit", "hit_tp2": "🎯🎯 TP2 Hit", "hit_sl": "🛑 Stop Loss",
                       "hit_trailing_sl": "📈 Trailing Stop", "flip_choch": "🔁 Flip Exit", "sl_rescan_bug": "🐛 SL re-scan",
-                      "manual_close": "✋ Manual Close"}.get(reason, reason)
+                      "manual_close": "✋ Manual Close", "zombie_expired": "⏰ Max Hold Expired"}.get(reason, reason)
         res = "✅" if pnl_usd > 0 else "❌" if pnl_usd < 0 else "➖"
         pro_lines = [
             f"{res} <b>CLOSED — {ticker} {direction.upper()}</b>",
@@ -551,9 +551,56 @@ def _notify_close(ticker, direction, entry, exit_price, pnl_pct, pnl_usd, reason
             f"P&L: <b>{pnl_pct:+.2f}%</b> (${pnl_usd:+.2f})",
         ]
         pro_text = "\n".join(pro_lines)
-        _telegram_broadcast(pro_text)  # osobisty + PRO; FREE nie dostaje close'ów
+        _telegram_broadcast(pro_text)  # osobisty + PRO
+
+        # FREE: wynik zamknięcia + statystyki + CTA
+        _send_free_close_report(ticker, direction, pnl_pct, pnl_usd, exit_label, res)
     except Exception as e:
         print(f"[telegram] notify_close failed: {e}")
+
+
+def _send_free_close_report(ticker, direction, pnl_pct, pnl_usd, exit_label, res_emoji):
+    """Send trade close result to FREE channel — shows PnL as social proof + CTA to join PRO."""
+    try:
+        # Pobierz aktualne statystyki z DB
+        conn = db()
+        stats = _compute_equity_stats(conn) or {}
+        conn.close()
+
+        total_closed = stats.get("total_closed", 0)
+        wins = stats.get("wins", 0)
+        wr = (wins / total_closed * 100) if total_closed else 0
+        total_pnl = stats.get("total_pnl_usd", 0) or 0
+        pf = stats.get("profit_factor")
+
+        lines = [
+            f"{res_emoji} <b>TRADE CLOSED — {ticker} {direction.upper()}</b>",
+            "",
+            f"Result: <b>{exit_label}</b>",
+            f"P&L: <b>{pnl_pct:+.2f}%</b> (${pnl_usd:+.2f})",
+        ]
+
+        # Dodaj statystyki jako social proof
+        if total_closed >= 5:
+            stats_line = f"📊 Track record: <b>{total_closed} trades</b> · WR <b>{wr:.0f}%</b>"
+            if pf and pf > 0:
+                stats_line += f" · PF <b>{pf:.2f}</b>"
+            lines.append("")
+            lines.append(stats_line)
+            if total_pnl != 0:
+                lines.append(f"💰 Total P&L: <b>${total_pnl:+,.2f}</b>")
+
+        lines.extend([
+            "",
+            "🔓 <b>Get all signals instantly → TVC Fusion PRO</b>",
+            "<i>$29/mo · Cancel anytime · Full access</i>",
+        ])
+
+        free_text = "\n".join(lines)
+        _telegram_send(free_text, TG_FREE_CHANNEL)
+        print(f"[free-close] ✅ sent to FREE: {ticker} {pnl_pct:+.2f}%")
+    except Exception as e:
+        print(f"[free-close] ❌ send failed: {e}")
 
 
 def cmd_telegram_test(args):
@@ -602,7 +649,7 @@ def _meta_set(conn, key, value):
 # --- FREE channel: opóźnione sygnały (15 min) z pełnymi danymi, max 2/dzień ---
 
 FREE_DELAY_SECONDS = 15 * 60   # 15 minut opóźnienia vs PRO
-FREE_MAX_SIGNALS_PER_DAY = 2   # max 2 trade signals dziennie na FREE
+FREE_MAX_SIGNALS_PER_DAY = 1   # max 1 trade signal dziennie na FREE
 
 
 def _queue_free_signal(conn, signal_data: dict):
@@ -671,7 +718,7 @@ def _process_free_queue(conn):
 
 
 def _send_free_delayed_signal(sig):
-    """Send delayed signal to FREE channel — Learn2Trade-inspired format with R:R + context."""
+    """Send delayed signal to FREE channel — same format as PRO + delay note + CTA."""
     ticker = sig.get("ticker", "???")
     direction = sig.get("direction", "long")
     entry = sig.get("entry", 0)
@@ -680,41 +727,42 @@ def _send_free_delayed_signal(sig):
     tp2 = sig.get("tp2", 0)
     score = sig.get("score", 0)
     regime = sig.get("regime", "")
+    size_usd = sig.get("size_usd", 0)
 
     dir_label = "🟢 LONG" if direction == "long" else "🔴 SHORT"
 
-    # Compute R:R ratio (risk = |entry - sl|, reward = |tp1 - entry|)
+    # R:R ratios
     risk = abs(entry - sl) if sl else 0
-    reward = abs(tp1 - entry) if tp1 else 0
-    rr = f"{reward / risk:.1f}" if risk > 0 else "—"
+    reward1 = abs(tp1 - entry) if tp1 else 0
+    reward2 = abs(tp2 - entry) if tp2 else 0
+    rr1 = f"1:{reward1/risk:.1f}" if risk > 0 else "—"
+    rr2 = f"1:{reward2/risk:.1f}" if risk > 0 else "—"
 
-    # "Why now?" context from regime + score
-    regime_ctx = {
-        "TRENDING_UP": "Market is trending up — momentum confirms the setup.",
-        "TRENDING_UP_VOLATILE": "Strong uptrend with volatility — momentum confirms.",
-        "RANGING": "Range-bound market — mean reversion play near key level.",
-        "TRENDING_DOWN": "Downtrend regime — counter-trend or short setup.",
-        "TRENDING_DOWN_VOLATILE": "High volatility downtrend — wider stops, bigger potential.",
-        "CRASH": "Crash regime — extreme caution, defensive positioning.",
-    }
-    why_now = regime_ctx.get(regime, f"Multi-layer signal (score {score}).")
+    regime_label = {
+        "TRENDING_UP": "Trending Up ▲", "TRENDING_UP_VOLATILE": "Trending Up ⚡",
+        "TRENDING_DOWN": "Trending Down ▼", "TRENDING_DOWN_VOLATILE": "Trending Down ⚡",
+        "RANGING": "Range-bound ↔", "CRASH": "Crash ⛔",
+    }.get(regime, regime or "—")
+
+    size_str = f"${size_usd:,.0f}" if size_usd else ""
+    size_line = f"Size: <b>{size_str}</b> · Score: <b>{score}</b>" if size_str else f"Score: <b>{score}</b>"
 
     lines = [
-        f"📈 <b>Trade Signal — {ticker}</b>",
+        f"📈 <b>NEW TRADE — {ticker}</b>",
         "",
-        f"<b>{dir_label}</b>",
-        f"Entry: <code>{_fmt_px(entry)}</code>",
+        f"<b>{dir_label}</b> @ <code>{_fmt_px(entry)}</code>",
+        size_line,
+        "",
         f"SL: <code>{_fmt_px(sl)}</code>",
-        f"TP1: <code>{_fmt_px(tp1)}</code> · TP2: <code>{_fmt_px(tp2)}</code>",
-        f"R:R → <b>1:{rr}</b>",
+        f"TP1: <code>{_fmt_px(tp1)}</code>  (R:R {rr1})",
+        f"TP2: <code>{_fmt_px(tp2)}</code>  (R:R {rr2})",
         "",
-        f"<b>Why now?</b>",
-        f"{why_now}",
+        f"Regime: {regime_label}",
+        f"✅ Smart Money confirmed (≥2/3 layers aligned)",
         "",
-        f"⏱ <i>15 min delayed — PRO gets signals instantly</i>",
-        f"👉 <b>@TVCAlertsBot</b> — $29/mo, cancel anytime",
-        "",
-        "<i>Not financial advice. DYOR.</i>",
+        f"⏱ <i>Signal delayed 15 min vs PRO channel</i>",
+        f"🔓 <b>Get all signals instantly → TVC Fusion PRO</b>",
+        f"<i>$29/mo · Cancel anytime · Full access</i>",
     ]
     free_text = "\n".join(lines)
     try:
@@ -765,11 +813,30 @@ def _maybe_daily_digest_inner(conn):
                      f"· WR {wr_all:.0f}% ({stats['total_closed']} trade'ów)"
                      f"{' · PF ' + format(pf, '.2f') if pf else ''}"
                      f" · maxDD {stats.get('max_drawdown_pct', 0) or 0:.1f}%")
-    # FREE kanał dostaje skrócony digest (bez equity details)
-    free_lines = [f"📊 <b>TVC Fusion — raport dzienny {today}</b>",
-                  f"Zamkniętych: {len(closed)}" + (f" ({wins}W/{len(closed)-wins}L)" if closed else ""),
-                  f"Otwartych teraz: {len(open_now)}",
-                  "<i>Pełne statystyki (equity, PF, DD) → kanał PRO</i>"]
+    # FREE kanał dostaje wyniki PRO jako social proof + CTA
+    free_lines = [f"📊 <b>TVC Fusion PRO — Daily Results</b>", ""]
+    if closed:
+        free_lines.append(f"Closed today: <b>{len(closed)}</b> trades ({wins}W/{len(closed)-wins}L)")
+        free_lines.append(f"Today's P&L: <b>${pnl:+,.2f}</b>")
+        # Pokaż top 3 zamknięcia jako social proof
+        top_closed = sorted(closed, key=lambda r: abs(r.get("pnl_usd") or 0), reverse=True)[:3]
+        for tc in top_closed:
+            tc_res = "✅" if (tc.get("pnl_usd") or 0) > 0 else "❌"
+            free_lines.append(f"  {tc_res} {tc['ticker']} {tc.get('direction','long')[0].upper()} → <b>{tc.get('pnl_pct', 0) or 0:+.2f}%</b>")
+    else:
+        free_lines.append("No trades closed today.")
+    if stats and stats.get("total_closed"):
+        tot_pnl_free = stats.get("total_pnl_usd", 0) or 0
+        wr_free = (stats.get("wins", 0) / stats["total_closed"] * 100) if stats["total_closed"] else 0
+        pf_free = stats.get("profit_factor")
+        free_lines.append("")
+        free_lines.append(f"📈 All-time: <b>{stats['total_closed']} trades</b> · WR <b>{wr_free:.0f}%</b>"
+                          + (f" · PF <b>{pf_free:.2f}</b>" if pf_free else ""))
+    free_lines.extend([
+        "",
+        "🔓 <b>Get all signals instantly → TVC Fusion PRO</b>",
+        "<i>$29/mo · Cancel anytime · Full access</i>",
+    ])
     try:
         pro_text = "\n".join(lines)
         free_text = "\n".join(free_lines)

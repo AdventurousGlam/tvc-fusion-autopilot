@@ -531,7 +531,8 @@ def _send_telegram(out):
             free_lines.append(f"📊 <i>{extra_picks} more picks + S/R levels + risk flags in PRO</i>")
         else:
             free_lines.append(f"📊 <i>Support/resistance levels + risk flags in PRO</i>")
-        free_lines.append(f"👉 <b>@TVCAlertsBot</b> — $29/mo, cancel anytime")
+        free_lines.append(f"🔓 <b>Get all picks → TVC Fusion PRO</b>")
+        free_lines.append(f"<i>$29/mo · Cancel anytime · Full access</i>")
         free_lines.append("")
         free_lines.append("<i>Not financial advice. DYOR.</i>")
         free_text = "\n".join(free_lines)
