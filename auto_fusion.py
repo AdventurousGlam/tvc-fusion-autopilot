@@ -650,35 +650,128 @@ def analyze_market_structure(klines, lookback=2):
     }
 
 
-def compute_score(ticker, price_data, ta_score, fng, etf_flows):
+def compute_onchain_score(ticker, price_data, etf_flows, layer_inputs, klines_1h):
+    """v2.0 — REAL on-chain score 0-100.
+
+    BTC/ETH: ETF flow-based (institutional money in/out) — unchanged.
+    Altcoins (SOL, XRP, SUI): blend of 5 REAL on-chain signals:
+      - Price momentum (20%): 24h/7d change + volume (was the ONLY signal in v1.0)
+      - CVD spot flow (25%): taker buy vs sell (Binance spot klines)
+      - Smart Money (25%): Hyperliquid whale positioning
+      - Funding rate (15%): derivatives crowding signal
+      - OI dynamics (15%): open interest change vs price
+
+    v1.0 had ONLY price momentum for altcoins, disguised as "onchain" (it wasn't).
+    v1.1 patched this with a post-hoc adjustment. v2.0 replaces the fake proxy
+    with actual on-chain data from the start — no patches needed.
     """
-    Combined fusion score 0-100.
-    v0.7 weights: OnChain 40% + TA 40% + Sentiment 15% + News 5%.
-    (News reduced from 20%→5% — was hardcoded at 60, dead weight.
-     TA raised from 30%→40% — now has RSI14 + Fibonacci, earns the weight.
-     Sentiment raised 10%→15% — F&G is a real signal.)
-    """
-    # OnChain proxy: ETF flows dla BTC/ETH, sentiment + volume for altcoins
+    # BTC/ETH: ETF flows (unchanged from v1.0)
     if ticker == "BTC" and etf_flows and etf_flows.get("btc_1d"):
         flow_val = etf_flows["btc_1d"]
-        onchain_score = 65 + min(20, (flow_val / 100_000_000) * 5)
-    elif ticker == "ETH" and etf_flows and etf_flows.get("eth_1d"):
+        return int(max(0, min(100, 65 + min(20, (flow_val / 100_000_000) * 5)))), None
+    if ticker == "ETH" and etf_flows and etf_flows.get("eth_1d"):
         flow_val = etf_flows["eth_1d"]
-        onchain_score = 65 + min(20, (flow_val / 100_000_000) * 5)
+        return int(max(0, min(100, 65 + min(20, (flow_val / 100_000_000) * 5)))), None
+
+    # ── Altcoins: 5-component real on-chain blend ──
+    debug = {}
+
+    # 1. PRICE MOMENTUM (20%) — basic price/volume signal
+    chg_24h = price_data.get("change_24h", 0) or 0
+    chg_7d = price_data.get("change_7d", 0) or 0
+    vol_chg = price_data.get("volume_change_24h", 0) or 0
+    vol_mult = 1.3 if vol_chg > 30 else 1.0 if vol_chg > -10 else 0.7
+    momentum = 50 + (chg_24h * 2.0 + chg_7d * 0.8) * vol_mult
+    momentum = max(10, min(90, momentum))
+    debug["momentum"] = round(momentum, 1)
+
+    # 2. CVD SPOT FLOW (25%) — who's buying/selling on spot (4h window)
+    if klines_1h and len(klines_1h) >= 4:
+        last4 = klines_1h[-4:]
+        try:
+            qv = sum(float(k[7]) for k in last4)
+            delta = sum(2 * float(k[10]) - float(k[7]) for k in last4)
+            cvd_ratio = delta / qv if qv else 0.0
+        except (IndexError, ValueError, TypeError):
+            cvd_ratio = 0.0
     else:
-        # v1.0 improved altcoin onchain: blend 24h change, 7d change, and volume signal.
-        # v0.7 miał chg_24h*1.5 — w RANGING dawało ±3 pkt, za mało.
-        # Teraz: wzmocniony impact (×2.5 + ×1.0) + volume multiplier.
-        chg_24h = price_data.get("change_24h", 0)
-        chg_7d = price_data.get("change_7d", 0)
-        vol_chg = price_data.get("volume_change_24h", 0)  # % change in volume
-        # Volume confirmation amplifier: high volume = stronger conviction
-        vol_mult = 1.3 if (vol_chg or 0) > 30 else 1.0 if (vol_chg or 0) > -10 else 0.7
-        # Weighted blend: recent price action + medium-term trend, amplified by volume
-        onchain_score = 50 + (chg_24h * 2.5 + chg_7d * 1.0) * vol_mult
+        cvd_ratio = 0.0
+    # Map ratio to score: -0.15→20, 0→50, +0.15→80
+    cvd_score = 50 + cvd_ratio * 200
+    cvd_score = max(10, min(90, cvd_score))
+    debug["cvd"] = round(cvd_score, 1)
+    debug["cvd_ratio"] = round(cvd_ratio, 3)
 
-    onchain_score = max(0, min(100, onchain_score))
+    # 3. SMART MONEY (25%) — Hyperliquid whale positioning
+    sm_all = (layer_inputs.get("sm") or {}).get("agg", {})
+    sm = sm_all.get(ticker)
+    if sm:
+        net = sm.get("net", 0) or 0       # -1.0 to +1.0
+        vol = sm.get("total_usd", 0) or 0
+        # Volume weight: more capital = stronger signal ($10M = 1.0x)
+        vol_weight = min(1.5, max(0.5, vol / 10_000_000))
+        sm_score = 50 + net * 25 * vol_weight
+        sm_score = max(10, min(90, sm_score))
+    else:
+        sm_score = 50  # no data = neutral
+    debug["sm"] = round(sm_score, 1)
 
+    # 4. FUNDING RATE (15%) — derivatives crowding
+    ctx = (layer_inputs.get("ctx") or {}).get(ticker, {})
+    funding = ctx.get("funding_h")
+    if funding is not None:
+        # Neutral ≈ 0.00125%/h (0.01%/8h). Positive = longs pay = crowded longs.
+        # Map: +0.006 (very crowded longs)→25, 0.00125 (neutral)→50, -0.004 (shorts pay)→75
+        funding_score = 50 - (funding - 0.00125) * 5000
+        funding_score = max(10, min(90, funding_score))
+    else:
+        funding_score = 50
+    debug["funding"] = round(funding_score, 1)
+
+    # 5. OI DYNAMICS (15%) — open interest change vs price (divergence detection)
+    oi_ser = (layer_inputs.get("oi") or {}).get(ticker, [])
+    oi_4h = _oi_change_pct(oi_ser, 4)
+    if oi_4h is not None:
+        # OI rising + price rising → confirmed accumulation (bullish)
+        # OI rising + price flat/down → distribution/hidden selling (bearish)
+        # OI falling → deleveraging (slightly bearish for longs)
+        if oi_4h > 2 and chg_24h > 0.5:
+            oi_score = 65   # confirmed accumulation
+        elif oi_4h > 2 and chg_24h <= 0:
+            oi_score = 28   # OI divergence = distribution = selling pressure
+        elif oi_4h > 2 and chg_24h <= 0.5:
+            oi_score = 38   # mild divergence
+        elif oi_4h < -2 and chg_24h < -1:
+            oi_score = 35   # deleveraging in downturn
+        elif oi_4h < -2:
+            oi_score = 45   # deleveraging, neutral-ish
+        else:
+            oi_score = 50   # neutral
+    else:
+        oi_score = 50
+    debug["oi"] = round(oi_score, 1)
+
+    # ── Weighted blend ──
+    onchain = (
+        momentum * 0.20
+        + cvd_score * 0.25
+        + sm_score * 0.25
+        + funding_score * 0.15
+        + oi_score * 0.15
+    )
+    onchain = max(0, min(100, onchain))
+    debug["final"] = round(onchain, 1)
+
+    return int(onchain), debug
+
+
+def compute_score(ticker, onchain_score, ta_score, fng):
+    """
+    Combined fusion score 0-100.
+    v2.0 weights: OnChain 40% + TA 40% + Sentiment 15% + News 5%.
+    v2.0 change: onchain_score is now computed EXTERNALLY by compute_onchain_score()
+    which uses REAL on-chain data (CVD, SM, funding, OI) instead of price proxy.
+    """
     # News: placeholder (5% weight — minimal impact until we have real news scoring)
     news_score = 55
 
@@ -1441,11 +1534,24 @@ def generate_fusion():
         ta_score = int(50 + (ta_score - 50) * 1.4)
         ta_score = max(0, min(100, ta_score))
 
-        score, sources = compute_score(ticker, prices.get(ticker, {}), ta_score, fng, etf_flows)
+        current_price = prices.get(ticker, {}).get("price", 0)
+
+        # v2.0 — REAL on-chain score: uses CVD, SM, funding, OI for altcoins
+        # (replaces v1.0 fake proxy that used only price change as "onchain")
+        onchain_score, onchain_debug = compute_onchain_score(
+            ticker, prices.get(ticker, {}), etf_flows, layer_inputs, klines_1h_200
+        )
+        if onchain_debug:
+            print(f"[onchain] {ticker} v2.0 real score={onchain_score} "
+                  f"(momo={onchain_debug.get('momentum')}, cvd={onchain_debug.get('cvd')}, "
+                  f"sm={onchain_debug.get('sm')}, fund={onchain_debug.get('funding')}, "
+                  f"oi={onchain_debug.get('oi')})")
+
+        score, sources = compute_score(ticker, onchain_score, ta_score, fng)
         sources["momentum"] = int(short_term_score)  # v1.0 fix: inject for paper_bot DB
+        sources["onchain_debug"] = onchain_debug      # v2.0: expose sub-scores for diagnostics
         action = score_to_action(score, regime)
         size = compute_size(score, regime, ticker)
-        current_price = prices.get(ticker, {}).get("price", 0)
 
         direction = None
         if action in ("STRONG_BUY", "BUY"):
@@ -1502,6 +1608,7 @@ def generate_fusion():
             layers = compute_layers(ticker, direction, current_price, prices.get(ticker, {}).get("change_24h", 0), klines_1h_200, layer_inputs)
         except Exception as e:
             FETCH_ERRORS.append(f"layers.{ticker}: {type(e).__name__}: {e}"); layers = None
+
         if levels:
             entry_low, entry_high, sl, tp1, tp2 = levels["entry_low"], levels["entry_high"], levels["sl"], levels["tp1"], levels["tp2"]
         elif size > 0 and direction == "long":
@@ -1547,6 +1654,7 @@ def generate_fusion():
             "fib_position": _fib_position(current_price, klines_d220),  # v0.7: 0.0=at swing low, 1.0=at swing high
             "entry_quality": (levels["entry_quality"] if levels else None),
             "layers": layers,
+            "onchain_debug": onchain_debug,  # v2.0: sub-component scores for diagnostics
             "choch_override": choch_override,
             "risk_flag": f"Auto-generated {datetime.now().strftime('%H:%M')}. TA {ta_score}/100 (daily {daily_ta_score} · 1h momo {short_term_score} · {ms_note}). Current ${current_price:.2f} ({prices[ticker]['change_24h']:+.2f}% 24h)."
                          + (" ⚡ CHoCH OVERRIDE — 1h change of character, wchodzi mimo regime/score." if choch_override else ""),
