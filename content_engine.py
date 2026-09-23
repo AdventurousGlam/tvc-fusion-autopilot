@@ -809,10 +809,10 @@ def _kol_education_posts():
                 "#TradingEducation #CryptoDerivatives #FundingRate #QuantTrading"
             ),
             "graphic": (
-                "📸 GRAPHIC: TVC Terminal or exchange screenshot showing:\n"
-                "  - Funding rates for multiple tokens\n"
-                "  - Highlight extreme values (red = high positive, blue = negative)\n"
-                "  Or: simple diagram explaining funding mechanism\n"
+                "📸 GRAPHIC: TVC Terminal → panel 'Funding Rates' (w nawigacji bocznej):\n"
+                "  - Tabela z funding rate dla BTC, ETH, SOL, XRP, SUI\n"
+                "  - Podświetl skrajne wartości (czerwone = wysoki pozytywny, niebieski = negatywny)\n"
+                "  - Zrzut ekranu: tradingventureclub.com/terminal/?token=BTC → sekcja Funding Rates\n"
                 "  Format: 1200x627"
             ),
         },
@@ -1363,11 +1363,12 @@ def _notify_new_posts(posts):
         # Full post text (escape HTML tags from the post itself)
         text = p["text"].replace("<", "&lt;").replace(">", "&gt;")
 
-        # Graphic recommendation
+        # Graphic recommendation — full text (all lines)
         graphic = p.get("graphic", "")
         graphic_line = ""
         if graphic:
-            graphic_line = f"\n\n📸 <b>Graphic:</b> {graphic.split(chr(10))[0]}"
+            graphic_clean = graphic.replace("📸 GRAPHIC: ", "").strip()
+            graphic_line = f"\n\n📸 <b>Grafika:</b>\n{graphic_clean}"
 
         full_msg = f"{header}\n\n{text}{graphic_line}"
 
