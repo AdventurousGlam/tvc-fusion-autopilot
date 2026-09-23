@@ -165,8 +165,8 @@ def get_recent_pump_alerts(hours=6):
     data = _load_json(RADAR_ALERTS)
     if not isinstance(data, list):
         data = data.get("alerts", [])
-    since = (_now() - timedelta(hours=hours)).isoformat()
-    return [a for a in data if a.get("level") == "HIGH" and a.get("ts", "") >= since]
+    since_ts = (_now() - timedelta(hours=hours)).timestamp()
+    return [a for a in data if a.get("level") == "HIGH" and (a.get("ts") or 0) >= since_ts]
 
 
 def get_fusion_data():
