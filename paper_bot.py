@@ -68,12 +68,27 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+
+def _sanitize_nan(obj):
+    """Recursively replace NaN/Inf floats with None — json.dumps allows NaN by default
+    but JavaScript's JSON.parse does NOT, crashing the terminal."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_nan(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_nan(v) for v in obj]
+    return obj
 
 # --- config ------------------------------------------------------------
 
@@ -2165,7 +2180,7 @@ def cmd_upload(args):
         "performance": performance,
     }
 
-    content = json.dumps(fusion_data, indent=2, default=str)
+    content = json.dumps(_sanitize_nan(fusion_data), indent=2, default=str)
 
     payload = json.dumps({
         "description": f"TVC Fusion latest ({today})",

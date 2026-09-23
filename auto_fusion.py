@@ -36,6 +36,21 @@ except ImportError:
 
 UA = "Mozilla/5.0 tvc-auto-fusion/1.0"
 FETCH_ERRORS = []   # diagnostyka: trafia do fusion json (logi Actions wymagają admina)
+
+import math
+
+def _sanitize_nan(obj):
+    """Recursively replace NaN/Inf floats with None — json.dumps allows NaN by default
+    but JavaScript's JSON.parse does NOT, crashing the terminal."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_nan(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_nan(v) for v in obj]
+    return obj
 FUSION_DIR = Path.home() / "Claude" / "TVCFusion"
 
 # Ticker → Binance symbol
@@ -1587,7 +1602,7 @@ def generate_fusion():
 
     # Write to file
     out_path = FUSION_DIR / f"fusion_{fusion['date']}.json"
-    out_path.write_text(json.dumps(fusion, indent=2, ensure_ascii=False))
+    out_path.write_text(json.dumps(_sanitize_nan(fusion), indent=2, ensure_ascii=False))
     print(f"[save] Written to {out_path}")
 
     # Upload to Gist via paper_bot.py
