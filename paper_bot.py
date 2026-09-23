@@ -605,7 +605,8 @@ def _send_free_close_report(ticker, direction, pnl_pct, pnl_usd, exit_label, res
 
 def cmd_telegram_test(args):
     """Weryfikacja Telegrama. Domyślnie CICHA (getMe + getChat — nic nie wysyła);
-    z flagą --send wysyła wiadomość testową. Wynik trafia do meta → health → terminal."""
+    z flagą --send wysyła wiadomość testową. Wynik trafia do meta → health → terminal.
+    Testuje WSZYSTKIE 3 kanały: osobisty, PRO, FREE."""
     global _TELEGRAM_LAST_ERROR
     tok = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
     cid = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
@@ -618,12 +619,29 @@ def cmd_telegram_test(args):
         if not ok_me:
             ok, result = False, f"FAIL token: {me}"
         else:
+            bot_user = (me or {}).get("username", "?")
+            # Test osobisty chat
             ok_chat, chat = _telegram_api("getChat", {"chat_id": cid})
             if not ok_chat:
-                ok, result = False, f"FAIL chat: {chat}"
+                ok, result = False, f"FAIL personal chat: {chat}"
             else:
                 who = (chat or {}).get("username") or (chat or {}).get("first_name") or cid
-                ok, result = True, f"OK (@{(me or {}).get('username')} → {who})"
+                result = f"OK (@{bot_user} → {who})"
+                ok = True
+
+            # Test PRO channel
+            ok_pro, pro_info = _telegram_api("getChat", {"chat_id": TG_PRO_CHANNEL})
+            pro_name = (pro_info or {}).get("title", "?") if ok_pro else f"FAIL: {pro_info}"
+            print(f"[telegram-test] PRO channel ({TG_PRO_CHANNEL}): {'✅ ' + pro_name if ok_pro else '❌ ' + pro_name}")
+
+            # Test FREE channel
+            ok_free, free_info = _telegram_api("getChat", {"chat_id": TG_FREE_CHANNEL})
+            free_name = (free_info or {}).get("title", "?") if ok_free else f"FAIL: {free_info}"
+            print(f"[telegram-test] FREE channel ({TG_FREE_CHANNEL}): {'✅ ' + free_name if ok_free else '❌ ' + free_name}")
+
+            # Append channel status to result
+            result += f" | PRO: {'OK' if ok_pro else 'FAIL'} | FREE: {'OK' if ok_free else 'FAIL'}"
+
     print(f"[telegram-test] {result}")
     try:
         db_init()
@@ -666,14 +684,16 @@ def _queue_free_signal(conn, signal_data: dict):
 
 
 def _process_free_queue(conn):
-    """Sprawdź kolejkę FREE i wyślij sygnały starsze niż 15 min (max 2/dzień)."""
+    """Sprawdź kolejkę FREE i wyślij sygnały starsze niż 15 min (max 1/dzień)."""
     raw = _meta_get(conn, "free_pending", "[]")
     try:
         queue = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         queue = []
     if not queue:
+        print("[free-queue] kolejka pusta — nic do przetworzenia")
         return
+    print(f"[free-queue] znaleziono {len(queue)} sygnał(ów) w kolejce")
 
     now = datetime.now(timezone.utc)
     today = now.strftime("%Y-%m-%d")
