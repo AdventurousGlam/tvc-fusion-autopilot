@@ -43,7 +43,7 @@ HOME = Path.home()
 FUSION_DIR = HOME / "Claude" / "TVCFusion"
 DB_PATH = FUSION_DIR / "paper_trades.db"
 QUEUE_PATH = FUSION_DIR / "content_queue.json"
-FUSION_JSON = FUSION_DIR / "fusion_latest.json"
+FUSION_JSON = FUSION_DIR / f"fusion_{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.json"
 PICKS_JSON = FUSION_DIR / "crypto_picks.json"
 RADAR_ALERTS = FUSION_DIR / "pump_radar_alerts.json"
 
@@ -1336,24 +1336,46 @@ def _tg_send_personal(text):
 
 
 def _notify_new_posts(posts):
-    """Send a digest of new posts to personal Telegram."""
+    """Send FULL post texts to personal Telegram — ready for copy-paste to X/LinkedIn."""
     if not posts:
         return
-    msg_lines = ["📝 <b>Content Engine — nowe posty do publikacji</b>", ""]
+    # 1. Summary header
+    summary = f"📝 <b>Content Engine — {len(posts)} nowych postów</b>\n\n"
+    platforms = {}
     for p in posts:
+        pl = p["platform"].upper()
+        platforms[pl] = platforms.get(pl, 0) + 1
+    summary += " · ".join(f"{k}: {v}" for k, v in platforms.items())
+    _tg_send_personal(summary)
+
+    # 2. Each post as separate message — full text ready to copy-paste
+    for i, p in enumerate(posts, 1):
         platform = p["platform"].upper()
         ptype = p["type"].replace("_", " ").title()
         ticker = p.get("ticker") or ""
-        msg_lines.append(f"<b>[{platform}]</b> {ptype} {ticker}")
-        # First 200 chars of text as preview
-        preview = p["text"][:200].replace("<", "&lt;").replace(">", "&gt;")
-        msg_lines.append(f"<i>{preview}...</i>")
+
+        # Header line
+        header = f"━━━ <b>[{platform}] {ptype}</b>"
+        if ticker:
+            header += f" — {ticker}"
+        header += f" ({i}/{len(posts)}) ━━━"
+
+        # Full post text (escape HTML tags from the post itself)
+        text = p["text"].replace("<", "&lt;").replace(">", "&gt;")
+
         # Graphic recommendation
-        graphic = p.get("graphic", "").split("\n")[0]
-        msg_lines.append(f"🖼 {graphic}")
-        msg_lines.append("")
-    msg_lines.append("Pełne teksty w <code>content_queue.json</code>")
-    _tg_send_personal("\n".join(msg_lines))
+        graphic = p.get("graphic", "")
+        graphic_line = ""
+        if graphic:
+            graphic_line = f"\n\n📸 <b>Graphic:</b> {graphic.split(chr(10))[0]}"
+
+        full_msg = f"{header}\n\n{text}{graphic_line}"
+
+        # Telegram max 4096 chars — truncate if needed
+        if len(full_msg) > 4000:
+            full_msg = full_msg[:3990] + "\n\n[...truncated]"
+
+        _tg_send_personal(full_msg)
 
 
 # --- main logic ------------------------------------------------------------
