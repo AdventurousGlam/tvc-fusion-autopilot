@@ -218,6 +218,8 @@ def score_momentum(r, a):
         s *= 0.7   # pościg
     if r["r7"] > 150:
         s *= 0.6   # +150% w tydzień = późna faza
+    if a["rsi"] is not None and a["rsi"] > 70:
+        s *= 0.8   # overbought — niższy priorytet, rośnie ryzyko cofnięcia
     return s
 
 
@@ -298,6 +300,8 @@ def build_pick(cat, r, a, mcap, score):
         flags.append(f"negative funding {f:+.3f}%/8h (shorts paying)")
     if r["r24"] > 15:
         flags.append(f"+{r['r24']:.0f}% in 24h — chasing, wait for retest")
+    if a and a.get("rsi") is not None and a["rsi"] > 70:
+        flags.append(f"RSI {a['rsi']:.0f} — overbought zone, wait for pullback before entry")
     if datetime.now(timezone.utc).weekday() >= 5:
         flags.append("weekend — thin order book")
 
@@ -500,6 +504,7 @@ def _send_telegram(out):
     if out["radar"]:
         lines.append(""); lines.append("📡 <b>Pump Radar:</b> " + " · ".join(f"{r['ticker']}" for r in out["radar"]))
     lines.append(""); lines.append("<i>Full analysis in TVC Fusion Terminal</i>")
+    lines.append(""); lines.append("⚠️ <i>Screener picks = setups to watch. Wait for confirmation before entry. Not financial advice.</i>")
     pro_text = "\n".join(lines)
     # FREE: 1 najlepszy pick — Learn2Trade-style z kontekstem "Why this pick?"
     top = out["picks"][0] if out["picks"] else None
@@ -534,7 +539,7 @@ def _send_telegram(out):
         free_lines.append(f"🔓 <b>Get all picks → TVC Fusion PRO</b>")
         free_lines.append(f"<i>$29/mo · Cancel anytime · Full access</i>")
         free_lines.append("")
-        free_lines.append("<i>Not financial advice. DYOR.</i>")
+        free_lines.append("⚠️ <i>Screener pick ≠ entry signal. Always wait for confirmation (pullback, volume, key level). Not financial advice. DYOR.</i>")
         free_text = "\n".join(free_lines)
     else:
         free_text = None
