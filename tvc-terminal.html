@@ -943,8 +943,6 @@
       <option value="trading">⚡ Active Trading</option>
       <option value="eod">📊 End of Day</option>
     </select>
-    <button onclick="scrollToJournal()" style="background:var(--bg-elev-3,#1a2340);color:var(--gold);border:1px solid var(--gold);padding:6px 10px;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer" title="Jump to Decision Journal">📓</button>
-    <button onclick="scrollToPortfolio()" style="background:var(--bg-elev-3,#1a2340);color:var(--green);border:1px solid var(--green);padding:6px 10px;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer" title="Jump to Portfolio Health">🌐</button>
     <button onclick="openCompareModal()" style="background:var(--bg-elev-3,#1a2340);color:var(--purple);border:1px solid var(--purple);padding:6px 10px;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer" title="Compare 2 tokens side-by-side">⇋</button>
     <button onclick="fetchFusion()" style="background:var(--bg-elev-3,#1a2340);color:var(--gold);border:1px solid var(--gold);padding:6px 12px;border-radius:5px;font-weight:700;font-size:11px;cursor:pointer" title="Force refresh fusion data">↻</button>
   </div>
@@ -1017,7 +1015,7 @@
   .sb-item.active { color:var(--gold);background:var(--gold-soft);border-left-color:var(--gold); }
   .sb-icon { flex-shrink:0;width:40px;text-align:center;font-size:15px;line-height:1; }
   .sb-lbl { opacity:0;max-width:0;overflow:hidden;transition:opacity .2s,max-width .22s;font-size:11px; }
-  #sb-hamburger { display:none;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid var(--border);border-radius:6px;background:transparent;color:var(--text);font-size:16px;cursor:pointer;flex-shrink:0; }
+  #sb-hamburger { display:none;align-items:center;justify-content:center;width:38px;height:38px;border:2px solid var(--gold);border-radius:8px;background:var(--bg-elev-3,#1a2340);color:var(--gold);font-size:20px;cursor:pointer;flex-shrink:0;font-weight:900; }
   #sb-overlay { display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:1000; }
   @media (min-width:641px) {
     #command-bar { margin-left:-64px !important;padding-left:72px !important; }
@@ -1053,9 +1051,7 @@
     #cb-countdown-value { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 10.5px; }
     #command-bar > div:last-child { grid-area: ctrl; gap: 3px; }
     #command-bar > div:last-child button { padding: 5px 7px !important; font-size: 11px !important; min-height: 30px !important; }
-    #command-bar > div:last-child button[onclick="scrollToJournal()"],
-    #command-bar > div:last-child button[onclick="scrollToPortfolio()"],
-    #command-bar > div:last-child button[onclick="openCompareModal()"] { display: none; } /* są w pasku nawigacji */
+    #command-bar > div:last-child button[onclick="openCompareModal()"] { display: none; } /* jest w sidebar */
     #preset-select { max-width: 84px; font-size: 10px !important; padding: 5px 4px !important; }
   }
 </style>
@@ -4251,24 +4247,6 @@ window.addEventListener('scroll', () => {
   document.querySelectorAll('.sb-item').forEach(b => b.classList.toggle('active', b.dataset.target === active));
 }, { passive: true });
 
-function scrollToJournal() {
-  const el = document.getElementById('journal-slot');
-  if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    el.style.transition = 'box-shadow 0.3s';
-    el.style.boxShadow = '0 0 0 3px var(--gold)';
-    setTimeout(() => { el.style.boxShadow = ''; }, 1500);
-  }
-}
-function scrollToPortfolio() {
-  const el = document.getElementById('portfolio-health-slot');
-  if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    el.style.transition = 'box-shadow 0.3s';
-    el.style.boxShadow = '0 0 0 3px var(--green)';
-    setTimeout(() => { el.style.boxShadow = ''; }, 1500);
-  }
-}
 // Load saved preset on init
 (function() {
   const saved = (function() { try { return localStorage.getItem('tvc_preset'); } catch (e) { return null; } })() || 'all';
