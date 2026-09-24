@@ -537,7 +537,7 @@ def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime
 
 
 def _notify_close(ticker, direction, entry, exit_price, pnl_pct, pnl_usd, reason):
-    """Telegram: zamknięcie pozycji — osobisty + PRO (pełny) + FREE (wynik + CTA)."""
+    """Telegram: zamknięcie pozycji — osobisty + PRO (pełny) + FREE (tylko jeśli trade był ogłoszony na FREE)."""
     try:
         exit_label = {"hit_tp1": "🎯 TP1 Hit", "hit_tp2": "🎯🎯 TP2 Hit", "hit_sl": "🛑 Stop Loss",
                       "hit_trailing_sl": "📈 Trailing Stop", "flip_choch": "🔁 Flip Exit", "sl_rescan_bug": "🐛 SL re-scan",
@@ -553,8 +553,12 @@ def _notify_close(ticker, direction, entry, exit_price, pnl_pct, pnl_usd, reason
         pro_text = "\n".join(pro_lines)
         _telegram_broadcast(pro_text)  # osobisty + PRO
 
-        # FREE: wynik zamknięcia + statystyki + CTA
-        _send_free_close_report(ticker, direction, pnl_pct, pnl_usd, exit_label, res)
+        # FREE: wynik zamknięcia TYLKO jeśli trade był wcześniej ogłoszony na FREE
+        if _is_free_announced(ticker):
+            _send_free_close_report(ticker, direction, pnl_pct, pnl_usd, exit_label, res)
+            _unmark_free_announced(ticker)  # wyczyść — close report wysłany
+        else:
+            print(f"[free-close] ⏭ skipping FREE close for {ticker} — never announced on FREE")
     except Exception as e:
         print(f"[telegram] notify_close failed: {e}")
 
@@ -737,6 +741,57 @@ def _process_free_queue(conn):
         print(f"[free-queue] przetworzone: {len(queue) - len(remaining)}, pozostało: {len(remaining)}, wysłane dziś: {sent_count}")
 
 
+def _mark_free_announced(ticker: str):
+    """Record that a trade for this ticker was announced on FREE channel."""
+    try:
+        conn = db()
+        raw = _meta_get(conn, "free_announced_tickers", "[]")
+        try:
+            announced = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            announced = []
+        if ticker not in announced:
+            announced.append(ticker)
+        _meta_set(conn, "free_announced_tickers", json.dumps(announced))
+        conn.close()
+        print(f"[free-track] ✅ marked {ticker} as announced on FREE")
+    except Exception as e:
+        print(f"[free-track] ❌ mark failed: {e}")
+
+
+def _is_free_announced(ticker: str) -> bool:
+    """Check if a trade for this ticker was announced on FREE channel."""
+    try:
+        conn = db()
+        raw = _meta_get(conn, "free_announced_tickers", "[]")
+        conn.close()
+        try:
+            announced = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            announced = []
+        return ticker in announced
+    except Exception:
+        return False
+
+
+def _unmark_free_announced(ticker: str):
+    """Remove ticker from FREE announced list (after close report sent)."""
+    try:
+        conn = db()
+        raw = _meta_get(conn, "free_announced_tickers", "[]")
+        try:
+            announced = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            announced = []
+        if ticker in announced:
+            announced.remove(ticker)
+        _meta_set(conn, "free_announced_tickers", json.dumps(announced))
+        conn.close()
+        print(f"[free-track] ✅ unmarked {ticker} from FREE announced list")
+    except Exception as e:
+        print(f"[free-track] ❌ unmark failed: {e}")
+
+
 def _send_free_delayed_signal(sig):
     """Send delayed signal to FREE channel — same format as PRO + delay note + CTA."""
     ticker = sig.get("ticker", "???")
@@ -787,6 +842,7 @@ def _send_free_delayed_signal(sig):
     free_text = "\n".join(lines)
     try:
         _telegram_send(free_text, TG_FREE_CHANNEL)
+        _mark_free_announced(ticker)  # Track that this ticker was sent to FREE
         print(f"[free-queue] ✅ sent to FREE: {ticker} {direction}")
     except Exception as e:
         print(f"[free-queue] ❌ send failed: {e}")
