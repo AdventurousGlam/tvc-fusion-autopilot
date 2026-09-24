@@ -1463,48 +1463,158 @@ def compute_layers(ticker, direction, price, change_24h, klines_1h, inputs):
 
 def detect_regime(btc_price_data, fng, btc_dominance, btc_klines_d=None):
     """
-    Regime detection v1.0:
-    - BTC 24h < -8% → CRASH
-    - BTC 24h < -3% → TRENDING_DOWN
-    - BTC 24h > +3% + F&G > 60 → TRENDING_UP (strong move + sentiment confirmation)
-    - v1.0 NEW: BTC 7d > +2% + price > EMA20 → TRENDING_UP (catches sustained uptrends
-      that move <3%/day but are clearly bullish over a week — the old logic missed these
-      entirely, defaulting to RANGING even when BTC was grinding higher for days)
-    - BTC 7d < -2% + price < EMA20 → TRENDING_DOWN (symmetric for downtrends)
-    - Wysoki volatility (24h range > 5%) → *_VOLATILE variant
-    - Inaczej → RANGING
+    Regime detection v2.0 — multi-layer, faster response.
+
+    Scoring system: bear_pts vs bull_pts from 6 signals.
+    Each signal adds 1-2 points. Final score determines regime:
+      bull >= 5  → TRENDING_UP
+      bear >= 5  → TRENDING_DOWN
+      bear >= 8  → CRASH
+      else       → RANGING
+    Volatile variant when 24h range > 5%.
+
+    Signals (each checked independently):
+      1. Daily change: ±1.5% adds 1 pt, ±3% adds 2 pts
+      2. 3-day momentum: ±2.5% adds 1 pt, ±5% adds 2 pts
+      3. 7-day momentum: ±3% adds 1 pt, ±6% adds 2 pts
+      4. EMA alignment: EMA8 vs EMA21 position + slope
+      5. Market structure: last 3 daily candles direction
+      6. F&G extreme: <25 → bear +1, >75 → bull +1
+
+    Previous v1.0 missed slow grinds (-1%/day) that never hit -3% threshold.
+    v2.0 catches these via composite scoring — 3 small bearish signals = TRENDING_DOWN.
     """
     if not btc_price_data:
         return "RANGING"
+
     change = btc_price_data.get("change_24h", 0)
     price = btc_price_data.get("price", 1)
     high = btc_price_data.get("high_24h", 1)
     low = btc_price_data.get("low_24h", 1)
-    range_pct = (high - low) / price * 100
+    range_pct = (high - low) / price * 100 if price > 0 else 0
 
-    if change < -8:
-        return "CRASH"
-    if change < -3:
-        return "TRENDING_DOWN_VOLATILE" if range_pct > 5 else "TRENDING_DOWN"
-    if change > 3 and fng and fng.get("current", 50) > 60:
-        return "TRENDING_UP_VOLATILE" if range_pct > 5 else "TRENDING_UP"
+    bear_pts = 0
+    bull_pts = 0
+    bear_has_momentum = False   # True if any of signals 1-3 fired bearish
+    bull_has_momentum = False   # True if any of signals 1-3 fired bullish
+    signals = []
 
-    # v1.0 — 7-DAY TREND DETECTION: jeśli BTC rósł/spadał >2% przez tydzień
-    # i cena jest po właściwej stronie EMA20, to jest trend — nie RANGING.
-    # To łapie "ciche" trendy +0.5%/dzień × 7 dni = +3.5% tygodniowo,
-    # które stary 24h-only logic ignorował (każdy pojedynczy dzień < 3%).
-    if btc_klines_d and len(btc_klines_d) >= 20:
+    # ── SIGNAL 1: Daily change ──
+    if change <= -3:
+        bear_pts += 2; bear_has_momentum = True; signals.append(f"24h={change:+.1f}% (strong bear)")
+    elif change <= -1.5:
+        bear_pts += 1; bear_has_momentum = True; signals.append(f"24h={change:+.1f}% (bear)")
+    elif change >= 3:
+        bull_pts += 2; bull_has_momentum = True; signals.append(f"24h={change:+.1f}% (strong bull)")
+    elif change >= 1.5:
+        bull_pts += 1; bull_has_momentum = True; signals.append(f"24h={change:+.1f}% (bull)")
+
+    # ── SIGNALS 2-5 require klines ──
+    if btc_klines_d and len(btc_klines_d) >= 21:
         closes = [float(k[4]) for k in btc_klines_d]
-        ema20 = closes[0]
-        for c in closes[-20:]:
-            ema20 = ema20 * 0.9 + c * 0.1
-        chg_7d = (closes[-1] - closes[-7]) / closes[-7] * 100 if len(closes) >= 7 else 0
-        if chg_7d > 2.0 and price > ema20:
-            return "TRENDING_UP_VOLATILE" if range_pct > 5 else "TRENDING_UP"
-        if chg_7d < -2.0 and price < ema20:
-            return "TRENDING_DOWN_VOLATILE" if range_pct > 5 else "TRENDING_DOWN"
+        highs = [float(k[2]) for k in btc_klines_d]
+        lows = [float(k[3]) for k in btc_klines_d]
 
-    return "RANGING"
+        # ── SIGNAL 2: 3-day momentum ──
+        if len(closes) >= 4:
+            chg_3d = (closes[-1] - closes[-4]) / closes[-4] * 100
+            if chg_3d <= -5:
+                bear_pts += 2; bear_has_momentum = True; signals.append(f"3d={chg_3d:+.1f}% (strong bear)")
+            elif chg_3d <= -2.5:
+                bear_pts += 1; bear_has_momentum = True; signals.append(f"3d={chg_3d:+.1f}% (bear)")
+            elif chg_3d >= 5:
+                bull_pts += 2; bull_has_momentum = True; signals.append(f"3d={chg_3d:+.1f}% (strong bull)")
+            elif chg_3d >= 2.5:
+                bull_pts += 1; bull_has_momentum = True; signals.append(f"3d={chg_3d:+.1f}% (bull)")
+
+        # ── SIGNAL 3: 7-day momentum ──
+        if len(closes) >= 8:
+            chg_7d = (closes[-1] - closes[-8]) / closes[-8] * 100
+            if chg_7d <= -6:
+                bear_pts += 2; bear_has_momentum = True; signals.append(f"7d={chg_7d:+.1f}% (strong bear)")
+            elif chg_7d <= -3:
+                bear_pts += 1; bear_has_momentum = True; signals.append(f"7d={chg_7d:+.1f}% (bear)")
+            elif chg_7d >= 6:
+                bull_pts += 2; bull_has_momentum = True; signals.append(f"7d={chg_7d:+.1f}% (strong bull)")
+            elif chg_7d >= 3:
+                bull_pts += 1; bull_has_momentum = True; signals.append(f"7d={chg_7d:+.1f}% (bull)")
+
+        # ── SIGNAL 4: EMA8 vs EMA21 alignment + slope ──
+        def _ema(data, period):
+            k = 2 / (period + 1)
+            e = data[0]
+            for v in data[1:]:
+                e = v * k + e * (1 - k)
+            return e
+
+        if len(closes) >= 21:
+            ema8 = _ema(closes[-12:], 8)
+            ema21 = _ema(closes[-25:] if len(closes) >= 25 else closes, 21)
+            # slope: compare current ema8 vs ema8 from 3 bars ago
+            ema8_prev = _ema(closes[-15:-3], 8) if len(closes) >= 15 else ema8
+            ema8_slope = (ema8 - ema8_prev) / ema8_prev * 100 if ema8_prev else 0
+
+            if ema8 < ema21 and ema8_slope < -0.3:
+                bear_pts += 2; signals.append(f"EMA8<EMA21 + slope={ema8_slope:+.2f}% (bear cross)")
+            elif ema8 < ema21:
+                bear_pts += 1; signals.append(f"EMA8<EMA21 (bear)")
+            elif ema8 > ema21 and ema8_slope > 0.3:
+                bull_pts += 2; signals.append(f"EMA8>EMA21 + slope={ema8_slope:+.2f}% (bull cross)")
+            elif ema8 > ema21:
+                bull_pts += 1; signals.append(f"EMA8>EMA21 (bull)")
+
+        # ── SIGNAL 5: Market structure — last 3 candles ──
+        if len(closes) >= 4:
+            red_candles = sum(1 for i in range(-3, 0) if closes[i] < closes[i - 1])
+            green_candles = 3 - red_candles
+            # Also check lower highs / lower lows pattern
+            lower_highs = sum(1 for i in range(-2, 0) if highs[i] < highs[i - 1])
+            higher_lows = sum(1 for i in range(-2, 0) if lows[i] > lows[i - 1])
+
+            if red_candles == 3:
+                bear_pts += 2; signals.append("3/3 red candles (strong bear structure)")
+            elif red_candles >= 2 and lower_highs >= 1:
+                bear_pts += 1; signals.append(f"{red_candles}/3 red + lower highs (bear structure)")
+            elif green_candles == 3:
+                bull_pts += 2; signals.append("3/3 green candles (strong bull structure)")
+            elif green_candles >= 2 and higher_lows >= 1:
+                bull_pts += 1; signals.append(f"{green_candles}/3 green + higher lows (bull structure)")
+
+    # ── SIGNAL 6: F&G extremes ──
+    fng_val = fng.get("current", 50) if fng else 50
+    if fng_val <= 25:
+        bear_pts += 1; signals.append(f"F&G={fng_val} (extreme fear)")
+    elif fng_val >= 75:
+        bull_pts += 1; signals.append(f"F&G={fng_val} (extreme greed)")
+
+    # ── RESOLVE REGIME ──
+    net = bull_pts - bear_pts
+    volatile = "_VOLATILE" if range_pct > 5 else ""
+
+    print(f"[regime-v2] bull={bull_pts} bear={bear_pts} net={net} | {'; '.join(signals)}")
+
+    if bear_pts >= 8:
+        regime = "CRASH"
+    elif bear_pts >= 5:
+        regime = f"TRENDING_DOWN{volatile}"
+    elif bull_pts >= 5:
+        regime = f"TRENDING_UP{volatile}"
+    elif bear_pts >= 3 and bull_pts <= 1 and bear_has_momentum:
+        regime = f"TRENDING_DOWN{volatile}"
+    elif bull_pts >= 3 and bear_pts <= 1 and bull_has_momentum:
+        regime = f"TRENDING_UP{volatile}"
+    else:
+        regime = "RANGING"
+
+    details = {
+        "bull_pts": bull_pts,
+        "bear_pts": bear_pts,
+        "bull_has_momentum": bull_has_momentum,
+        "bear_has_momentum": bear_has_momentum,
+        "signals": signals,
+        "version": "2.0",
+    }
+    return regime, details
 
 
 def generate_fusion():
@@ -1532,8 +1642,8 @@ def generate_fusion():
 
     # v1.0 — fetch BTC daily klines for 7d trend detection in regime
     btc_klines_d = fetch_klines("BTC", limit=30) or []
-    regime = detect_regime(prices.get("BTC"), fng, dom, btc_klines_d=btc_klines_d)
-    print(f"[regime] {regime}")
+    regime, regime_details = detect_regime(prices.get("BTC"), fng, dom, btc_klines_d=btc_klines_d)
+    print(f"[regime] {regime} (bull={regime_details['bull_pts']} bear={regime_details['bear_pts']})")
 
     try:
         layer_inputs = fetch_layers_inputs()
@@ -1710,11 +1820,13 @@ def generate_fusion():
         "date": datetime.now().strftime("%Y-%m-%d"),
         "version": f"auto-{datetime.now().strftime('%H%M')}",
         "regime": regime,
+        "regime_details": regime_details,
         "regime_note": (
             f"Auto-generated {datetime.now().strftime('%Y-%m-%d %H:%M UTC')}. "
             f"BTC ${prices.get('BTC', {}).get('price', 0):.0f} ({prices.get('BTC', {}).get('change_24h', 0):+.2f}% 24h), "
             f"F&G {fng['current'] if fng else 'N/A'} ({fng['classification'] if fng else 'N/A'}), "
             f"BTC.D {dom_str}. "
+            f"Regime v2.0: bull={regime_details['bull_pts']} bear={regime_details['bear_pts']} → {regime}. "
             f"Weekday sizing ×1.0"
             f"{' (weekend ×0.7 applied)' if datetime.now().weekday() in (5, 6) else ''}."
         ),
