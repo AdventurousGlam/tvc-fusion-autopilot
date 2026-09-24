@@ -809,7 +809,29 @@ def compute_score(ticker, onchain_score, ta_score, fng):
 
 
 def score_to_action(score, regime):
-    """Score → action mapping (zgodne z Fusion 2.0 spec)."""
+    """Score → action mapping (v2.1 — regime-aware thresholds).
+
+    TRENDING_DOWN / CRASH: BUY threshold podniesiony do 75/80,
+    SELL threshold obniżony do 50/55. Efekt: w spadkach bot generuje
+    SHORT sygnały zamiast otwierania LONGów pod prąd.
+    """
+    # ── BEARISH REGIMES: harder to BUY, easier to SELL ──
+    if regime in ("TRENDING_DOWN", "TRENDING_DOWN_VOLATILE", "CRASH"):
+        is_crash = regime == "CRASH"
+        buy_thresh = 80 if is_crash else 75      # BUY only extreme conviction
+        sell_thresh = 55 if is_crash else 50      # SELL starts much earlier
+        strong_sell = 40 if is_crash else 35
+
+        if score >= buy_thresh:
+            return "BUY"
+        elif score >= sell_thresh:
+            return "HOLD"
+        elif score >= strong_sell:
+            return "SELL"
+        else:
+            return "STRONG_SELL"
+
+    # ── ORIGINAL LOGIC: TRENDING_UP, RANGING ──
     if score >= 75:
         return "STRONG_BUY"
     elif score >= 60:
@@ -824,18 +846,31 @@ def score_to_action(score, regime):
 
 def compute_size(score, regime, ticker):
     """
-    Position sizing na bazie score + regime multiplier.
-    score >= 60  → LONG sizing (wyższy score = większa pozycja)
-    score <= 35  → SHORT sizing (niższy score = większa pozycja, symetrycznie do long)
-    36-59        → no man's land, brak pozycji (score za neutralny w obie strony)
+    Position sizing na bazie score + regime multiplier (v2.1 — regime-aware).
+
+    Progi dopasowane do score_to_action() v2.1:
+    - TRENDING_UP/RANGING: LONG >= 60, SHORT < 40 (oryginał)
+    - TRENDING_DOWN/VOLATILE: LONG >= 75, SHORT < 50 (poszerzona strefa short)
+    - CRASH: LONG >= 80, SHORT < 55 (jeszcze szersza)
     """
     if datetime.now().weekday() in (5, 6):
         weekend_mult = 0.7  # weekend defensive, obie strony
     else:
         weekend_mult = 1.0
 
-    if score >= 60:
-        base = max(0.5, (score - 60) * 0.1)  # 60 = 0.5%, 80 = 2.0%
+    # v2.1 — regime-aware thresholds (aligned with score_to_action)
+    if regime in ("TRENDING_DOWN", "TRENDING_DOWN_VOLATILE"):
+        long_thresh = 75
+        short_thresh = 50
+    elif regime == "CRASH":
+        long_thresh = 80
+        short_thresh = 55
+    else:
+        long_thresh = 60
+        short_thresh = 40
+
+    if score >= long_thresh:
+        base = max(0.5, (score - long_thresh) * 0.1)
         multiplier = {
             "TRENDING_UP": 1.0,
             "TRENDING_UP_VOLATILE": 0.7,
@@ -844,9 +879,8 @@ def compute_size(score, regime, ticker):
             "TRENDING_DOWN_VOLATILE": 0.2,
             "CRASH": 0.1,
         }.get(regime, 0.7)
-    elif score < 40:
-        # próg wyrównany z score_to_action() (SELL/STRONG_SELL zaczyna się < 40)
-        base = max(0.5, (40 - score) * 0.075)  # 39 = 0.5%, 20 = 1.5%, 0 = 3.0%
+    elif score < short_thresh:
+        base = max(0.5, (short_thresh - score) * 0.075)
         # Regime multiplier dla SHORT: odwrotny do long — trend spadkowy zwiększa
         # przekonanie do shortów, trend wzrostowy je tłumi (nie walcz z trendem)
         multiplier = {
@@ -1576,14 +1610,15 @@ def generate_fusion():
         # Teraz override wymaga JEDNOCZEŚNIE:
         #   (1) regime != RANGING — w range 1h CHoCH to szum, nie sygnał,
         #   (2) zgodności struktury 1h I 15m (obie bearish / obie bullish),
-        #   (3) zgodności z fusion score: short tylko gdy score < 40 (nie shortujemy
-        #       tokena, którego własny score mówi 57 = lekko bullish), long tylko
-        #       gdy score >= 55.
+        #   (3) zgodności z fusion score: short tylko gdy score < short_thresh
+        #       (v2.1: regime-aware), long tylko gdy score >= 55.
         choch_override = False
         override_allowed = regime != "RANGING"
         ms_agree_bear = ms_1h.get("trend") == "bearish" and ms_15m.get("trend") == "bearish"
         ms_agree_bull = ms_1h.get("trend") == "bullish" and ms_15m.get("trend") == "bullish"
-        if override_allowed and ms_agree_bear and score < 40 and direction != "short":
+        # v2.1 — CHoCH bear override uses regime-aware threshold (aligned with score_to_action)
+        choch_bear_thresh = 55 if regime == "CRASH" else 50 if regime in ("TRENDING_DOWN", "TRENDING_DOWN_VOLATILE") else 40
+        if override_allowed and ms_agree_bear and score < choch_bear_thresh and direction != "short":
             direction = "short"
             action = "SELL"
             size = compute_size(30, regime, ticker)  # syntetyczny bearish score do sizing

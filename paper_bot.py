@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Paper Trading Bot v1.0
+TVC Fusion Paper Trading Bot v2.1
+
+v2.1 (2026-09-24) — SHORT IN DOWNTREND
+  - LONG BLOCKED in TRENDING_DOWN/CRASH (threshold=100 = impossible)
+  - SHORT gate regime-aware: TRENDING_DOWN→55, CRASH→60 (was flat 42)
+  - Tiered SHORT sizing: 5-20% by score (was flat 0.5%)
+  - Aligned with auto_fusion score_to_action v2.1
 
 v1.0 (2026-09-22) — EFFECTIVENESS UPGRADE
   - Regime-aware score gate: TRENDING_UP→55, RANGING→58, TRENDING_DOWN→62
@@ -105,13 +111,22 @@ EXCHANGE_ID = os.environ.get("TVC_EXCHANGE", "bybit")
 # v0.8 — TIERED SIZING by fusion score (higher conviction = bigger position)
 # Replaces flat 3% cap. Shorts stay conservative (unlimited upside risk).
 TIERED_LONG_SIZES = {        # (min_score, max_score): size_pct
-    (55, 60): 5.0,           # v1.0: micro position (trending regime only)
+    (55, 60): 5.0,           # micro position (trending regime only)
     (60, 65): 8.0,           # low conviction — probe position
     (65, 75): 20.0,          # normal conviction
     (75, 85): 40.0,          # high conviction
     (85, 101): 80.0,         # very high conviction — full send
 }
-SHORT_SIZE_CAP_PCT = 0.5    # max % capital per SHORT trade (unlimited upside risk)
+
+# v2.1 — TIERED SHORT SIZING: symetryczny do LONG, ale mniejszy (unlimited upside risk).
+# Score jest "odwrócony": niższy score = silniejszy sygnał short.
+TIERED_SHORT_SIZES = {       # (min_score, max_score): size_pct
+    (45, 56): 5.0,           # mild bearish (only in TRENDING_DOWN/CRASH regimes)
+    (35, 45): 8.0,           # moderate bearish
+    (25, 35): 15.0,          # strong bearish
+    (0, 25):  20.0,          # very strong bearish — highest conviction short
+}
+SHORT_SIZE_CAP_PCT = 5.0    # v2.1: fallback (was 0.5% — zbyt mały na realny trade)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # v0.5 — SIMPLIFIED 5-RULE SYSTEM (Tushar Chande: <10 rules)
@@ -122,10 +137,11 @@ SHORT_SIZE_CAP_PCT = 0.5    # max % capital per SHORT trade (unlimited upside ri
 # entry_quality wait/skip, regime constraint, pending orders).
 #
 # 5 REGUŁ:
-#   1. Fusion Score ≥60 → LONG  /  ≤40 → SHORT  (v0.8: back to 60, tiered sizing)
+#   1. Regime-aware gates (v2.1): LONG blocked in TRENDING_DOWN/CRASH.
+#      SHORT gate: TRENDING_DOWN→55, CRASH→60. Tiered sizing obie strony.
 #   1b. R:R at live price ≥ 1.0 (v0.6: execution-time guard)
 #   6. Fibonacci pullback filter (v0.7)
-#   7. Tiered sizing by score: 60-65→8%, 65-75→20%, 75-85→40%, 85+→80% (v0.8)
+#   7. Tiered sizing by score: LONG 55-85+→5-80%, SHORT 0-55→5-20% (v2.1)
 #   2. Smart Money verdict ≠ opposes (layers.veto is None)
 #   3. Brak makro blackout (3h przed / 1h po tier-1 evencie)
 #   4. SL ze struktury (auto_fusion levels)
@@ -136,20 +152,34 @@ SHORT_SIZE_CAP_PCT = 0.5    # max % capital per SHORT trade (unlimited upside ri
 # dla shortów, MIN_HOLD flip protection.
 # Zachowane: trailing SL, reopen cooldown, daily limit, Telegram, equity.
 # ═══════════════════════════════════════════════════════════════════════════
-MIN_LONG_SCORE = 58            # Reguła #1: bazowy minimalny score dla LONG (v1.0: 60→58)
-MAX_SHORT_SCORE = 42           # Reguła #1: SHORT gdy score jest bearish (v1.0: 40→42, symmetric)
+MIN_LONG_SCORE = 58            # Reguła #1: bazowy minimalny score dla LONG
+MAX_SHORT_SCORE = 42           # Reguła #1: bazowy SHORT gdy score jest bearish
 MIN_RR_AT_ENTRY = 1.0          # Reguła #1b: min R:R w momencie wejścia (ochrona przed stale TP)
-REOPEN_COOLDOWN_MINUTES = 90   # anty-overtrading: po zamknięciu tickera 90min przerwy (v1.0: 120→90)
-MAX_NEW_TRADES_PER_DAY = 5     # anty-overtrading: max 5 nowych trade'ów dziennie (v1.0: 3→5)
+REOPEN_COOLDOWN_MINUTES = 90   # anty-overtrading: po zamknięciu tickera 90min przerwy
+MAX_NEW_TRADES_PER_DAY = 5     # anty-overtrading: max 5 nowych trade'ów dziennie
 
-# v1.0 — Regime-aware score thresholds: w TRENDING_UP łatwiej otworzyć LONG,
-# w TRENDING_DOWN trudniej (kontrt-trendowe pozycje wymagają wyższej konwikcji)
+# v2.1 — Regime-aware score thresholds for LONG:
+# TRENDING_DOWN/CRASH → BLOCKED (100 = impossible threshold).
+# Bot NIE otwiera longi pod prąd w spadkowym środowisku.
 MIN_LONG_SCORE_BY_REGIME = {
-    "TRENDING_UP":          55,
-    "TRENDING_UP_VOLATILE": 55,
-    "RANGING":              58,
-    "TRENDING_DOWN":        62,
-    "TRENDING_DOWN_VOLATILE": 65,
+    "TRENDING_UP":            55,
+    "TRENDING_UP_VOLATILE":   55,
+    "RANGING":                58,
+    "TRENDING_DOWN":          100,   # v2.1: BLOKADA longi w downtrend
+    "TRENDING_DOWN_VOLATILE": 100,   # v2.1: BLOKADA longi w downtrend volatile
+    "CRASH":                  100,   # v2.1: BLOKADA longi w crash
+}
+
+# v2.1 — Regime-aware score thresholds for SHORT:
+# W TRENDING_DOWN akceptujemy shorty z wyższym score (do 55),
+# bo score_to_action() generuje SELL już od <50 w tym reżimie.
+MAX_SHORT_SCORE_BY_REGIME = {
+    "TRENDING_UP":            35,    # prawie żadnych shortów w uptrendzie
+    "TRENDING_UP_VOLATILE":   35,
+    "RANGING":                42,    # oryginał
+    "TRENDING_DOWN":          55,    # otwarte shorty — aligned z score_to_action v2.1
+    "TRENDING_DOWN_VOLATILE": 55,
+    "CRASH":                  60,    # najszersza akceptacja shortów
 }
 MAX_HOLD_DAYS = 5              # v0.9 — auto-close zombie pozycji po 5 dniach
 
@@ -1066,19 +1096,20 @@ def cmd_open(args):
         ticker = dec["ticker"]
         score = int(dec.get("score") or 0)
 
-        # v1.0 — REGUŁA #1: REGIME-AWARE SCORE GATE
-        # W TRENDING_UP łatwiej otworzyć LONG (55), w TRENDING_DOWN trudniej (62+)
-        # v1.0 fix: read regime from decision dict first, fall back to top-level data.get("regime")
+        # v2.1 — REGUŁA #1: REGIME-AWARE SCORE GATE (obie strony)
+        # LONG: TRENDING_DOWN/CRASH → BLOCKED (threshold=100). SHORT: regime-aware max.
         regime = dec.get("regime") or data.get("regime") or "RANGING"
         min_long = MIN_LONG_SCORE_BY_REGIME.get(regime, MIN_LONG_SCORE)
+        max_short = MAX_SHORT_SCORE_BY_REGIME.get(regime, MAX_SHORT_SCORE)
         if direction == "long":
             if score < min_long:
-                print(f"[skip] {ticker} LONG score {score} < {min_long} (regime={regime}) — za niska konwikcja")
+                blocked = "ZABLOKOWANY" if min_long >= 100 else "za niska konwikcja"
+                print(f"[skip] {ticker} LONG score {score} < {min_long} (regime={regime}) — {blocked}")
                 skipped += 1
                 continue
         else:
-            if score > MAX_SHORT_SCORE:
-                print(f"[skip] {ticker} SHORT score {score} > {MAX_SHORT_SCORE} — score nie jest bearish")
+            if score > max_short:
+                print(f"[skip] {ticker} SHORT score {score} > {max_short} (regime={regime}) — score nie jest bearish")
                 skipped += 1
                 continue
 
@@ -1202,16 +1233,20 @@ def cmd_open(args):
         except Exception as e:
             print(f"[5m-confirm] {ticker} — exception: {e}, proceeding anyway")
 
-        # v0.8 — Tiered sizing: score determines position size
+        # v2.1 — Tiered sizing: score determines position size (obie strony)
         if direction == "short":
-            size_pct = SHORT_SIZE_CAP_PCT
+            size_pct = SHORT_SIZE_CAP_PCT  # fallback
+            for (lo, hi), pct in TIERED_SHORT_SIZES.items():
+                if lo <= score < hi:
+                    size_pct = pct
+                    break
         else:
             size_pct = 8.0  # fallback
             for (lo, hi), pct in TIERED_LONG_SIZES.items():
                 if lo <= score < hi:
                     size_pct = pct
                     break
-        print(f"[size] {ticker} {direction.upper()} score={score} → {size_pct}% of capital")
+        print(f"[size] {ticker} {direction.upper()} score={score} regime={regime} → {size_pct}% of capital")
         size_usd = PAPER_CAPITAL * (size_pct / 100)
 
         sources = dec.get("sources", {})
@@ -2291,12 +2326,15 @@ def cmd_upload(args):
         "open_count": len(open_positions),
         "gates": {
             "min_long_score": MIN_LONG_SCORE,
+            "min_long_by_regime": MIN_LONG_SCORE_BY_REGIME,
             "max_short_score": MAX_SHORT_SCORE,
+            "max_short_by_regime": MAX_SHORT_SCORE_BY_REGIME,
             "smart_money_veto": True,
             "macro_blackout": True,
             "reopen_cooldown_min": REOPEN_COOLDOWN_MINUTES,
             "max_trades_per_day": MAX_NEW_TRADES_PER_DAY,
-            "tiered_sizing": {str(k): v for k, v in TIERED_LONG_SIZES.items()},
+            "tiered_long_sizing": {str(k): v for k, v in TIERED_LONG_SIZES.items()},
+            "tiered_short_sizing": {str(k): v for k, v in TIERED_SHORT_SIZES.items()},
         },
     }
 
