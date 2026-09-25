@@ -26,6 +26,10 @@ import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+# Force unbuffered stdout for Render.com log visibility
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
+
 # ─── Config ────────────────────────────────────────────────────────────────
 TG_PRO_CHANNEL = "-1004436927192"
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
@@ -444,11 +448,11 @@ def run_webhook_server(host="0.0.0.0", port=8080):
             print(f"[http] {args[0]}" if args else "")
 
     server = HTTPServer((host, port), Handler)
-    print(f"[membership] webhook server on {host}:{port}")
-    print(f"  Stripe webhook: POST /stripe/webhook")
-    print(f"  Telegram bot:   POST /telegram/webhook")
-    print(f"  Health:         GET  /health")
-    print(f"  Join (redirect): GET /join")
+    print(f"[membership] webhook server on {host}:{port}", flush=True)
+    print(f"  Stripe webhook: POST /stripe/webhook", flush=True)
+    print(f"  Telegram bot:   POST /telegram/webhook", flush=True)
+    print(f"  Health:         GET  /health", flush=True)
+    print(f"  Join (redirect): GET /join", flush=True)
     server.serve_forever()
 
 
@@ -473,7 +477,12 @@ if __name__ == "__main__":
 
     if args.cmd == "server":
         port = int(os.environ.get("PORT", 8080))
-        run_webhook_server(port=port)
+        print(f"[membership] starting server on port {port}...", flush=True)
+        try:
+            run_webhook_server(port=port)
+        except Exception as e:
+            print(f"[membership] FATAL: server failed to start: {e}", flush=True)
+            sys.exit(1)
 
     elif args.cmd == "daily":
         daily_check()
