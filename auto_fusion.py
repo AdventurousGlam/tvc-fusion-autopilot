@@ -773,11 +773,21 @@ def compute_score(ticker, onchain_score, ta_score, fng):
     which uses REAL on-chain data (CVD, SM, funding, OI) instead of price proxy.
     """
     # News: placeholder (5% weight — minimal impact until we have real news scoring)
-    news_score = 55
+    # v3.0: 55→50 (neutral). Stare 55 dawało +0.25pt bullish bias do każdego score'a.
+    news_score = 50
 
     # Sentiment: F&G Index (15% weight — real market signal)
+    # v2.2: contrarian cap — F&G > 70 (Greed) historycznie poprzedza korekty.
+    # Zamiast traktować extreme greed jako bullish, cap-ujemy wpływ:
+    # F&G 71→50.3, 80→53, 90→56. F&G < 30 (Fear) też cap: 30→44, 20→41, 10→38.
     if fng:
-        sentiment_score = fng["current"]
+        raw_fng = fng["current"]
+        if raw_fng > 70:
+            sentiment_score = 50 + (raw_fng - 70) * 0.3   # greed → neutral-ish
+        elif raw_fng < 30:
+            sentiment_score = 50 - (30 - raw_fng) * 0.6   # fear → moderate bearish
+        else:
+            sentiment_score = raw_fng
     else:
         sentiment_score = 50
 
@@ -832,6 +842,9 @@ def score_to_action(score, regime):
             return "STRONG_SELL"
 
     # ── ORIGINAL LOGIC: TRENDING_UP, RANGING ──
+    # v2.2: usunięto SELL suppression w TRENDING_UP. Paper_bot ma własny
+    # regime-aware SHORT gate — to on decyduje czy short przejdzie.
+    # Wcześniej score 25-39 → HOLD w uptrendzie, co blokowało 100% shortów.
     if score >= 75:
         return "STRONG_BUY"
     elif score >= 60:
@@ -839,9 +852,9 @@ def score_to_action(score, regime):
     elif score >= 40:
         return "HOLD"
     elif score >= 25:
-        return "SELL" if regime != "TRENDING_UP" else "HOLD"
+        return "SELL"
     else:
-        return "STRONG_SELL" if regime != "TRENDING_UP" else "SKIP"
+        return "STRONG_SELL"
 
 
 def compute_size(score, regime, ticker):

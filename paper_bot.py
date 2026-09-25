@@ -111,11 +111,11 @@ EXCHANGE_ID = os.environ.get("TVC_EXCHANGE", "bybit")
 # v0.8 — TIERED SIZING by fusion score (higher conviction = bigger position)
 # Replaces flat 3% cap. Shorts stay conservative (unlimited upside risk).
 TIERED_LONG_SIZES = {        # (min_score, max_score): size_pct
-    (55, 60): 5.0,           # micro position (trending regime only)
-    (60, 65): 8.0,           # low conviction — probe position
-    (65, 75): 20.0,          # normal conviction
-    (75, 85): 40.0,          # high conviction
-    (85, 101): 80.0,         # very high conviction — full send
+    # v3.0: przesunięte do nowych progów (MIN_LONG=68 w TRENDING_UP)
+    (68, 72): 5.0,           # probe — minimum viable position
+    (72, 76): 12.0,          # moderate conviction
+    (76, 85): 25.0,          # high conviction
+    (85, 101): 40.0,         # very high conviction (v3.0: 80→40, cap na rozsądnym poziomie)
 }
 
 # v2.1 — TIERED SHORT SIZING: symetryczny do LONG, ale mniejszy (unlimited upside risk).
@@ -156,30 +156,32 @@ MIN_LONG_SCORE = 58            # Reguła #1: bazowy minimalny score dla LONG
 MAX_SHORT_SCORE = 42           # Reguła #1: bazowy SHORT gdy score jest bearish
 MIN_RR_AT_ENTRY = 1.0          # Reguła #1b: min R:R w momencie wejścia (ochrona przed stale TP)
 REOPEN_COOLDOWN_MINUTES = 90   # anty-overtrading: po zamknięciu tickera 90min przerwy
-MAX_NEW_TRADES_PER_DAY = 5     # anty-overtrading: max 5 nowych trade'ów dziennie
+MAX_NEW_TRADES_PER_DAY = 3     # v3.0: 5→3 (mniej trade'ów, wyższa jakość)
 
-# v2.1 — Regime-aware score thresholds for LONG:
+# v3.0 — Regime-aware score thresholds for LONG (data-driven):
+# Audyt 71 trade'ów: score<64=20%WR (katastrofa), score≥68=57%WR (+2.08% netto).
+# RANGING = pułapka: 43T, 14%WR, −44.54% PnL → wymaga ekstremalnej konwikcji.
 # TRENDING_DOWN/CRASH → BLOCKED (100 = impossible threshold).
-# Bot NIE otwiera longi pod prąd w spadkowym środowisku.
 MIN_LONG_SCORE_BY_REGIME = {
-    "TRENDING_UP":            55,
-    "TRENDING_UP_VOLATILE":   55,
-    "RANGING":                58,
-    "TRENDING_DOWN":          100,   # v2.1: BLOKADA longi w downtrend
-    "TRENDING_DOWN_VOLATILE": 100,   # v2.1: BLOKADA longi w downtrend volatile
-    "CRASH":                  100,   # v2.1: BLOKADA longi w crash
+    "TRENDING_UP":            68,    # v3.0: 55→68 (dane: <64=katastrofa)
+    "TRENDING_UP_VOLATILE":   68,    # v3.0: 55→68
+    "RANGING":                72,    # v3.0: 58→72 (RANGING=pułapka, tylko extreme conviction)
+    "TRENDING_DOWN":          100,   # BLOKADA longi w downtrend
+    "TRENDING_DOWN_VOLATILE": 100,   # BLOKADA longi w downtrend volatile
+    "CRASH":                  100,   # BLOKADA longi w crash
 }
 
-# v2.1 — Regime-aware score thresholds for SHORT:
-# W TRENDING_DOWN akceptujemy shorty z wyższym score (do 55),
-# bo score_to_action() generuje SELL już od <50 w tym reżimie.
+# v3.0 — Regime-aware score thresholds for SHORT (data-driven):
+# Audyt: 0% WR na 19 shortach (wszystkie pre-v0.3). System nie ma ŻADNEGO
+# potwierdzonego edge'a na shortach. Shorty włączone tylko z ekstremalną
+# konwikcją w TRENDING_DOWN/CRASH. W uptrendzie: praktycznie wyłączone.
 MAX_SHORT_SCORE_BY_REGIME = {
-    "TRENDING_UP":            35,    # prawie żadnych shortów w uptrendzie
-    "TRENDING_UP_VOLATILE":   35,
-    "RANGING":                42,    # oryginał
-    "TRENDING_DOWN":          55,    # otwarte shorty — aligned z score_to_action v2.1
-    "TRENDING_DOWN_VOLATILE": 55,
-    "CRASH":                  60,    # najszersza akceptacja shortów
+    "TRENDING_UP":            35,    # v3.0: 45→35 (nie shortuj uptrend)
+    "TRENDING_UP_VOLATILE":   35,    # v3.0: 45→35
+    "RANGING":                42,    # v3.0: 48→42 (revert v2.2 — potrzeba silnego sygnału)
+    "TRENDING_DOWN":          52,    # v3.0: 55→52 (lekkie zacieśnienie)
+    "TRENDING_DOWN_VOLATILE": 52,    # v3.0: 55→52
+    "CRASH":                  58,    # v3.0: 60→58 (lekkie zacieśnienie)
 }
 MAX_HOLD_DAYS = 5              # v0.9 — auto-close zombie pozycji po 5 dniach
 
@@ -1107,20 +1109,33 @@ def cmd_open(args):
         ticker = dec["ticker"]
         score = int(dec.get("score") or 0)
 
-        # v2.1 — REGUŁA #1: REGIME-AWARE SCORE GATE (obie strony)
-        # LONG: TRENDING_DOWN/CRASH → BLOCKED (threshold=100). SHORT: regime-aware max.
+        # v3.0 — REGUŁA #1: REGIME-AWARE SCORE GATE (data-driven thresholds)
+        # LONG: TRENDING_UP≥68, RANGING≥72, TRENDING_DOWN/CRASH=BLOCKED.
+        # SHORT: extreme conviction only (TRENDING_UP<35, RANGING<42, etc.)
+        # MOMENTUM DIVERGENCE: gdy regime=TRENDING_UP ale bear_has_momentum=True,
+        # dynamicznie downgrade do RANGING thresholds (68→72 long, 35→42 short).
         regime = dec.get("regime") or data.get("regime") or "RANGING"
-        min_long = MIN_LONG_SCORE_BY_REGIME.get(regime, MIN_LONG_SCORE)
-        max_short = MAX_SHORT_SCORE_BY_REGIME.get(regime, MAX_SHORT_SCORE)
+        regime_details = data.get("regime_details") or {}
+        effective_regime = regime
+
+        # v2.2 — momentum divergence: uptrend traci impet → zacieśnij longi, poluzuj shorty
+        if regime.startswith("TRENDING_UP") and regime_details.get("bear_has_momentum"):
+            effective_regime = "RANGING"
+            print(f"[regime] {ticker} MOMENTUM DIVERGENCE: {regime} + bear_momentum → effective RANGING")
+
+        min_long = MIN_LONG_SCORE_BY_REGIME.get(effective_regime, MIN_LONG_SCORE)
+        max_short = MAX_SHORT_SCORE_BY_REGIME.get(effective_regime, MAX_SHORT_SCORE)
         if direction == "long":
             if score < min_long:
                 blocked = "ZABLOKOWANY" if min_long >= 100 else "za niska konwikcja"
-                print(f"[skip] {ticker} LONG score {score} < {min_long} (regime={regime}) — {blocked}")
+                suffix = f" [divergence: eff={effective_regime}]" if effective_regime != regime else ""
+                print(f"[skip] {ticker} LONG score {score} < {min_long} (regime={regime}{suffix}) — {blocked}")
                 skipped += 1
                 continue
         else:
             if score > max_short:
-                print(f"[skip] {ticker} SHORT score {score} > {max_short} (regime={regime}) — score nie jest bearish")
+                suffix = f" [divergence: eff={effective_regime}]" if effective_regime != regime else ""
+                print(f"[skip] {ticker} SHORT score {score} > {max_short} (regime={regime}{suffix}) — score nie jest bearish")
                 skipped += 1
                 continue
 
@@ -2640,11 +2655,13 @@ def _check_5m_confirmation(ticker: str, direction: str = "long") -> tuple[bool, 
             rsi_val = 100.0 - (100.0 / (1.0 + rs))
 
     if direction == "long":
-        rsi_ok = rsi_val > 35
-        rsi_reason = f"RSI(14)={rsi_val:.1f} {'>' if rsi_ok else '≤'} 35"
+        # v3.0: 35→40 (wymaga mocniejszego odbicia, nie wchodzi w freefall)
+        rsi_ok = rsi_val > 40
+        rsi_reason = f"RSI(14)={rsi_val:.1f} {'>' if rsi_ok else '≤'} 40"
     else:  # short
-        rsi_ok = rsi_val < 65
-        rsi_reason = f"RSI(14)={rsi_val:.1f} {'<' if rsi_ok else '≥'} 65"
+        # v3.0: 65→55 (musi być realna słabość, nie tylko "nie overbought")
+        rsi_ok = rsi_val < 55
+        rsi_reason = f"RSI(14)={rsi_val:.1f} {'<' if rsi_ok else '≥'} 55"
 
     passed = candle_ok and rsi_ok
     reason = f"5m confirm: {candle_reason}, {rsi_reason} → {'PASS' if passed else 'FAIL'}"
