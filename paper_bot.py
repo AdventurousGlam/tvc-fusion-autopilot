@@ -519,8 +519,10 @@ def _fmt_px(v) -> str:
     return f"{v:,.0f}" if v >= 100 else f"{v:.2f}" if v >= 1 else f"{v:.4f}"
 
 
-def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime, override=False):
-    """Telegram: otwarcie pozycji. PRO = natychmiast (pełny). FREE = kolejkowany z 15-min opóźnieniem."""
+def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime, override=False, db_conn=None):
+    """Telegram: otwarcie pozycji. PRO = natychmiast (pełny). FREE = kolejkowany z 15-min opóźnieniem.
+    db_conn — jeśli podane, używa tego połączenia do kolejki FREE (unika SQLite lock conflict
+    gdy caller trzyma otwartą transakcję na tym samym pliku db)."""
     try:
         dir_label = "🟢 LONG" if direction == "long" else "🔴 SHORT"
         # R:R ratio
@@ -552,14 +554,23 @@ def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime
         _telegram_broadcast(pro_text)  # osobisty + PRO — natychmiast
 
         # FREE: kolejkuj z 15-min opóźnieniem (pełne dane, max 1/dzień)
+        # BUGFIX: używaj tego samego conn co caller, żeby uniknąć "database is locked"
+        # (cmd_open trzyma write lock na conn podczas INSERT → drugie conn nie może pisać)
         try:
-            conn = db()
-            _queue_free_signal(conn, {
-                "ticker": ticker, "direction": direction,
-                "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2,
-                "score": score, "regime": regime, "size_usd": size_usd,
-            })
-            conn.close()
+            if db_conn is not None:
+                _queue_free_signal(db_conn, {
+                    "ticker": ticker, "direction": direction,
+                    "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2,
+                    "score": score, "regime": regime, "size_usd": size_usd,
+                })
+            else:
+                conn_q = db()
+                _queue_free_signal(conn_q, {
+                    "ticker": ticker, "direction": direction,
+                    "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2,
+                    "score": score, "regime": regime, "size_usd": size_usd,
+                })
+                conn_q.close()
         except Exception as qe:
             print(f"[telegram] queue_free failed: {qe}")
     except Exception as e:
@@ -1047,7 +1058,7 @@ def _fill_pending(conn):
             conn.commit()
             print(f"[fill] {direction.upper()} {r['ticker']} @ {limit_px:.4f} (oczekujące zrealizowane {fill_dt[:16]})")
             _notify_open(r["ticker"], direction, limit_px, r["size_usd"], r["sl_price"], r["tp1_price"],
-                         r["tp2_price"], r["fusion_score"], r["regime"])
+                         r["tp2_price"], r["fusion_score"], r["regime"], False, db_conn=conn)
         elif until and now > until:
             _cancel_pending(conn, r["id"], "expired")
 
@@ -1285,7 +1296,7 @@ def cmd_open(args):
               f"SL {dec.get('sl')} TP1 {dec.get('tp1')} TP2 {dec.get('tp2')}  "
               f"score {dec.get('score')}")
         _notify_open(ticker, direction, entry_price, size_usd, dec.get("sl"), dec.get("tp1"),
-                     dec.get("tp2"), dec.get("score"), regime, False)
+                     dec.get("tp2"), dec.get("score"), regime, False, db_conn=conn)
 
     conn.commit()
     conn.close()
