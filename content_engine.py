@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Content Engine v3.0 — day-of-week content strategy
+TVC Fusion Content Engine v4.0 — day-of-week content strategy + personal brand
 
 DAILY ROTATION:
   Monday    — Weekend Data Drop (what the system flagged)
@@ -13,11 +13,19 @@ DAILY ROTATION:
 
 PLATFORM RULES:
   LinkedIn — ORIGINAL posts only. Personal angle ("I built...", "I noticed...").
-             Never reshares. Target: 3,570 decision-maker followers.
+             Never reshares. Max 10 lines. Hook in first 2 lines.
   X/Twitter — Questions or contrarian observations. NEVER listicles.
-              Cashtags ($BTC, $ETH, $SUI). Short and punchy.
+              Cashtags ($BTC, $ETH, $SUI). Short and punchy. 3 slots/day.
 
-CTA: t.me/TVCFusionSignals in every post.
+CTA ROTATION: CTA (t.me/TVCFusionSignals) every 3rd post, not every post.
+
+v4.0 NEW:
+  - gen_trade_recap()  — callable from paper_bot after closing a trade
+  - gen_alert_post()   — callable from pump_radar after HIGH alert
+  - CTA rotation       — every 3rd post instead of every post
+  - Evening X slot     — 3rd daily X post (education/insight one-liner)
+  - Shorter LinkedIn   — max 10 lines, stronger hook
+  - Standalone CLI     — python content_engine.py --recap '{json}' | --alert '{json}'
 
 Reads:  paper_trades.db, fusion_latest.json, crypto_picks.json, pump_radar_alerts.json
 Writes: content_queue.json + sends to personal Telegram for copy-paste
@@ -52,11 +60,12 @@ RADAR_ALERTS = FUSION_DIR / "pump_radar_alerts.json"
 STATS_SINCE = "2026-09-02T19:00:00"
 STATS_WHERE = "status='closed' AND opened_at >= ? AND COALESCE(excluded,0)=0"
 
-MAX_X_PER_DAY = 2
+MAX_X_PER_DAY = 3      # v4.0: was 2, evening slot added
 MAX_LI_PER_DAY = 2
 
 TG_PERSONAL_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 CTA = "t.me/TVCFusionSignals"
+CTA_EVERY_N = 3        # v4.0: CTA every Nth post, not every post
 
 DAY_THEMES = {
     0: "Monday — Weekend Data Drop",
@@ -142,8 +151,37 @@ def _fmt_px(v):
     return f"${v:.4f}"
 
 
+def _should_add_cta(q):
+    """v4.0: CTA rotation — returns True every Nth post."""
+    total = len(q.get("posts", []))
+    return (total + 1) % CTA_EVERY_N == 0
+
+
+def _cta_line(q, prefix="Free signals"):
+    """v4.0: Returns CTA line or empty string based on rotation."""
+    if _should_add_cta(q):
+        return f"{prefix}: {CTA}"
+    return ""
+
+
+def _compact_li(text, max_lines=10):
+    """v4.0: Trim LinkedIn post to max N lines. Keep hook + core + CTA."""
+    lines = [l for l in text.strip().split("\n") if l.strip()]
+    if len(lines) <= max_lines:
+        return text
+    # Keep first 2 lines (hook), last 2 lines (CTA + hashtags), fill middle
+    hook = lines[:2]
+    tail = lines[-2:]
+    middle_budget = max_lines - len(hook) - len(tail)
+    middle = lines[2:-2][:max(middle_budget, 1)]
+    return "\n\n".join(hook + middle + tail)
+
+
 def _post(platform, ptype, text, graphic, ticker=None, extra=None):
     """Build a post dict."""
+    # v4.0: compact LinkedIn posts
+    if platform == "linkedin":
+        text = _compact_li(text)
     p = {
         "platform": platform,
         "type": ptype,
@@ -305,7 +343,6 @@ def gen_monday():
         f"The system doesn't predict. It measures. Right now the data says: {bias}.\n\n"
         f"Running stats: {stats['total']} automated trades, "
         f"{stats['wr']}% win rate, ${stats['pnl']:+.0f} PnL.\n\n"
-        f"I share these signals daily → {CTA}\n\n"
         f"What's on your watchlist this week?\n\n"
         f"#CryptoTrading #SmartMoney #AlgoTrading #BuildInPublic"
     )
@@ -1097,6 +1134,146 @@ def gen_trade_close(trade):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# v4.0 — ALERT POST (callable from pump_radar.py)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_ALERT_INSIGHTS = [
+    "OI surging + price flat = someone's building a position.",
+    "Funding extreme = the crowded side usually loses.",
+    "CVD divergence = smart money positioning before price catches up.",
+    "Volume spike + low OI = spot-driven, not leveraged. Healthier move.",
+    "Liquidation cluster nearby = price magnet. Watch the sweep.",
+]
+
+
+def gen_alert_post(alert):
+    """
+    v4.0: Generate X post for a HIGH pump/flush alert.
+    Callable from pump_radar.py:
+        from content_engine import gen_alert_post
+        gen_alert_post({"ticker": "SOL", "score": 82, "direction": "PUMP", ...})
+    """
+    ticker = alert.get("ticker", "?")
+    score = alert.get("score", 0)
+    direction = alert.get("direction", "PUMP")
+    factors = alert.get("factors", [])
+
+    # Pick a relevant insight
+    insight_idx = hash(ticker + _today()) % len(_ALERT_INSIGHTS)
+    insight = _ALERT_INSIGHTS[insight_idx]
+
+    factor_lines = ""
+    if factors:
+        top = factors[:3]
+        factor_lines = "\n".join(f"→ {f}" for f in top) + "\n\n"
+
+    emoji = "🔴" if "FLUSH" in direction.upper() else "🟢"
+
+    x = (
+        f"{emoji} ${ticker} — {direction} alert (score {score})\n\n"
+        f"{factor_lines}"
+        f"{insight}\n\n"
+        f"⚡"
+    )
+
+    gr = (
+        f"📸 GRAPHIC: TVC Terminal Pump Radar — ${ticker} alert detail\n"
+        f"  URL: tradingventureclub.com/terminal/"
+    )
+
+    post = _post("x", "alert", x, gr, ticker)
+
+    # Save to queue + notify
+    q = _load_queue()
+    q["posts"].append(post)
+    _save_queue(q)
+    _notify_new_posts([post])
+    log(f"✓ Alert post for ${ticker} ({direction}) saved + sent")
+    return post
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# v4.0 — TRADE RECAP (standalone callable from paper_bot.py)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def gen_trade_recap(trade):
+    """
+    v4.0: Generate and queue trade recap posts immediately after a close.
+    Callable from paper_bot.py:
+        from content_engine import gen_trade_recap
+        gen_trade_recap({"ticker": "BTC", "direction": "long", "pnl_pct": 2.3, ...})
+    """
+    posts = gen_trade_close(trade)
+    if not posts:
+        return []
+
+    q = _load_queue()
+    x_today = _posts_today(q, "x")
+    li_today = _posts_today(q, "linkedin")
+
+    added = []
+    for p in posts:
+        if p["platform"] == "x" and x_today >= MAX_X_PER_DAY:
+            continue
+        if p["platform"] == "linkedin" and li_today >= MAX_LI_PER_DAY:
+            continue
+        q["posts"].append(p)
+        added.append(p)
+        if p["platform"] == "x":
+            x_today += 1
+        else:
+            li_today += 1
+
+    if added:
+        _save_queue(q)
+        _notify_new_posts(added)
+        log(f"✓ Trade recap for {trade.get('ticker', '?')} "
+            f"({trade.get('pnl_pct', 0):+.1f}%) — {len(added)} posts queued")
+
+    return added
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# v4.0 — EVENING X POST (3rd daily slot — education one-liner / insight)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_EVENING_INSIGHTS = [
+    "The market doesn't owe you a setup every day.\n\nMost edge comes from the trades you DON'T take.",
+    "Backtesting is lying to yourself professionally.\n\nForward testing is where conviction meets reality.",
+    "Every signal channel that only shows wins is telling you exactly how much they respect your intelligence.",
+    "Risk management isn't a chapter in a book.\n\nIt's the only chapter that matters.",
+    "Your stop-loss isn't where you lose money.\n\nIt's where you stop losing money.",
+    "The best traders I've studied all have one thing in common:\n\nThey're bored most of the time.",
+    "\"I'll just move my stop a little.\"\n\nFamous last words of every blown account.",
+    "Leverage doesn't make bad trades profitable.\n\nIt makes them fatal faster.",
+    "Smart Money doesn't tweet their entries.\n\nThey show up in the data — if you know where to look.",
+    "A 60% win rate with 2:1 R:R is a license to print money.\n\nMost traders chase 90% WR with 0.3 R:R instead.",
+    "The difference between a trader and a gambler:\n\nOne has a system they trust. The other has hope.",
+    "Volume precedes price.\n\nAlways has. Always will.",
+    "If you can't explain your edge in one sentence,\nyou probably don't have one.",
+    "The market doesn't care about your thesis.\n\nBut your stop-loss does.",
+]
+
+
+def gen_evening_x():
+    """v4.0: Evening education/insight one-liner for X. 3rd daily slot."""
+    stats = get_cumulative_stats()
+    # Rotate daily
+    idx = (int(_now().timestamp()) // 86400) % len(_EVENING_INSIGHTS)
+    insight = _EVENING_INSIGHTS[idx]
+
+    # Every 3rd evening post gets CTA
+    q = _load_queue()
+    cta_line = _cta_line(q, prefix="\nFree signals")
+
+    x = f"{insight}{cta_line}\n\n⚡"
+
+    gr = ""  # No graphic for evening insights — text-only
+
+    return [_post("x", "evening_insight", x, gr)]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # TELEGRAM — send posts to personal chat for copy-paste
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1129,7 +1306,7 @@ def _notify_new_posts(posts):
     if not posts:
         return
 
-    summary = f"📝 <b>Content Engine v3.0 — {len(posts)} nowych postów</b>\n\n"
+    summary = f"📝 <b>Content Engine v4.0 — {len(posts)} nowych postów</b>\n\n"
     platforms = {}
     for p in posts:
         pl = p["platform"].upper()
@@ -1170,7 +1347,7 @@ def _notify_new_posts(posts):
 def run():
     weekday = _now().weekday()
     theme = DAY_THEMES.get(weekday, "Unknown")
-    log(f"Content Engine v3.0 — {_now().isoformat()} — {theme}")
+    log(f"Content Engine v4.0 — {_now().isoformat()} — {theme}")
 
     q = _load_queue()
     new_posts = []
@@ -1197,6 +1374,9 @@ def run():
             log(f"Generating daily themed posts: {ptype}")
             themed = generator()
             for p in themed:
+                # v4.0: CTA rotation — strip CTA from non-CTA posts
+                if not _should_add_cta(q):
+                    p["text"] = _strip_cta(p["text"])
                 if p["platform"] == "x" and x_today >= MAX_X_PER_DAY:
                     log(f"  skip X {ptype} — daily limit")
                     continue
@@ -1204,6 +1384,7 @@ def run():
                     log(f"  skip LinkedIn {ptype} — daily limit")
                     continue
                 new_posts.append(p)
+                q["posts"].append(p)  # v4.0: track for CTA counter
                 if p["platform"] == "x":
                     x_today += 1
                 else:
@@ -1232,6 +1413,7 @@ def run():
                 if p["platform"] == "linkedin" and li_today >= MAX_LI_PER_DAY:
                     continue
                 new_posts.append(p)
+                q["posts"].append(p)
                 if p["platform"] == "x":
                     x_today += 1
                 else:
@@ -1239,12 +1421,37 @@ def run():
             log(f"  ✓ trade close posts for {trade['ticker']} "
                 f"({trade.get('pnl_pct', 0):+.1f}%)")
 
-    # ── 3. SAVE + NOTIFY ────────────────────────────────────────────────────
+    # ── 3. v4.0: EVENING X POST (3rd daily slot) ───────────────────────────
+
+    if weekday != 5 and not _has_type_today(q, "evening_insight"):
+        if x_today < MAX_X_PER_DAY:
+            log("Generating evening X insight post")
+            evening = gen_evening_x()
+            for p in evening:
+                if p["platform"] == "x" and x_today < MAX_X_PER_DAY:
+                    new_posts.append(p)
+                    q["posts"].append(p)
+                    x_today += 1
+            log("  ✓ evening insight generated")
+        else:
+            log("Evening slot skipped — X daily limit reached")
+
+    # ── 4. SAVE + NOTIFY ────────────────────────────────────────────────────
+
+    # Remove temp tracking entries (already saved via q["posts"].append above)
+    # Re-deduplicate: q["posts"] may have duplicates from tracking
+    seen_ts = set()
+    deduped = []
+    for p in q["posts"]:
+        ts = p.get("ts", "")
+        if ts not in seen_ts:
+            deduped.append(p)
+            seen_ts.add(ts)
+    q["posts"] = deduped
 
     if new_posts:
-        q["posts"].extend(new_posts)
         q["meta"]["last_run"] = _now().isoformat()
-        q["meta"]["version"] = "3.0"
+        q["meta"]["version"] = "4.0"
         q["meta"]["total_generated"] = len(q["posts"])
         _save_queue(q)
         log(f"✓ Added {len(new_posts)} new posts to queue (total: {len(q['posts'])})")
@@ -1253,7 +1460,7 @@ def run():
     else:
         log("No new posts to generate this cycle.")
         q["meta"]["last_run"] = _now().isoformat()
-        q["meta"]["version"] = "3.0"
+        q["meta"]["version"] = "4.0"
         _save_queue(q)
 
     # Cleanup: keep only last 7 days
@@ -1265,5 +1472,51 @@ def run():
         log(f"Cleaned up {before - len(q['posts'])} old posts (>7 days)")
 
 
+def _strip_cta(text):
+    """v4.0: Remove CTA line from post text for non-CTA rotation posts."""
+    lines = text.split("\n")
+    cleaned = []
+    for line in lines:
+        stripped = line.strip().lower()
+        if CTA.lower() in stripped and (
+            "free signal" in stripped or "see it" in stripped
+            or "follow" in stripped or "→ t.me" in stripped
+            or stripped.startswith("free") or stripped.startswith("→ t.me")
+            or stripped.startswith("daily signal") or "see the full" in stripped
+        ):
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# CLI — standalone entry points for paper_bot / pump_radar integration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def main():
+    """
+    v4.0 CLI:
+      python content_engine.py              — normal daily run
+      python content_engine.py --recap JSON — trade recap (from paper_bot)
+      python content_engine.py --alert JSON — alert post (from pump_radar)
+    """
+    if len(sys.argv) >= 3 and sys.argv[1] == "--recap":
+        try:
+            trade = json.loads(sys.argv[2])
+            gen_trade_recap(trade)
+        except json.JSONDecodeError as e:
+            log(f"ERROR: invalid JSON for --recap: {e}")
+            sys.exit(1)
+    elif len(sys.argv) >= 3 and sys.argv[1] == "--alert":
+        try:
+            alert = json.loads(sys.argv[2])
+            gen_alert_post(alert)
+        except json.JSONDecodeError as e:
+            log(f"ERROR: invalid JSON for --alert: {e}")
+            sys.exit(1)
+    else:
+        run()
+
+
 if __name__ == "__main__":
-    run()
+    main()
