@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Content Engine v4.0 — day-of-week content strategy + personal brand
+TVC Fusion Content Engine v4.1 — day-of-week content strategy + personal brand + book mentions
 
 DAILY ROTATION:
   Monday    — Weekend Data Drop (what the system flagged)
@@ -19,7 +19,9 @@ PLATFORM RULES:
 
 CTA ROTATION: CTA (t.me/TVCFusionSignals) every 3rd post, not every post.
 
-v4.0 NEW:
+v4.1 NEW:
+  - Book mention rotation — every ~9 posts on Tue/Fri, 6 Amazon KDP books backstory
+v4.0:
   - gen_trade_recap()  — callable from paper_bot after closing a trade
   - gen_alert_post()   — callable from pump_radar after HIGH alert
   - CTA rotation       — every 3rd post instead of every post
@@ -66,6 +68,7 @@ MAX_LI_PER_DAY = 2
 TG_PERSONAL_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 CTA = "t.me/TVCFusionSignals"
 CTA_EVERY_N = 3        # v4.0: CTA every Nth post, not every post
+BOOK_MENTION_EVERY_N = 9  # v4.1: mention books roughly every 9th post
 
 DAY_THEMES = {
     0: "Monday — Weekend Data Drop",
@@ -162,6 +165,52 @@ def _cta_line(q, prefix="Free signals"):
     if _should_add_cta(q):
         return f"{prefix}: {CTA}"
     return ""
+
+
+# ── v4.1: BOOK MENTION ROTATION ──────────────────────────────────────────────
+
+_BOOK_SNIPPETS_X = [
+    "Before this, I wrote 6 books on Amazon. Now I build systems that trade 24/7.",
+    "I published 6 books before switching to code. Same discipline, different medium.",
+    "From 6 published books to 10,000+ lines of trading code. The builder never stops.",
+    "Author of 6 books → solo crypto system builder. The common thread: shipping.",
+    "6 books on Amazon taught me one thing: consistency compounds. Same with code.",
+]
+
+_BOOK_SNIPPETS_LI = [
+    "Before I started building TVC Fusion, I published 6 books on Amazon. That taught me how to ship — how to sit down, create something from nothing, and put it in front of people. Building a trading system is the same muscle, different output.",
+    "Fun fact most people don't know: before the terminal, before the trading bot, I wrote and published 6 books. The transition from author to builder was more natural than I expected — both require shipping consistently, even when the work isn't perfect yet.",
+    "My path to building an automated trading system started in an unexpected place: Amazon KDP. I published 6 books there. Writing taught me how to structure complexity and ship on a deadline. Now I apply the same discipline to code.",
+]
+
+
+def _should_add_book_mention(q):
+    """v4.1: Returns True every BOOK_MENTION_EVERY_N posts."""
+    total = len(q.get("posts", []))
+    return total > 0 and total % BOOK_MENTION_EVERY_N == 0
+
+
+def _inject_book_mention(post, q):
+    """v4.1: Add a book backstory line to a post if rotation says so."""
+    if not _should_add_book_mention(q):
+        return post
+    platform = post.get("platform", "x")
+    if platform == "x":
+        idx = (int(_now().timestamp()) // 86400) % len(_BOOK_SNIPPETS_X)
+        snippet = _BOOK_SNIPPETS_X[idx]
+        # Insert before last line (signature ⚡ or CTA)
+        lines = post["text"].strip().split("\n")
+        if len(lines) >= 3:
+            lines.insert(-1, f"\n{snippet}\n")
+            post["text"] = "\n".join(lines)
+    elif platform == "linkedin":
+        idx = (int(_now().timestamp()) // 86400) % len(_BOOK_SNIPPETS_LI)
+        snippet = _BOOK_SNIPPETS_LI[idx]
+        # Insert after first paragraph (hook)
+        parts = post["text"].split("\n\n", 1)
+        if len(parts) == 2:
+            post["text"] = f"{parts[0]}\n\n{snippet}\n\n{parts[1]}"
+    return post
 
 
 def _compact_li(text, max_lines=10):
@@ -1306,7 +1355,7 @@ def _notify_new_posts(posts):
     if not posts:
         return
 
-    summary = f"📝 <b>Content Engine v4.0 — {len(posts)} nowych postów</b>\n\n"
+    summary = f"📝 <b>Content Engine v4.1 — {len(posts)} nowych postów</b>\n\n"
     platforms = {}
     for p in posts:
         pl = p["platform"].upper()
@@ -1347,7 +1396,7 @@ def _notify_new_posts(posts):
 def run():
     weekday = _now().weekday()
     theme = DAY_THEMES.get(weekday, "Unknown")
-    log(f"Content Engine v4.0 — {_now().isoformat()} — {theme}")
+    log(f"Content Engine v4.1 — {_now().isoformat()} — {theme}")
 
     q = _load_queue()
     new_posts = []
@@ -1377,6 +1426,9 @@ def run():
                 # v4.0: CTA rotation — strip CTA from non-CTA posts
                 if not _should_add_cta(q):
                     p["text"] = _strip_cta(p["text"])
+                # v4.1: book mention on Tuesday/Friday posts
+                if ptype in ("behind_build", "education"):
+                    p = _inject_book_mention(p, q)
                 if p["platform"] == "x" and x_today >= MAX_X_PER_DAY:
                     log(f"  skip X {ptype} — daily limit")
                     continue
