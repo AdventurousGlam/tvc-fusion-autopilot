@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Paper Trading Bot v2.1
+TVC Fusion Paper Trading Bot v3.1
+
+v3.1 (2026-09-29) — ANTI-FAKEOUT SL OVERHAUL
+  - BREAKEVEN_TRIGGER: 1.5% → 3.0% (dane: 4 breakeven-SL trades przy +0.1%, strata winnerów)
+  - TRAILING_TRIGGER: 3.0% → 5.0% (crypto regularnie swing 3-5%, za wcześnie trailing)
+  - TRAILING_DISTANCE: 2.5% → 4.0% (więcej przestrzeni na pullbacki w trendzie)
+  - SL check: candle CLOSE zamiast wick LOW (l→c). Wicki dotykające SL i
+    wracające to fałszywa presja — bot teraz wymaga ZAMKNIĘCIA poniżej SL.
+  - ATR-guard: minimum SL distance = 1.2× ATR(14) na 1h. Jeśli SL ze struktury
+    jest bliżej, automatyczne rozszerzenie do ATR minimum.
+  - Breakeven SL offset: entry + 0.1% → entry + 0.3% (mniej wrażliwe na noise)
 
 v2.1 (2026-09-24) — SHORT IN DOWNTREND
   - LONG BLOCKED in TRENDING_DOWN/CRASH (threshold=100 = impossible)
@@ -1259,6 +1269,29 @@ def cmd_open(args):
         except Exception as e:
             print(f"[5m-confirm] {ticker} — exception: {e}, proceeding anyway")
 
+        # v3.1 — ATR-BASED MINIMUM SL DISTANCE GUARD
+        # Jeśli SL ze struktury jest bliżej niż 1.2× ATR(14, 1h), rozszerz.
+        _final_sl = dec.get("sl")
+        if _final_sl and entry_price:
+            try:
+                _sl_f = float(_final_sl)
+                _new_sl, _atr_note = _widen_sl_by_atr(ticker, entry_price, _sl_f, direction)
+                if _new_sl != _sl_f:
+                    print(f"[atr-guard] {ticker} {direction.upper()} — SL {_sl_f:.4f} → {_new_sl:.4f} ({_atr_note})")
+                    dec["sl"] = _new_sl
+                    # Recheck R:R after widening
+                    _tp_f = float(dec.get("tp1", 0))
+                    if _tp_f:
+                        _new_risk = abs(entry_price - _new_sl)
+                        _new_reward = abs(_tp_f - entry_price)
+                        _new_rr = _new_reward / max(1e-12, _new_risk)
+                        if _new_rr < MIN_RR_AT_ENTRY:
+                            print(f"[skip] {ticker} {direction.upper()} — R:R after ATR-widen = {_new_rr:.2f} (< {MIN_RR_AT_ENTRY})")
+                            skipped += 1
+                            continue
+            except (TypeError, ValueError) as e:
+                print(f"[atr-guard] {ticker} — error: {e}, keeping original SL")
+
         # v2.1 — Tiered sizing: score determines position size (obie strony)
         if direction == "short":
             size_pct = SHORT_SIZE_CAP_PCT  # fallback
@@ -1338,12 +1371,15 @@ def _fetch_ohlc_since(ex, ticker: str, since_iso: str, timeframe: str = "5m"):
 
 
 # --- Trailing SL config -----------------------------------------------
+# v3.1: znacząco rozszerzone — dane (Sep 20-29): 4 breakeven-SL trades
+# wykazały, że przy 1.5% trigger bot traci winnery na normalnych retrace'ach.
 # BREAKEVEN_TRIGGER: profit % kiedy SL auto-move to breakeven+
 # TRAILING_TRIGGER: profit % kiedy zaczynamy trailing SL
 # TRAILING_DISTANCE: SL follows current price at this distance %
-BREAKEVEN_TRIGGER = 1.5   # +1.5% profit → SL = entry × 1.001 (breakeven+)
-TRAILING_TRIGGER = 3.0    # +3% profit → start trailing
-TRAILING_DISTANCE = 2.5   # SL follows 2.5% below current price (v0.7: widened from 1.5%, crypto moves 2% on a sneeze)
+BREAKEVEN_TRIGGER = 3.0   # v3.1: 1.5→3.0% (dane: +1.5% to normalny noise w crypto)
+TRAILING_TRIGGER = 5.0    # v3.1: 3.0→5.0% (start trailing dopiero po solidnym ruchu)
+TRAILING_DISTANCE = 4.0   # v3.1: 2.5→4.0% (crypto robi 3-5% swing regularnie)
+BREAKEVEN_OFFSET = 1.003  # v3.1: entry × 1.003 = +0.3% (was ×1.001 = +0.1%, zbyt wrażliwe)
 
 
 def _now_ms() -> int:
@@ -1369,8 +1405,8 @@ def _update_trailing_sl(conn, row, current_price):
     if direction == "long":
         profit_pct = (current_price - entry) / entry * 100
 
-        # Stage 1: Breakeven+ (po +1.5% profit)
-        breakeven_sl = entry * 1.001  # entry + 0.1%
+        # Stage 1: Breakeven+ (po +3.0% profit) — v3.1: 1.5→3.0%, offset 0.1→0.3%
+        breakeven_sl = entry * BREAKEVEN_OFFSET  # entry + 0.3%
         if profit_pct >= BREAKEVEN_TRIGGER and current_sl < breakeven_sl:
             conn.execute(
                 "UPDATE positions SET sl_price = ?, sl_since = ? WHERE id = ?",
@@ -1390,7 +1426,7 @@ def _update_trailing_sl(conn, row, current_price):
 
     else:  # SHORT (rzadkie w regime TRENDING_UP)
         profit_pct = (entry - current_price) / entry * 100
-        breakeven_sl = entry * 0.999
+        breakeven_sl = entry * (2 - BREAKEVEN_OFFSET)  # mirror: entry − 0.3%
         if profit_pct >= BREAKEVEN_TRIGGER and (current_sl > breakeven_sl or current_sl == 0):
             conn.execute("UPDATE positions SET sl_price = ?, sl_since = ? WHERE id = ?", (breakeven_sl, _now_ms(), row["id"]))
             return (breakeven_sl, f"SHORT breakeven+ (profit {profit_pct:+.2f}%)")
@@ -1518,25 +1554,27 @@ def cmd_check(args):
         hit_or_miss = None
 
         for candle in ohlc:  # [ts, o, h, l, c, v]
-            ts, _o, h, l, _c, _v = candle
+            ts, _o, h, l, c, _v = candle
             if direction == "long":
-                # LONG: SL = price falls to SL (low <= sl). TP = price rises to TP (high >= tp).
-                # Check SL first (conservative — if SL and TP hit same candle, assume SL first).
-                if sl and l <= sl and ts >= sl_since_ms:
-                    exit_price = sl; exit_ts = ts; hit_or_miss = "hit_sl"; break
-                if tp2 and h >= tp2:
+                # v3.1: CLOSE-BASED SL — wymaga zamknięcia świecy poniżej SL, nie tylko
+                # wick (low). Wicki często dotykają SL i wracają (fałszywa presja).
+                # TP nadal check na high (konserwatywne: TP HIT = pewny zysk).
+                # Check TP FIRST — jeśli TP2 trafiony na tej świecy, SL jest nieistotny.
+                if tp2 and h >= tp2 and ts >= sl_since_ms:
                     exit_price = tp2; exit_ts = ts; hit_or_miss = "hit_tp2"; break
-                if tp1 and h >= tp1:
+                if tp1 and h >= tp1 and ts >= sl_since_ms:
                     exit_price = tp1; exit_ts = ts; hit_or_miss = "hit_tp1"; break
+                if sl and c <= sl and ts >= sl_since_ms:
+                    exit_price = sl; exit_ts = ts; hit_or_miss = "hit_sl"; break
             else:  # SHORT
-                # SHORT: SL = price rises to SL (high >= sl). TP = price falls to TP (low <= tp).
-                # Check SL first (conservative).
-                if sl and h >= sl and ts >= sl_since_ms:
-                    exit_price = sl; exit_ts = ts; hit_or_miss = "hit_sl"; break
-                if tp2 and l <= tp2:
+                # v3.1: SHORT SL = candle CLOSE above SL (was: high >= sl).
+                # TP check first (same reasoning as LONG).
+                if tp2 and l <= tp2 and ts >= sl_since_ms:
                     exit_price = tp2; exit_ts = ts; hit_or_miss = "hit_tp2"; break
-                if tp1 and l <= tp1:
+                if tp1 and l <= tp1 and ts >= sl_since_ms:
                     exit_price = tp1; exit_ts = ts; hit_or_miss = "hit_tp1"; break
+                if sl and c >= sl and ts >= sl_since_ms:
+                    exit_price = sl; exit_ts = ts; hit_or_miss = "hit_sl"; break
 
         if exit_price is None:
             # Position still open — check if trailing SL should update
@@ -2584,6 +2622,62 @@ def _fetch_klines_binance(ticker: str, since_iso: str, interval: str = "5m", lim
         raw = json.loads(resp.read())
     # Binance kline: [openTime, open, high, low, close, volume, closeTime, ...] (wszystko stringi poza openTime)
     return [[k[0], float(k[1]), float(k[2]), float(k[3]), float(k[4]), float(k[5])] for k in raw]
+
+
+def _fetch_atr14_1h(ticker: str) -> float:
+    """v3.1 — Oblicz ATR(14) na 1h candles z Binance.
+    Zwraca ATR jako wartość cenową (nie %). Używane do minimum SL distance guard."""
+    import urllib.request as ur
+    import ssl
+    try:
+        import certifi
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        ssl_ctx = ssl.create_default_context()
+    sym = _binance_symbol(ticker)
+    url = (f"https://data-api.binance.vision/api/v3/klines?symbol={sym}"
+           f"&interval=1h&limit=15")
+    req = ur.Request(url, headers={"User-Agent": "Mozilla/5.0 tvc-fusion-bot/0.2"})
+    with ur.urlopen(req, timeout=10, context=ssl_ctx) as resp:
+        raw = json.loads(resp.read())
+    if len(raw) < 2:
+        return 0.0
+    trs = []
+    for i in range(1, len(raw)):
+        h = float(raw[i][2])
+        l = float(raw[i][3])
+        prev_c = float(raw[i - 1][4])
+        tr = max(h - l, abs(h - prev_c), abs(l - prev_c))
+        trs.append(tr)
+    return sum(trs) / len(trs) if trs else 0.0
+
+
+ATR_SL_MULTIPLIER = 1.2  # v3.1: minimum SL distance = 1.2× ATR(14) na 1h
+
+
+def _widen_sl_by_atr(ticker: str, entry_price: float, sl_price: float,
+                      direction: str) -> tuple[float, str]:
+    """v3.1 — ATR-based SL guard. Jeśli SL ze struktury jest bliżej niż
+    ATR_SL_MULTIPLIER × ATR(14, 1h), rozszerz do minimum ATR distance.
+    Zapobiega zbyt ciasnym SL w wysokiej zmienności."""
+    try:
+        atr = _fetch_atr14_1h(ticker)
+        if atr <= 0:
+            return sl_price, "atr=0"
+        min_distance = atr * ATR_SL_MULTIPLIER
+        if direction == "long":
+            current_distance = entry_price - sl_price
+            if current_distance < min_distance:
+                new_sl = entry_price - min_distance
+                return new_sl, f"ATR-widened: {current_distance:.4f} → {min_distance:.4f} (ATR={atr:.4f})"
+        else:  # short
+            current_distance = sl_price - entry_price
+            if current_distance < min_distance:
+                new_sl = entry_price + min_distance
+                return new_sl, f"ATR-widened: {current_distance:.4f} → {min_distance:.4f} (ATR={atr:.4f})"
+    except Exception as e:
+        print(f"[atr-guard] {ticker} ATR fetch failed ({e}) — keeping original SL")
+    return sl_price, "ok"
 
 
 def _check_5m_confirmation(ticker: str, direction: str = "long") -> tuple[bool, str]:

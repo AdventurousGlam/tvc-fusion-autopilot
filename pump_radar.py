@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
-TVC Pump Radar v2 — skan rynku perpów co 5 min pod krótkoterminowe pumpy.
+TVC Pump Radar v2.1 — skan rynku perpów co 5 min pod krótkoterminowe pumpy.
+
+v2.1 changes (2026-09-29): po analizie 159 alertów — WATCH hit rate 6.1% = szum:
+  - SCORE_WATCH podniesiony z 50 → 60 (filtr najsłabszych alertów)
+  - SCORE_HIGH podniesiony z 65 → 70 (HIGH = naprawdę silny setup)
+  - MIN_TURNOVER_USD podniesiony z 3M → 5M (lepsza płynność)
+  - Dodany MIN_FUNDING_RATE_BPS = -5 (ignoruj mikro-funding < 5bps)
+  - Wzmocniony whale signal: wymaga min 3 whale fills (było 1)
 
 v2 changes (2026-09-12): po analizie 149 alertów z 10 dni:
   - oi_surge i oi_build_4h usunięte jako samodzielne sygnały (hit rate 3-5%, szum)
@@ -52,9 +59,10 @@ LAYERS_CACHE = FUSION_DIR / "layers_cache.json"     # wieloryby (top-30) z auto_
 HL_INFO = "https://api.hyperliquid.xyz/info"
 HL_LEADERBOARD = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
 
-MIN_TURNOVER_USD = 3_000_000    # poniżej — brak płynności, "pump" to 2 zlecenia
-SCORE_WATCH = 50
-SCORE_HIGH = 65
+MIN_TURNOVER_USD = 5_000_000    # v2.1: 3M→5M, lepsza płynność
+SCORE_WATCH = 60                # v2.1: 50→60, filtr szumu
+SCORE_HIGH = 70                 # v2.1: 65→70, HIGH = silny setup
+MIN_FUNDING_BPS = 5             # v2.1: ignoruj funding < 5bps (mikro-sygnał)
 MAX_KLINE_CANDIDATES = 40       # ile tokenów dostaje 5m klines (kompresja + zapłon) w cyklu
 ALERT_COOLDOWN_H = 6            # ten sam token nie alertuje częściej niż co 6h (chyba że HIGH po WATCH)
 HIT_1H_PCT = 2.0                # "trafienie" = +2% w 1h lub +3% w 4h
@@ -337,21 +345,22 @@ def score_coin(coin, u, series, flow, listings, klines):
     oi4 = pct(u["oi_usd"], p4[2]) if p4 and p4[2] else None
 
     # ── FUNDING (główny sygnał — jedyny z potwierdzonym edge) ──
+    # v2.1: usunięty najniższy tier (-0.015, 15pts) — micro-funding to szum
     f = u.get("funding_8h") or 0.0
     if f <= -0.10:
         parts["funding"] = 35          # bardzo ujemny — shorty mocno płacą
     elif f <= -0.03:
         parts["funding"] = 25
-    elif f <= -0.015:
-        parts["funding"] = 15
+    # usunięto: elif f <= -0.015: parts["funding"] = 15  # v2.1: za słaby sygnał
 
     # ── WIELORYBY: netto kupno top-30 w 1h ──
+    # v2.1: podniesione progi — wymagane min 3 portfele na najniższym tierze
     fl = flow.get(coin)
     if fl and fl["net"] >= 2e6:
         parts["whales"] = 30
-    elif fl and fl["net"] >= 5e5:
+    elif fl and fl["net"] >= 5e5 and fl.get("wallets", 0) >= 2:
         parts["whales"] = 20
-    elif fl and fl["net"] >= 1.5e5 and fl["wallets"] >= 2:
+    elif fl and fl["net"] >= 2e5 and fl.get("wallets", 0) >= 3:
         parts["whales"] = 12
 
     # ── KATALIZATOR ──
