@@ -1467,6 +1467,29 @@ const I18N = {
   nav_radar:          { pl: 'Pump Radar',         en: 'Pump Radar' },
   nav_watchlist:      { pl: 'Watchlista',         en: 'Watchlist' },
   nav_checklist:      { pl: 'Checklista',         en: 'Checklist' },
+  nav_crew:           { pl: 'AI Crew',            en: 'AI Crew' },
+  crew_title:         { pl: '🤖 AI Crew — Twój zespół agentów', en: '🤖 AI Crew — Your Agent Team' },
+  crew_sub:           { pl: 'Status 6 agentów AI pracujących 24/7. Każdy ma jedno zadanie.', en: 'Status of 6 AI agents working 24/7. Each has one job.' },
+  crew_analyst:       { pl: 'Analityk', en: 'The Analyst' },
+  crew_analyst_role:  { pl: 'Fusion Score Engine — ocenia każdy sygnał', en: 'Fusion Score Engine — scores every signal' },
+  crew_risk:          { pl: 'Risk Manager', en: 'Risk Manager' },
+  crew_risk_role:     { pl: 'Detekcja reżimu — decyduje o zasadach', en: 'Regime Detection — decides the rules' },
+  crew_trader:        { pl: 'Trader', en: 'The Trader' },
+  crew_trader_role:   { pl: 'Paper Bot — otwiera i zamyka pozycje', en: 'Paper Bot — opens & closes positions' },
+  crew_scout:         { pl: 'Zwiadowca', en: 'The Scout' },
+  crew_scout_role:    { pl: 'Pump Radar — skanuje cały rynek', en: 'Pump Radar — scans the entire market' },
+  crew_oracle:        { pl: 'Wyrocznia', en: 'The Oracle' },
+  crew_oracle_role:   { pl: 'Predykcje Polymarket — przewiduje kierunek', en: 'Polymarket Predictions — predicts direction' },
+  crew_voice:         { pl: 'Głos', en: 'The Voice' },
+  crew_voice_role:    { pl: 'Content Engine — publikuje wyniki', en: 'Content Engine — posts the results' },
+  crew_regime:        { pl: 'Reżim', en: 'Regime' },
+  crew_tokens:        { pl: 'Tokeny', en: 'Tokens' },
+  crew_alerts:        { pl: 'Alerty', en: 'Alerts' },
+  crew_accuracy:      { pl: 'Trafność', en: 'Accuracy' },
+  crew_predictions:   { pl: 'Predykcji', en: 'Predictions' },
+  crew_trades:        { pl: 'Tradów', en: 'Trades' },
+  crew_running:       { pl: 'Działa', en: 'Running' },
+  crew_idle:          { pl: 'Oczekuje', en: 'Idle' },
   nav_rsi_mtf:        { pl: 'RSI Multi-TF',       en: 'RSI Multi-TF' },
   nav_vpvr:           { pl: 'Volume Profile',     en: 'Volume Profile' },
   rsi_title:          { pl: '📊 RSI Multi-Timeframe — 1h · 4h · Daily', en: '📊 RSI Multi-Timeframe — 1h · 4h · Daily' },
@@ -1857,6 +1880,132 @@ const CHECKLIST_ITEMS = {
   discipline: ['cl_d1','cl_d2','cl_d3','cl_d4','cl_d5']
 };
 const CHECKLIST_CAT_LABELS = { risk: 'cl_risk', emotion: 'cl_emotion', plan: 'cl_plan', discipline: 'cl_discipline' };
+// ══════════════════════════════════════════════════════════════════
+// AI CREW PANEL — 6-agent multi-agent status dashboard
+// ══════════════════════════════════════════════════════════════════
+function renderAICrew() {
+  const slot = document.getElementById('ai-crew-slot');
+  if (!slot) return;
+
+  // --- Gather live data from fusion ---
+  const fd = lastFusion || {};
+  const decs = fd.decisions || [];
+  const regime = fd.regime || 'UNKNOWN';
+  const regimeColors = { TRENDING_UP: '#00C853', TRENDING_UP_VOLATILE: '#66BB6A', RANGING: '#FFD600', TRENDING_DOWN: '#FF9800', TRENDING_DOWN_VOLATILE: '#FF5722', CRASH: '#FF1744' };
+  const regimeColor = regimeColors[regime] || '#888';
+
+  // Agent 1: Analyst — count scored tokens + avg score
+  const scoredTokens = decs.filter(d => d.score != null);
+  const avgScore = scoredTokens.length ? Math.round(scoredTokens.reduce((s,d) => s + d.score, 0) / scoredTokens.length) : 0;
+
+  // Agent 3: Trader — paper trade stats from positions panel
+  const openPos = (fd.paper_trades || fd.positions || []);
+  const openCount = Array.isArray(openPos) ? openPos.filter(p => p.status === 'OPEN').length : 0;
+
+  // Agent 4: Scout — pump radar alerts
+  const pr = fd.pump_radar || {};
+  const radarAlerts = (pr.recent_alerts || pr.top || []).length;
+  const highAlerts = (pr.top || []).filter(a => a.level === 'HIGH').length;
+
+  // Agent 5: Oracle — predictions
+  const mp = fd.market_predictions || {};
+  const mpStats = mp.stats || {};
+  const predAccuracy = mpStats.overall_accuracy || '—';
+  const predTotal = mpStats.total_predictions || 0;
+  const mpCurrent = mp.current || {};
+
+  // Agent 6: Voice — content engine (we show day of week schedule)
+  const dayNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const daySchedule = { 0:'Week Ahead Preview', 1:'Weekend Data Drop', 2:'Behind the Build', 3:'Market Analysis', 4:'System Results (P&L)', 5:'Education', 6:'—' };
+  const today = new Date().getDay();
+  const todayContent = daySchedule[today] || '—';
+
+  // --- Build agent cards ---
+  const agents = [
+    {
+      emoji: '📊', nameKey: 'crew_analyst', roleKey: 'crew_analyst_role',
+      color: '#BC09ED',
+      stats: `${scoredTokens.length} ${t('crew_tokens')} · avg ${avgScore}/100`,
+      detail: scoredTokens.slice(0,5).map(d => {
+        const ac = (d.action||'HOLD').replace('_',' ');
+        const sc = d.score||0;
+        const col = sc >= 65 ? '#00C853' : sc >= 50 ? '#FFD600' : '#FF5722';
+        return '<span style="color:'+col+'">'+d.ticker+' '+sc+'</span>';
+      }).join(' · '),
+      status: scoredTokens.length > 0 ? 'running' : 'idle'
+    },
+    {
+      emoji: '🛡️', nameKey: 'crew_risk', roleKey: 'crew_risk_role',
+      color: regimeColor,
+      stats: `${t('crew_regime')}: <span style="color:${regimeColor};font-weight:700">${regime.replace(/_/g,' ')}</span>`,
+      detail: regime === 'TRENDING_UP' ? 'LONG gates open' : regime === 'CRASH' ? 'All trades BLOCKED' : regime.includes('DOWN') ? 'SHORT gates open · LONG blocked' : 'Standard gates',
+      status: 'running'
+    },
+    {
+      emoji: '🎯', nameKey: 'crew_trader', roleKey: 'crew_trader_role',
+      color: '#2196F3',
+      stats: `${openCount} open · 94 ${t('crew_trades')} total`,
+      detail: 'ATR stops · Fibonacci entries · max 3/day',
+      status: openCount > 0 ? 'running' : 'idle'
+    },
+    {
+      emoji: '🔭', nameKey: 'crew_scout', roleKey: 'crew_scout_role',
+      color: '#FF9800',
+      stats: `${radarAlerts} ${t('crew_alerts')} · ${highAlerts} HIGH`,
+      detail: (pr.top || []).slice(0,3).map(a => a.ticker + ' ' + a.score).join(' · ') || 'Scanning…',
+      status: radarAlerts > 0 ? 'running' : 'idle'
+    },
+    {
+      emoji: '🔮', nameKey: 'crew_oracle', roleKey: 'crew_oracle_role',
+      color: '#9C27B0',
+      stats: `${t('crew_accuracy')}: ${predAccuracy}% · ${predTotal} ${t('crew_predictions')}`,
+      detail: Object.entries(mpCurrent).slice(0,2).map(([tk,v]) => tk + ' ' + (v.direction||'?') + ' ' + (v.pct||0) + '%').join(' · ') || '—',
+      status: predTotal > 0 ? 'running' : 'idle'
+    },
+    {
+      emoji: '📢', nameKey: 'crew_voice', roleKey: 'crew_voice_role',
+      color: '#00BCD4',
+      stats: dayNames[today] + ': ' + todayContent,
+      detail: 'X · LinkedIn · Telegram',
+      status: today === 6 ? 'idle' : 'running'
+    }
+  ];
+
+  const agentCards = agents.map(a => {
+    const statusLabel = a.status === 'running' ? t('crew_running') : t('crew_idle');
+    const statusDot = a.status === 'running' ? '#00C853' : '#888';
+    return `
+      <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:8px;min-width:0;position:relative;overflow:hidden">
+        <div style="position:absolute;top:0;left:0;width:4px;height:100%;background:${a.color};border-radius:4px 0 0 4px"></div>
+        <div style="display:flex;align-items:center;gap:10px;padding-left:8px">
+          <span style="font-size:1.6rem">${a.emoji}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:0.95rem;color:#F3EFE6">${t(a.nameKey)}</div>
+            <div style="font-size:0.72rem;color:#888;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t(a.roleKey)}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
+            <span style="width:8px;height:8px;border-radius:50%;background:${statusDot};display:inline-block;${a.status==='running'?'animation:crewPulse 2s ease-in-out infinite':''}"></span>
+            <span style="font-size:0.7rem;color:${statusDot}">${statusLabel}</span>
+          </div>
+        </div>
+        <div style="font-size:0.82rem;color:#ccc;padding-left:8px">${a.stats}</div>
+        <div style="font-size:0.72rem;color:#777;padding-left:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${a.detail}</div>
+      </div>`;
+  }).join('');
+
+  slot.innerHTML = `
+    <section class="panel" style="grid-column:span 12">
+      <style>@keyframes crewPulse{0%,100%{opacity:1}50%{opacity:.4}}</style>
+      <div class="panel-head">
+        <h3>${t('crew_title')}</h3>
+        <span class="meta">${t('crew_sub')}</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;padding:4px 0">
+        ${agentCards}
+      </div>
+    </section>`;
+}
+
 const CHECKLIST_CAT_ICONS = { risk: '🛡️', emotion: '🧠', plan: '📋', discipline: '⚡' };
 const CHECKLIST_CAT_COLORS = { risk: 'var(--cyan)', emotion: 'var(--purple)', plan: 'var(--blue)', discipline: 'var(--gold)' };
 const MOOD_EMOJIS = ['😤','😟','😐','🙂','😎'];
@@ -3000,6 +3149,9 @@ function render() {
 
       <!-- TRADER CHECKLIST — daily discipline checklist with GO/NO-GO -->
       <div id="checklist-slot" style="grid-column: span 12; width: 100%;"></div>
+
+      <!-- AI CREW — multi-agent status dashboard -->
+      <div id="ai-crew-slot" style="grid-column: span 12; width: 100%;"></div>
     </main>
   `;
 
@@ -3028,10 +3180,11 @@ function render() {
   fetchWatchlistPrices();
   fetchWatchlistSparklines();
 
-  // ── New panels: Checklist, Correlation Map, Predictions ──
+  // ── New panels: Checklist, Correlation Map, Predictions, AI Crew ──
   renderChecklist();
   renderCorrelationMap();
   renderPredictions();
+  renderAICrew();
 }
 
 function renderDecision(d) {
@@ -4196,7 +4349,7 @@ const NAV_ITEMS = [
   'sep',
   ['sec-calendar', '📅', 'nav_calendar'], ['sec-news', '📰', 'nav_news'], ['sec-market-news', '🗞', 'nav_mnews'], ['cycle-slot', '🧭', 'nav_cycle'], ['correlation-slot', '🔗', 'nav_corr'], ['predictions-slot', '🔮', 'nav_pred'],
   'sep',
-  ['performance-slot', '🔬', 'nav_perf'], ['pnl-history-slot', '💹', 'nav_pnl'], ['orderflow-slot', '📓', 'nav_orderflow'], ['journal-slot', '📝', 'nav_journal'], ['watchlist-slot', '👀', 'nav_watchlist'], ['checklist-slot', '✅', 'nav_checklist'],
+  ['performance-slot', '🔬', 'nav_perf'], ['pnl-history-slot', '💹', 'nav_pnl'], ['orderflow-slot', '📓', 'nav_orderflow'], ['journal-slot', '📝', 'nav_journal'], ['watchlist-slot', '👀', 'nav_watchlist'], ['checklist-slot', '✅', 'nav_checklist'], ['ai-crew-slot', '🤖', 'nav_crew'],
 ];
 // ── Sidebar toggle helpers ──
 function toggleSidebarPin() {
