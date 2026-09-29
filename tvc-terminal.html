@@ -2012,10 +2012,12 @@ function renderPredictions() {
   let cards = '';
   for (const [ticker, info] of Object.entries(current)) {
     const pct = info.pct || 50;
-    const dir = pct >= 65 ? 'up' : (pct <= 35 ? 'down' : 'neutral');
+    const _rawDir = (info.direction || '').toLowerCase();
+    const dir = _rawDir === 'up' ? 'up' : (_rawDir === 'down' ? 'down' : (pct >= 65 ? 'up' : (pct <= 35 ? 'down' : 'neutral')));
     const dirLabel = dir === 'up' ? t('pred_up') : (dir === 'down' ? t('pred_down') : t('pred_neutral'));
-    const priceChange = info.price_change != null ? `${info.price_change >= 0 ? '+' : ''}${info.price_change.toFixed(2)}%` : '—';
-    const priceColor = (info.price_change || 0) >= 0 ? 'var(--green)' : 'var(--red)';
+    const _pc = info.live_change_pct ?? info.price_change ?? null;
+    const priceChange = _pc != null ? `${_pc >= 0 ? '+' : ''}${_pc.toFixed(2)}%` : '—';
+    const priceColor = (_pc || 0) >= 0 ? 'var(--green)' : 'var(--red)';
     const barColor = dir === 'up' ? 'var(--green)' : (dir === 'down' ? 'var(--red)' : 'var(--text-muted)');
     const active = pct >= 65 || pct <= 35;
     cards += `<div class="pred-card" style="${active ? 'border-color:' + barColor : ''}">
@@ -2037,11 +2039,14 @@ function renderPredictions() {
   // Log
   let logHtml = `<div class="pred-log-row header"><span>${_lang==='pl'?'Data':'Date'}</span><span>Ticker</span><span>${_lang==='pl'?'Predykcja':'Prediction'}</span><span>${_lang==='pl'?'Wynik':'Result'}</span><span>✓/✗</span></div>`;
   for (const entry of log.slice(0, 20)) {
-    const ok = entry.correct;
-    const icon = ok === true ? '✅' : (ok === false ? '❌' : '⏳');
-    const dirTxt = entry.direction === 'up' ? '↑' : (entry.direction === 'down' ? '↓' : '—');
-    const resTxt = entry.actual_change != null ? `${entry.actual_change >= 0 ? '+' : ''}${entry.actual_change.toFixed(1)}%` : '—';
-    logHtml += `<div class="pred-log-row"><span>${entry.date || '—'}</span><span style="font-weight:700">${entry.ticker || '—'}</span><span>${dirTxt} ${entry.pct || '—'}%</span><span style="color:${(entry.actual_change||0)>=0?'var(--green)':'var(--red)'}">${resTxt}</span><span>${icon}</span></div>`;
+    const _outcome = entry.outcome || (entry.correct === true ? 'correct' : entry.correct === false ? 'wrong' : 'pending');
+    const icon = _outcome === 'correct' ? '✅' : (_outcome === 'wrong' ? '❌' : '⏳');
+    const _dir = (entry.direction || '').toLowerCase();
+    const dirTxt = _dir === 'up' ? '↑' : (_dir === 'down' ? '↓' : '—');
+    const _ac = entry.price_change_pct ?? entry.actual_change ?? null;
+    const resTxt = _ac != null ? `${_ac >= 0 ? '+' : ''}${Number(_ac).toFixed(1)}%` : '—';
+    const _ticker = entry.asset || entry.ticker || '—';
+    logHtml += `<div class="pred-log-row"><span>${entry.date || '—'}</span><span style="font-weight:700">${_ticker}</span><span>${dirTxt} ${entry.pct || '—'}%</span><span style="color:${(_ac||0)>=0?'var(--green)':'var(--red)'}">${resTxt}</span><span>${icon}</span></div>`;
   }
 
   slot.innerHTML = `<section class="panel p-12" id="sec-predictions">
