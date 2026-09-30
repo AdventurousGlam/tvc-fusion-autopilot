@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Paper Trading Bot v3.1
+TVC Fusion Paper Trading Bot v3.2
+
+v3.2 (2026-09-30) — SHORT KILLSWITCH
+  - SHORTY ZABLOKOWANE w RANGING + TRENDING_UP (dane: 0% WR na 26 shortach)
+  - Shorty dozwolone TYLKO w TRENDING_DOWN (≤45) i CRASH (≤50)
+  - ATR_SL_MULTIPLIER_SHORT: 2.0× (szersza SL gdy short dozwolony)
+  - Force-close otwartych shortów w niedozwolonych reżimach
 
 v3.1 (2026-09-29) — ANTI-FAKEOUT SL OVERHAUL
   - BREAKEVEN_TRIGGER: 1.5% → 3.0% (dane: 4 breakeven-SL trades przy +0.1%, strata winnerów)
@@ -186,12 +192,12 @@ MIN_LONG_SCORE_BY_REGIME = {
 # potwierdzonego edge'a na shortach. Shorty włączone tylko z ekstremalną
 # konwikcją w TRENDING_DOWN/CRASH. W uptrendzie: praktycznie wyłączone.
 MAX_SHORT_SCORE_BY_REGIME = {
-    "TRENDING_UP":            35,    # v3.0: 45→35 (nie shortuj uptrend)
-    "TRENDING_UP_VOLATILE":   35,    # v3.0: 45→35
-    "RANGING":                42,    # v3.0: 48→42 (revert v2.2 — potrzeba silnego sygnału)
-    "TRENDING_DOWN":          52,    # v3.0: 55→52 (lekkie zacieśnienie)
-    "TRENDING_DOWN_VOLATILE": 52,    # v3.0: 55→52
-    "CRASH":                  58,    # v3.0: 60→58 (lekkie zacieśnienie)
+    "TRENDING_UP":            0,     # v3.2: BLOKADA — 0% WR na 26 shortach, zero edge'a
+    "TRENDING_UP_VOLATILE":   0,     # v3.2: BLOKADA
+    "RANGING":                0,     # v3.2: BLOKADA — 100% shortów w RANGING = SL hit
+    "TRENDING_DOWN":          45,    # v3.2: 52→45 (shorty TYLKO w potwierdz. downtrend, strict)
+    "TRENDING_DOWN_VOLATILE": 45,    # v3.2: 52→45
+    "CRASH":                  50,    # v3.2: 58→50 (crash = jedyny regime gdzie short ma sens)
 }
 MAX_HOLD_DAYS = 5              # v0.9 — auto-close zombie pozycji po 5 dniach
 
@@ -594,7 +600,8 @@ def _notify_close(ticker, direction, entry, exit_price, pnl_pct, pnl_usd, reason
     try:
         exit_label = {"hit_tp1": "🎯 TP1 Hit", "hit_tp2": "🎯🎯 TP2 Hit", "hit_sl": "🛑 Stop Loss",
                       "hit_trailing_sl": "📈 Trailing Stop", "flip_choch": "🔁 Flip Exit", "sl_rescan_bug": "🐛 SL re-scan",
-                      "manual_close": "✋ Manual Close", "zombie_expired": "⏰ Max Hold Expired"}.get(reason, reason)
+                      "manual_close": "✋ Manual Close", "zombie_expired": "⏰ Max Hold Expired",
+                      "short_killswitch": "⛔ Short Killswitch", "max_hold": "⏰ Max Hold Expired"}.get(reason, reason)
         res = "✅" if pnl_usd > 0 else "❌" if pnl_usd < 0 else "➖"
         pro_lines = [
             f"{res} <b>CLOSED — {ticker} {direction.upper()}</b>",
@@ -1527,6 +1534,42 @@ def cmd_check(args):
         conn.close()
         return
 
+    # v3.2 — FORCE-CLOSE shortów w reżimach gdzie shorty są teraz zablokowane.
+    # Dane: 0% WR na 26 shortach → shorty dozwolone TYLKO w TRENDING_DOWN/CRASH.
+    _short_allowed_regimes = {k for k, v in MAX_SHORT_SCORE_BY_REGIME.items() if v > 0}
+    for r in open_rows:
+        if (r["direction"] or "long").lower() != "short":
+            continue
+        r_regime = r.get("regime") or "RANGING"
+        if r_regime in _short_allowed_regimes:
+            continue
+        # Short w niedozwolonym reżimie → zamknij natychmiast
+        try:
+            exit_price = _fetch_current_price(r["ticker"])
+        except Exception:
+            print(f"[short-kill] {r['ticker']} — can't fetch price, skipping")
+            continue
+        pnl_pct = (r["entry_price"] - exit_price) / r["entry_price"] * 100
+        pnl_usd = r["size_usd"] * (pnl_pct / 100)
+        close_ts = now_utc.isoformat()
+        conn.execute(
+            """UPDATE positions SET status='closed', exit_price=?, exit_date=?,
+               pnl_pct=?, pnl_usd=?, hit_or_miss=?, closed_at=? WHERE id=?""",
+            (exit_price, close_ts, pnl_pct, pnl_usd, "short_killswitch", close_ts, r["id"]),
+        )
+        conn.commit()
+        print(f"[short-kill] {r['ticker']} SHORT force-closed (regime={r_regime}, blocked)  "
+              f"entry {r['entry_price']:.4f} → exit {exit_price:.4f}  PnL {pnl_pct:+.2f}%")
+        _notify_close(r["ticker"], "short", r["entry_price"], exit_price, pnl_pct, pnl_usd, "short_killswitch")
+
+    # Re-fetch after short killswitch
+    open_rows = conn.execute("SELECT * FROM positions WHERE status='open'").fetchall()
+    if not open_rows:
+        print("[check] all positions closed (short killswitch)")
+        _maybe_daily_digest(conn)
+        conn.close()
+        return
+
     for r in open_rows:
         try:
             ohlc = _fetch_klines_binance(r["ticker"], r["opened_at"], "5m")
@@ -2269,7 +2312,8 @@ def _compute_performance_breakdown(conn):
 
     exit_labels = {"hit_tp2": "TP2", "hit_tp1": "TP1", "hit_trailing_sl": "Trailing SL",
                    "hit_sl": "SL", "flip_choch": "Flip CHoCH", "manual_close": "Manual",
-                   "sl_rescan_bug": "SL re-scan bug (wykluczone)"}
+                   "sl_rescan_bug": "SL re-scan bug (wykluczone)", "short_killswitch": "Short Killswitch",
+                   "max_hold": "Max Hold"}
     now = datetime.now(timezone.utc)
     cut7 = (now - timedelta(days=7)).isoformat()
     cut14 = (now - timedelta(days=14)).isoformat()
@@ -2652,19 +2696,22 @@ def _fetch_atr14_1h(ticker: str) -> float:
     return sum(trs) / len(trs) if trs else 0.0
 
 
-ATR_SL_MULTIPLIER = 1.2  # v3.1: minimum SL distance = 1.2× ATR(14) na 1h
+ATR_SL_MULTIPLIER = 1.2        # v3.1: minimum SL distance = 1.2× ATR(14) na 1h (LONG)
+ATR_SL_MULTIPLIER_SHORT = 2.0  # v3.2: shorty potrzebują więcej przestrzeni (2× ATR)
 
 
 def _widen_sl_by_atr(ticker: str, entry_price: float, sl_price: float,
                       direction: str) -> tuple[float, str]:
     """v3.1 — ATR-based SL guard. Jeśli SL ze struktury jest bliżej niż
     ATR_SL_MULTIPLIER × ATR(14, 1h), rozszerz do minimum ATR distance.
+    v3.2: shorty mają osobny mnożnik 2.0× (więcej przestrzeni na volatility).
     Zapobiega zbyt ciasnym SL w wysokiej zmienności."""
     try:
         atr = _fetch_atr14_1h(ticker)
         if atr <= 0:
             return sl_price, "atr=0"
-        min_distance = atr * ATR_SL_MULTIPLIER
+        mult = ATR_SL_MULTIPLIER if direction == "long" else ATR_SL_MULTIPLIER_SHORT
+        min_distance = atr * mult
         if direction == "long":
             current_distance = entry_price - sl_price
             if current_distance < min_distance:
