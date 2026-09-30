@@ -751,15 +751,45 @@ def compute_onchain_score(ticker, price_data, etf_flows, layer_inputs, klines_1h
         oi_score = 50
     debug["oi"] = round(oi_score, 1)
 
-    # ── Weighted blend ──
-    onchain = (
-        momentum * 0.20
-        + cvd_score * 0.25
-        + sm_score * 0.25
-        + funding_score * 0.15
-        + oi_score * 0.15
-    )
+    # 6. LIQUIDATIONS (15%) — z OpenMarket API (nowy sygnał w v3.0)
+    # Asymetria likwidacji: więcej short liqs = bullish (shorty wypłukane),
+    # więcej long liqs = bearish (longi likwidowane). Zero danych = neutral.
+    liq_data = (layer_inputs.get("ctx") or {}).get(ticker, {}).get("liquidations")
+    if liq_data and liq_data.get("total_liq_usd", 0) > 0:
+        net_liq = liq_data.get("net_liq", 0)  # >0 bullish (short liqs), <0 bearish (long liqs)
+        total = liq_data.get("total_liq_usd", 0)
+        # Skalowanie: $1M+ likwidacji = silny sygnał, <$100k = szum
+        vol_factor = min(1.5, max(0.3, total / 500_000))
+        liq_score = 50 + net_liq * 30 * vol_factor
+        liq_score = max(10, min(90, liq_score))
+    else:
+        liq_score = 50  # brak danych = neutral
+    debug["liq"] = round(liq_score, 1)
+
+    # ── Weighted blend v3.0 (6 komponentów) ──
+    # Gdy liquidation data jest dostępna: pełny 6-component blend
+    # Gdy brak: fallback na stary 5-component (liq_score=50, waga redystrybuowana)
+    has_liq = liq_data and liq_data.get("total_liq_usd", 0) > 0
+    if has_liq:
+        onchain = (
+            momentum * 0.15       # ↓ z 0.20
+            + cvd_score * 0.20    # ↓ z 0.25
+            + sm_score * 0.20     # ↓ z 0.25
+            + funding_score * 0.15
+            + oi_score * 0.15
+            + liq_score * 0.15    # NOWY
+        )
+    else:
+        # Fallback: stare wagi bez likwidacji
+        onchain = (
+            momentum * 0.20
+            + cvd_score * 0.25
+            + sm_score * 0.25
+            + funding_score * 0.15
+            + oi_score * 0.15
+        )
     onchain = max(0, min(100, onchain))
+    debug["has_liq_data"] = has_liq
     debug["final"] = round(onchain, 1)
 
     return int(onchain), debug
@@ -1248,6 +1278,217 @@ LAYERS_CACHE = FUSION_DIR / "layers_cache.json"
 SM_REFRESH_MIN = 30
 SM_TICKERS = ["BTC", "ETH", "SOL", "XRP", "SUI"]
 
+# ═══════════════════════════════════════════════════════════════════════════
+# OpenMarket API — cross-exchange derivatives data (funding, OI, liquidations)
+# Free tier: 10 weight/min, 1000 weight/day, 7 days history.
+# Phase 1: supplementary source z cache 15-20 min (budżet ~45 weight/run).
+# ═══════════════════════════════════════════════════════════════════════════
+OM_BASE = "https://api.openmarket.xyz/v1"
+OM_KEY = os.environ.get("OPENMARKET_API_KEY", "")
+OM_CACHE_FILE = FUSION_DIR / "om_cache.json"
+OM_CACHE_MIN = 20  # minuty — max 3 fetche/h × 15w = 45w/h → 1080w/24h, z hard-stopem@950
+# Mapowanie SM_TICKERS → OpenMarket coin names
+OM_COINS = {"BTC": "BTC", "ETH": "ETH", "SOL": "SOL", "XRP": "XRP", "SUI": "SUI"}
+# Giełda priorytetowa dla Free tier (brak multi-exchange aggregation)
+OM_EXCHANGE = "BINANCE_FUTURES"
+
+
+def _om_get(endpoint, params, timeout=12):
+    """GET z OpenMarket API z auth headerem. Zwraca parsed JSON lub None."""
+    if not OM_KEY:
+        return None
+    qs = "&".join(f"{k}={v}" for k, v in params.items())
+    url = f"{OM_BASE}/{endpoint}?{qs}"
+    req = ur.Request(url, headers={
+        "User-Agent": UA,
+        "Accept": "application/json",
+        "X-OpenMarket-Key": OM_KEY,
+    })
+    try:
+        with ur.urlopen(req, timeout=timeout, context=SSL_CTX) as r:
+            # Sprawdź rate limit headers
+            remaining = r.headers.get("X-RateLimit-Remaining")
+            if remaining is not None and int(remaining) <= 1:
+                print(f"[om] Rate limit prawie wyczerpany: remaining={remaining}")
+            return json.loads(r.read())
+    except Exception as e:
+        FETCH_ERRORS.append(f"om.{endpoint}: {type(e).__name__}: {e}")
+        return None
+
+
+def _load_om_cache():
+    try:
+        return json.loads(OM_CACHE_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def _save_om_cache(c):
+    try:
+        OM_CACHE_FILE.write_text(json.dumps(c, separators=(",", ":")))
+    except Exception as e:
+        FETCH_ERRORS.append(f"om.cache.save: {e}")
+
+
+def fetch_om_funding(coins=None):
+    """Funding rate z Binance Futures via OpenMarket (weight: 1 per coin).
+    Zwraca {coin: funding_rate_8h_pct} lub {}."""
+    coins = coins or list(OM_COINS.keys())
+    out = {}
+    now = int(time.time())
+    period = 3600  # 1h aggregation
+    from_ts = now - period
+    for coin in coins:
+        data = _om_get("points", {
+            "type": "FUNDING_RATE_AGG",
+            "exchange": OM_EXCHANGE,
+            "coin": OM_COINS[coin],
+            "from": from_ts,
+            "period": period,
+        })
+        if data and isinstance(data, list) and len(data) > 0:
+            # OpenMarket zwraca listę punktów; bierzemy ostatni
+            last = data[-1] if isinstance(data[-1], dict) else {}
+            rate = last.get("fundingRate") or last.get("value") or last.get("rate")
+            if rate is not None:
+                # Konwertuj na % per 8h (standard)
+                out[coin] = float(rate) * 100  # zakładamy, że API zwraca jako decimal
+    return out
+
+
+def fetch_om_oi(coins=None):
+    """Open Interest z Binance Futures via OpenMarket (weight: 1 per coin).
+    Zwraca {coin: oi_usd} lub {}."""
+    coins = coins or list(OM_COINS.keys())
+    out = {}
+    now = int(time.time())
+    period = 3600
+    from_ts = now - period
+    for coin in coins:
+        data = _om_get("points", {
+            "type": "OPEN_INTEREST_AGG",
+            "exchange": OM_EXCHANGE,
+            "coin": OM_COINS[coin],
+            "from": from_ts,
+            "period": period,
+        })
+        if data and isinstance(data, list) and len(data) > 0:
+            last = data[-1] if isinstance(data[-1], dict) else {}
+            oi = last.get("openInterest") or last.get("value") or last.get("oi")
+            if oi is not None:
+                out[coin] = float(oi)
+    return out
+
+
+def fetch_om_liquidations(coins=None):
+    """Liquidation data z Binance Futures via OpenMarket (weight: 1 per coin).
+    Zwraca {coin: {"long_liq_usd": X, "short_liq_usd": Y, "net_liq": Z}} lub {}."""
+    coins = coins or list(OM_COINS.keys())
+    out = {}
+    now = int(time.time())
+    period = 4 * 3600  # 4h window — łapie większe fale likwidacji
+    from_ts = now - period
+    for coin in coins:
+        data = _om_get("points", {
+            "type": "LIQUIDATION_AGG",
+            "exchange": OM_EXCHANGE,
+            "coin": OM_COINS[coin],
+            "from": from_ts,
+            "period": period,
+        })
+        if data and isinstance(data, list) and len(data) > 0:
+            long_liq = 0.0
+            short_liq = 0.0
+            for pt in data:
+                if not isinstance(pt, dict):
+                    continue
+                ll = pt.get("longLiquidations") or pt.get("longLiq") or 0
+                sl = pt.get("shortLiquidations") or pt.get("shortLiq") or 0
+                long_liq += float(ll)
+                short_liq += float(sl)
+            total = long_liq + short_liq
+            net = (short_liq - long_liq) / total if total > 0 else 0.0
+            out[coin] = {
+                "long_liq_usd": round(long_liq),
+                "short_liq_usd": round(short_liq),
+                "total_liq_usd": round(total),
+                "net_liq": round(net, 3),  # >0 = więcej short liqs (bullish), <0 = więcej long liqs (bearish)
+            }
+    return out
+
+
+def fetch_openmarket_data():
+    """Główna funkcja OM — fetchuje funding + OI + liquidations z cache'owaniem.
+    Budget: 5 coins × 3 types = 15 weight (z zapasem na retry = ~20 weight/run).
+    Cache 15 min → max 4 runs/h × 20 = 80 weight/h (mieści się w 10/min)."""
+    now = int(time.time())
+    cache = _load_om_cache()
+    last_ts = cache.get("ts", 0)
+
+    # Sprawdź czy cache jest świeży
+    if now - last_ts < OM_CACHE_MIN * 60:
+        print(f"[om] Cache fresh ({(now - last_ts) // 60}m ago) — skip fetch")
+        return cache.get("data", {})
+
+    if not OM_KEY:
+        print("[om] Brak OPENMARKET_API_KEY — skip")
+        return {}
+
+    # ── Daily weight budget tracker ──
+    day_key = time.strftime("%Y-%m-%d", time.gmtime(now))
+    usage = cache.get("usage", {})
+    if usage.get("day") != day_key:
+        usage = {"day": day_key, "weight": 0, "fetches": 0}
+    daily_w = usage.get("weight", 0)
+    if daily_w >= 950:  # hard stop — zostaw 50 weight zapasu
+        print(f"⛔ [om] Daily weight budget exhausted ({daily_w}/1000) — skip fetch")
+        return cache.get("data", {})
+    if daily_w >= 800:
+        print(f"⚠️ [om] Daily weight at {daily_w}/1000 (80%+) — approaching limit")
+
+    print("[om] Fetching cross-exchange data (Binance Futures)...")
+    om_data = {}
+
+    # Funding rates (5 × 1 weight = 5)
+    try:
+        funding = fetch_om_funding()
+        if funding:
+            om_data["funding"] = funding
+            print(f"[om] Funding: {len(funding)} coins")
+    except Exception as e:
+        FETCH_ERRORS.append(f"om.funding: {type(e).__name__}: {e}")
+
+    # Open Interest (5 × 1 weight = 5)
+    try:
+        oi = fetch_om_oi()
+        if oi:
+            om_data["oi"] = oi
+            print(f"[om] OI: {len(oi)} coins")
+    except Exception as e:
+        FETCH_ERRORS.append(f"om.oi: {type(e).__name__}: {e}")
+
+    # Liquidations (5 × 1 weight = 5)
+    try:
+        liqs = fetch_om_liquidations()
+        if liqs:
+            om_data["liquidations"] = liqs
+            print(f"[om] Liquidations: {len(liqs)} coins")
+    except Exception as e:
+        FETCH_ERRORS.append(f"om.liquidations: {type(e).__name__}: {e}")
+
+    # Zlicz zużyty weight (5 coins × typy które się powiodły)
+    run_weight = (len(om_data.get("funding", {})) +
+                  len(om_data.get("oi", {})) +
+                  len(om_data.get("liquidations", {})))
+    usage["weight"] = usage.get("weight", 0) + run_weight
+    usage["fetches"] = usage.get("fetches", 0) + 1
+    print(f"[om] Run weight: {run_weight} | Daily total: {usage['weight']}/1000 ({usage['fetches']} fetches)")
+
+    # Zapisz cache + usage
+    cache = {"ts": now, "data": om_data, "usage": usage}
+    _save_om_cache(cache)
+    return om_data
+
 
 def _post_json(url, payload, timeout=20):
     req = ur.Request(url, data=json.dumps(payload).encode(), headers={"User-Agent": UA, "Content-Type": "application/json"})
@@ -1329,8 +1570,9 @@ def fetch_hl_whales():
     return {"ts": int(time.time()), "wallets": wallets, "agg": agg, "addrs": [a for _p, a, _v in rows[:30]]}
 
 
-def fetch_layers_inputs():
-    """Zbiera wejścia dla warstw: HL ctx (funding/OI) + wieloryby (cache 30 min) + seria OI."""
+def fetch_layers_inputs(om_data=None):
+    """Zbiera wejścia dla warstw: HL ctx (funding/OI) + wieloryby (cache 30 min) + seria OI.
+    om_data: opcjonalny dict z OpenMarket — uzupełnia/waliduje HL dane."""
     cache = _load_layers_cache()
     now = int(time.time())
     try:
@@ -1338,8 +1580,36 @@ def fetch_layers_inputs():
     except Exception as e:
         FETCH_ERRORS.append(f"layers.hl_ctx: {type(e).__name__}: {e}")
         ctx = {}
+
+    # ── Merge OpenMarket data (cross-exchange supplement) ──
+    om = om_data or {}
+    om_funding = om.get("funding", {})
+    om_oi = om.get("oi", {})
+    om_liqs = om.get("liquidations", {})
+
+    for t in SM_TICKERS:
+        if t not in ctx:
+            ctx[t] = {}
+        # OM funding jako dodatkowy punkt danych (Binance Futures vs HL)
+        if t in om_funding:
+            ctx[t]["om_funding_8h"] = om_funding[t]
+            # Jeśli HL nie ma danych, użyj OM jako fallback (konwersja 8h→1h)
+            if ctx[t].get("funding_h") is None:
+                ctx[t]["funding_h"] = om_funding[t] / 8.0
+        # OM OI jako cross-exchange reference
+        if t in om_oi:
+            ctx[t]["om_oi_usd"] = om_oi[t]
+            # Fallback: jeśli HL nie zwróciło OI
+            if not ctx[t].get("oi_usd"):
+                ctx[t]["oi_usd"] = om_oi[t]
+        # Liquidation data (nowy sygnał — tylko z OM)
+        if t in om_liqs:
+            ctx[t]["liquidations"] = om_liqs[t]
+
     oi = cache.get("oi", {})
     for t, c in ctx.items():
+        if not c.get("oi_usd"):
+            continue
         ser = [x for x in oi.get(t, []) if now - x[0] < 26 * 3600]
         ser.append([now, round(c["oi_usd"])])
         oi[t] = ser
@@ -1352,7 +1622,7 @@ def fetch_layers_inputs():
         except Exception as e:
             FETCH_ERRORS.append(f"layers.hl_whales: {type(e).__name__}: {e}")
     _save_layers_cache(cache)
-    return {"ctx": ctx, "oi": oi, "sm": sm or {}}
+    return {"ctx": ctx, "oi": oi, "sm": sm or {}, "om": om}
 
 
 def _oi_change_pct(series, hours, now=None):
@@ -1435,11 +1705,28 @@ def compute_layers(ticker, direction, price, change_24h, klines_1h, inputs):
     if sfp_bear: fl["sfp_bear"] = 15
     if sfp_bull: pu["sfp_bull"] = 15
     # funding HL jest GODZINOWY w %: neutral ≈ 0.00125%/h (= 0.01%/8h)
-    if funding is not None:
-        if funding >= 0.006: fl["funding"] = 15       # ≈ 0.05%/8h — tłok w longach
-        elif funding >= 0.0025: fl["funding"] = 10    # ≈ 0.02%/8h
-        if funding <= -0.004: pu["funding"] = 20      # ≈ −0.03%/8h — shorty płacą, paliwo na squeeze
-        elif funding <= -0.00125: pu["funding"] = 10
+    # v3.0: jeśli OM ma cross-exchange funding, uśredniamy z HL dla lepszego sygnału
+    om_f8h = ctx.get("om_funding_8h")
+    if om_f8h is not None and funding is not None:
+        # OM jest w %/8h, HL w %/h → konwertuj HL na 8h do porównania, potem uśrednij i z powrotem na /h
+        hl_8h = funding * 8.0
+        avg_8h = (hl_8h + om_f8h) / 2.0
+        funding_for_layers = avg_8h / 8.0  # z powrotem na /h
+    else:
+        funding_for_layers = funding
+    if funding_for_layers is not None:
+        if funding_for_layers >= 0.006: fl["funding"] = 15       # ≈ 0.05%/8h — tłok w longach
+        elif funding_for_layers >= 0.0025: fl["funding"] = 10    # ≈ 0.02%/8h
+        if funding_for_layers <= -0.004: pu["funding"] = 20      # ≈ −0.03%/8h — shorty płacą, paliwo na squeeze
+        elif funding_for_layers <= -0.00125: pu["funding"] = 10
+    # v3.0: liquidation data w layers (flush/pump scoring)
+    liq = ctx.get("liquidations")
+    if liq and liq.get("total_liq_usd", 0) > 100_000:
+        net_l = liq.get("net_liq", 0)
+        if net_l < -0.3:  # heavy long liquidations → flush signal
+            fl["liquidations"] = 12
+        elif net_l > 0.3:  # heavy short liquidations → pump fuel
+            pu["liquidations"] = 12
     if sm and sm.get("total_usd", 0) >= 5e6:
         if sm["net"] <= -0.3: fl["whales_short"] = 10
         if sm["net"] >= 0.3: pu["whales_long"] = 10
@@ -1658,9 +1945,17 @@ def generate_fusion():
     regime, regime_details = detect_regime(prices.get("BTC"), fng, dom, btc_klines_d=btc_klines_d)
     print(f"[regime] {regime} (bull={regime_details['bull_pts']} bear={regime_details['bear_pts']})")
 
+    # v3.0 — OpenMarket cross-exchange derivatives data (cache 15 min)
     try:
-        layer_inputs = fetch_layers_inputs()
-        print(f"[layers] HL ctx {len(layer_inputs.get('ctx') or {})} coins · whales {(layer_inputs.get('sm') or {}).get('wallets', 0)} portfeli")
+        om_data = fetch_openmarket_data()
+        om_coins = sum(1 for v in [om_data.get("funding"), om_data.get("oi"), om_data.get("liquidations")] if v)
+        print(f"[om] OpenMarket: {om_coins}/3 data types loaded")
+    except Exception as e:
+        FETCH_ERRORS.append(f"om.main: {type(e).__name__}: {e}"); om_data = {}
+
+    try:
+        layer_inputs = fetch_layers_inputs(om_data=om_data)
+        print(f"[layers] HL ctx {len(layer_inputs.get('ctx') or {})} coins · whales {(layer_inputs.get('sm') or {}).get('wallets', 0)} portfeli · OM {'✓' if om_data else '—'}")
     except Exception as e:
         FETCH_ERRORS.append(f"layers.inputs: {type(e).__name__}: {e}"); layer_inputs = {}
 
@@ -1844,7 +2139,7 @@ def generate_fusion():
             f"{' (weekend ×0.7 applied)' if datetime.now().weekday() in (5, 6) else ''}."
         ),
         "weights": {"onchain": 0.40, "ta": 0.40, "sentiment": 0.15, "news": 0.05},
-        "data_provenance": "Auto-fetched: Binance prices/klines, alternative.me F&G, CoinGecko BTC.D, Farside ETF flows. NO Claude credits used.",
+        "data_provenance": "Auto-fetched: Binance prices/klines, alternative.me F&G, CoinGecko BTC.D, Farside ETF flows, Hyperliquid (SM/funding/OI), OpenMarket (cross-exchange funding/OI/liquidations). NO Claude credits used.",
         "decisions": decisions,
         "aggregate_long_risk_pct": round(aggregate_risk, 1),
         "aggregate_short_risk_pct": round(aggregate_short_risk, 1),

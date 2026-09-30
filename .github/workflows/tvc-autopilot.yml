@@ -26,6 +26,7 @@ jobs:
       # v0.3 — powiadomienia Telegram (opcjonalne: bez sekretów bot działa bez alertów)
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      OPENMARKET_API_KEY: ${{ secrets.OPENMARKET_API_KEY }}
     steps:
       - name: Checkout repo (standard path)
         uses: actions/checkout@v4
@@ -138,7 +139,7 @@ jobs:
           git config user.name "tvc-autopilot"
           git config user.email "autopilot@tvcfusion.local"
           git add fusion_*.json paper_trades.db
-          for f in crypto_picks.json layers_cache.json pump_radar.json pump_radar_alerts.json correlation_data.json market_predictions.json content_queue.json weekly_recap.json; do [ -e "$f" ] && git add "$f"; done; true
+          for f in crypto_picks.json layers_cache.json pump_radar.json pump_radar_alerts.json correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json; do [ -e "$f" ] && git add "$f"; done; true
           if git diff --cached --quiet; then
             echo "Brak zmian do commitu."
             exit 0
@@ -165,7 +166,7 @@ jobs:
               git checkout --theirs -- paper_trades.db 2>/dev/null || true
               git checkout --theirs -- crypto_picks.json 2>/dev/null || true
               git checkout --theirs -- layers_cache.json pump_radar.json pump_radar_alerts.json 2>/dev/null || true
-              git checkout --theirs -- correlation_data.json market_predictions.json content_queue.json weekly_recap.json 2>/dev/null || true
+              git checkout --theirs -- correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json 2>/dev/null || true
               git add -A
               if git rebase --continue; then
                 echo "Konflikt rozwiązany automatycznie."
