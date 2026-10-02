@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Paper Trading Bot v3.2
+TVC Fusion Paper Trading Bot v3.3
+
+v3.3 (2026-10-02) — LONG THRESHOLD RECALIBRATION
+  - Dane 19.09–02.10: 70% odczytów score w 50–64, tylko 9/160 ≥ 65, 0 wejść od 25.09.
+  - MIN_LONG TRENDING_UP: 68 → 62 (RANGING: 72 → 68). Shorty bez zmian (v3.2).
+  - Nowy tier sizingu 62–67: 4% kapitału (pół "probe"), 68–71: 6%.
+  - Trade'y z score 62–67 dostają tag 'low_tier' do osobnej oceny po 30 dniach.
 
 v3.2 (2026-09-30) — SHORT KILLSWITCH
   - SHORTY ZABLOKOWANE w RANGING + TRENDING_UP (dane: 0% WR na 26 shortach)
@@ -127,8 +133,9 @@ EXCHANGE_ID = os.environ.get("TVC_EXCHANGE", "bybit")
 # v0.8 — TIERED SIZING by fusion score (higher conviction = bigger position)
 # Replaces flat 3% cap. Shorts stay conservative (unlimited upside risk).
 TIERED_LONG_SIZES = {        # (min_score, max_score): size_pct
-    # v3.0: przesunięte do nowych progów (MIN_LONG=68 w TRENDING_UP)
-    (68, 72): 5.0,           # probe — minimum viable position
+    # v3.3: dolny tier 62-67 = pół probe (dane 25.09: 63-65 → +1.9, +1.9, +0.1, +0.1, -1.2)
+    (62, 68): 4.0,           # low tier — mała pozycja, zbieramy dane
+    (68, 72): 6.0,           # probe — minimum viable position
     (72, 76): 12.0,          # moderate conviction
     (76, 85): 25.0,          # high conviction
     (85, 101): 40.0,         # very high conviction (v3.0: 80→40, cap na rozsądnym poziomie)
@@ -179,9 +186,9 @@ MAX_NEW_TRADES_PER_DAY = 3     # v3.0: 5→3 (mniej trade'ów, wyższa jakość)
 # RANGING = pułapka: 43T, 14%WR, −44.54% PnL → wymaga ekstremalnej konwikcji.
 # TRENDING_DOWN/CRASH → BLOCKED (100 = impossible threshold).
 MIN_LONG_SCORE_BY_REGIME = {
-    "TRENDING_UP":            68,    # v3.0: 55→68 (dane: <64=katastrofa)
-    "TRENDING_UP_VOLATILE":   68,    # v3.0: 55→68
-    "RANGING":                72,    # v3.0: 58→72 (RANGING=pułapka, tylko extreme conviction)
+    "TRENDING_UP":            62,    # v3.3: 68→62 (score rzadko >65; tier 62-67 = pół pozycji)
+    "TRENDING_UP_VOLATILE":   62,    # v3.3: 68→62
+    "RANGING":                68,    # v3.3: 72→68 (RANGING nadal wymaga wysokiej konwikcji)
     "TRENDING_DOWN":          100,   # BLOKADA longi w downtrend
     "TRENDING_DOWN_VOLATILE": 100,   # BLOKADA longi w downtrend volatile
     "CRASH":                  100,   # BLOKADA longi w crash
@@ -1329,7 +1336,7 @@ def cmd_open(args):
             1 if dec.get("onchain_data_thin") else 0,
             datetime.now(timezone.utc).isoformat(),
             None,  # closed_at
-            None,  # context_tags (v0.5: removed entry_quality tags)
+            ("low_tier" if (direction == "long" and 62 <= score < 68) else None),  # v3.3: tag do audytu tieru 62-67
             None, None,  # entry_zone_low, entry_zone_high (v0.5: no pending)
             (dec.get("levels") or {}).get("rr"),
         )
