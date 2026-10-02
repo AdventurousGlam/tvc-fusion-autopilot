@@ -1540,7 +1540,7 @@ def cmd_check(args):
     for r in open_rows:
         if (r["direction"] or "long").lower() != "short":
             continue
-        r_regime = r.get("regime") or "RANGING"
+        r_regime = (r["regime"] if "regime" in r.keys() else None) or "RANGING"
         if r_regime in _short_allowed_regimes:
             continue
         # Short w niedozwolonym reżimie → zamknij natychmiast
