@@ -1,43 +1,37 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Content Engine v4.1 — day-of-week content strategy + personal brand + book mentions
+TVC Fusion Content Engine v5.0 — LinkedIn-first, X in safe mode
 
-DAILY ROTATION:
-  Monday    — Weekend Data Drop (what the system flagged)
-  Tuesday   — Behind the Build (founder/builder narrative)
-  Wednesday — Market Analysis (contrarian take + real data)
-  Thursday  — System Results (weekly P&L from paper_trades.db)
-  Friday    — Education (one trading concept explained)
-  Saturday  — No posts (engagement-only day)
-  Sunday    — Week Ahead Preview (macro events + key levels)
+WHY v5.0 (2026-10-02):
+  X account reach collapsed (71 impressions/7d, posts at 0-1 impressions with 52 active
+  followers) after a week of 4-7 posts/day with cashtags, Telegram links and
+  "not financial advice" boilerplate — the exact pattern X's spam classifier flags.
+  LinkedIn has 3,570 followers and rewards long-form. Priorities flip.
 
-PLATFORM RULES:
-  LinkedIn — ORIGINAL posts only. Personal angle ("I built...", "I noticed...").
-             Never reshares. Max 10 lines. Hook in first 2 lines.
-  X/Twitter — Questions or contrarian observations. NEVER listicles.
-              Cashtags ($BTC, $ETH, $SUI). Short and punchy. 3 slots/day.
+PLATFORM SPLIT:
+  LinkedIn — PRIMARY. 3 original posts/week: Mon (data drop), Wed (market analysis),
+             Fri (education / behind the build). Personal angle, max ~12 lines, no links in body.
+  X        — SAFE MODE. 1 post/day max, no cashtags ($BTC → BTC), no URLs in body
+             (link goes into a reply), no "not financial advice" line.
+             Plus a daily REPLY BRIEF: 3 data-backed talking points to use as replies
+             under large accounts — replies are where X still gives this account reach.
+  Saturday — no posts anywhere.
 
-CTA ROTATION: CTA (t.me/TVCFusionSignals) every 3rd post, not every post.
+CTA: "TVC Fusion PRO" by name only, every 3rd post. Never a raw t.me link on X.
 
-v4.1 NEW:
-  - Book mention rotation — every ~9 posts on Tue/Fri, 6 Amazon KDP books backstory
-v4.0:
-  - gen_trade_recap()  — callable from paper_bot after closing a trade
-  - gen_alert_post()   — callable from pump_radar after HIGH alert
-  - CTA rotation       — every 3rd post instead of every post
-  - Evening X slot     — 3rd daily X post (education/insight one-liner)
-  - Shorter LinkedIn   — max 10 lines, stronger hook
-  - Standalone CLI     — python content_engine.py --recap '{json}' | --alert '{json}'
+v5.0 changes:
+  - MAX_X_PER_DAY 3→1, MAX_LI_PER_DAY 2→1, LinkedIn only on Mon/Wed/Fri
+  - X_SAFE_MODE post-processing in _post(): strips cashtags, URLs, NFA lines
+  - gen_reply_brief(): daily "x_reply" item (not counted against X limit)
+  - Evening X slot disabled; trade-close posts never on LinkedIn
 
-Reads:  paper_trades.db, fusion_latest.json, crypto_picks.json, pump_radar_alerts.json
+Reads:  paper_trades.db, fusion_<today>.json, crypto_picks.json, pump_radar_alerts.json
 Writes: content_queue.json + sends to personal Telegram for copy-paste
-
-Runs in GitHub Actions after paper_bot refresh. Non-destructive: appends to queue.
-Zero external deps beyond stdlib + sqlite3.
 """
 
 from __future__ import annotations
 import json
+import re
 import os
 import sqlite3
 import ssl
@@ -62,11 +56,14 @@ RADAR_ALERTS = FUSION_DIR / "pump_radar_alerts.json"
 STATS_SINCE = "2026-09-02T19:00:00"
 STATS_WHERE = "status='closed' AND opened_at >= ? AND COALESCE(excluded,0)=0"
 
-MAX_X_PER_DAY = 3      # v4.0: was 2, evening slot added
-MAX_LI_PER_DAY = 2
+MAX_X_PER_DAY = 1      # v5.0: 3→1 (reach restriction recovery)
+MAX_LI_PER_DAY = 1     # v5.0: 2→1
+LI_DAYS = {0, 2, 4}    # v5.0: LinkedIn only Mon/Wed/Fri
+X_SAFE_MODE = True     # v5.0: strip cashtags/URLs/NFA from X posts
+EVENING_X_SLOT = False # v5.0: disabled
 
 TG_PERSONAL_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-CTA = "t.me/TVCFusionSignals"
+CTA = "TVC Fusion PRO"  # v5.0: name only, no raw link on X
 CTA_EVERY_N = 3        # v4.0: CTA every Nth post, not every post
 BOOK_MENTION_EVERY_N = 9  # v4.1: mention books roughly every 9th post
 
@@ -231,6 +228,10 @@ def _post(platform, ptype, text, graphic, ticker=None, extra=None):
     # v4.0: compact LinkedIn posts
     if platform == "linkedin":
         text = _compact_li(text)
+    # v5.0: X safe mode
+    links = []
+    if platform == "x" and X_SAFE_MODE:
+        text, links = _x_safe(text)
     p = {
         "platform": platform,
         "type": ptype,
@@ -243,7 +244,36 @@ def _post(platform, ptype, text, graphic, ticker=None, extra=None):
     }
     if extra:
         p.update(extra)
+    if links:
+        p["link_in_reply"] = links[0]
     return p
+
+
+_URL_RE = re.compile(r"https?://\S+|\bt\.me/\S+|\b[a-z0-9.-]+\.(?:com|io|me|net|org)/\S*", re.I)
+_CASHTAG_RE = re.compile(r"\$([A-Z]{2,6})\b")
+_NFA_RE = re.compile(r"^\s*(not financial advice|nfa|dyor)\b.*$", re.I | re.M)
+
+
+def _x_safe(text):
+    """v5.0: make an X post read like a human wrote it, not a signal bot.
+    cashtags -> plain tickers; URLs out of body (returned for a reply);
+    'Not financial advice' lines removed."""
+    links = _URL_RE.findall(text)
+    text = _URL_RE.sub("", text)
+    text = _CASHTAG_RE.sub(r"\1", text)
+    text = _NFA_RE.sub("", text)
+    out = []
+    for ln in text.split("\n"):
+        st = ln.strip()
+        if st in ("→", "-", "•") or st.lower().rstrip(":") in ("free signals", "see it", "link", "follow"):
+            continue
+        # line that only pointed at a removed URL ("See more at", "Full record:", "→ link")
+        if re.search(r"(?:\bat|:|→|here)\s*$", st, re.I) and len(st.split()) <= 5:
+            continue
+        out.append(ln.rstrip())
+    text = "\n".join(out)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text, links
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1355,7 +1385,7 @@ def _notify_new_posts(posts):
     if not posts:
         return
 
-    summary = f"📝 <b>Content Engine v4.1 — {len(posts)} nowych postów</b>\n\n"
+    summary = f"📝 <b>Content Engine v5.0 — {len(posts)} nowych postów</b>\n\n"
     platforms = {}
     for p in posts:
         pl = p["platform"].upper()
@@ -1396,7 +1426,7 @@ def _notify_new_posts(posts):
 def run():
     weekday = _now().weekday()
     theme = DAY_THEMES.get(weekday, "Unknown")
-    log(f"Content Engine v4.1 — {_now().isoformat()} — {theme}")
+    log(f"Content Engine v5.0 — {_now().isoformat()} — {theme}")
 
     q = _load_queue()
     new_posts = []
@@ -1423,6 +1453,9 @@ def run():
             log(f"Generating daily themed posts: {ptype}")
             themed = generator()
             for p in themed:
+                if p["platform"] == "linkedin" and weekday not in LI_DAYS:
+                    log(f"  skip LinkedIn {ptype} — not a LinkedIn day (v5.0)")
+                    continue
                 # v4.0: CTA rotation — strip CTA from non-CTA posts
                 if not _should_add_cta(q):
                     p["text"] = _strip_cta(p["text"])
@@ -1460,9 +1493,9 @@ def run():
 
             posts = gen_trade_close(trade)
             for p in posts:
+                if p["platform"] == "linkedin":
+                    continue  # v5.0: no trade-close posts on LinkedIn
                 if p["platform"] == "x" and x_today >= MAX_X_PER_DAY:
-                    continue
-                if p["platform"] == "linkedin" and li_today >= MAX_LI_PER_DAY:
                     continue
                 new_posts.append(p)
                 q["posts"].append(p)
@@ -1475,7 +1508,7 @@ def run():
 
     # ── 3. v4.0: EVENING X POST (3rd daily slot) ───────────────────────────
 
-    if weekday != 5 and not _has_type_today(q, "evening_insight"):
+    if EVENING_X_SLOT and weekday != 5 and not _has_type_today(q, "evening_insight"):
         if x_today < MAX_X_PER_DAY:
             log("Generating evening X insight post")
             evening = gen_evening_x()
@@ -1487,6 +1520,14 @@ def run():
             log("  ✓ evening insight generated")
         else:
             log("Evening slot skipped — X daily limit reached")
+
+    # ── 3b. v5.0: DAILY X REPLY BRIEF (not counted against X limit) ────────
+    if weekday != 5 and not _has_type_today(q, "reply_brief"):
+        brief = gen_reply_brief()
+        if brief:
+            new_posts.append(brief)
+            q["posts"].append(brief)
+            log("  ✓ reply brief generated")
 
     # ── 4. SAVE + NOTIFY ────────────────────────────────────────────────────
 
@@ -1503,7 +1544,7 @@ def run():
 
     if new_posts:
         q["meta"]["last_run"] = _now().isoformat()
-        q["meta"]["version"] = "4.0"
+        q["meta"]["version"] = "5.0"
         q["meta"]["total_generated"] = len(q["posts"])
         _save_queue(q)
         log(f"✓ Added {len(new_posts)} new posts to queue (total: {len(q['posts'])})")
@@ -1512,7 +1553,7 @@ def run():
     else:
         log("No new posts to generate this cycle.")
         q["meta"]["last_run"] = _now().isoformat()
-        q["meta"]["version"] = "4.0"
+        q["meta"]["version"] = "5.0"
         _save_queue(q)
 
     # Cleanup: keep only last 7 days
@@ -1522,6 +1563,51 @@ def run():
     if len(q["posts"]) < before:
         _save_queue(q)
         log(f"Cleaned up {before - len(q['posts'])} old posts (>7 days)")
+
+
+def gen_reply_brief():
+    """v5.0: 3 data-backed talking points to use as REPLIES under large crypto
+    accounts today. Replies are the only surface where a reach-restricted account
+    still gets impressions. A cheat sheet, not a post."""
+    fusion = get_fusion_data() or {}
+    decs = fusion.get("decisions") or []
+    regime = fusion.get("regime", "?")
+    pts = []
+    try:
+        btc = next((d for d in decs if d.get("ticker") == "BTC"), None)
+        if btc:
+            L = btc.get("layers") or {}
+            sm = L.get("smart_money") or {}
+            cvd = L.get("cvd") or {}
+            fl = L.get("flush") or {}
+            pts.append(
+                f"BTC regime {regime}, score {btc.get('score')}/100. "
+                f"Hyperliquid smart money net {float(sm.get('net') or 0):+.2f} ({sm.get('verdict', '?')}), "
+                f"OI 24h {float(cvd.get('oi_24h') or 0):+.1f}%, spot CVD '{cvd.get('read', '?')}', "
+                f"Flush Risk {fl.get('score', '?')}/100."
+            )
+        top = max(decs, key=lambda d: d.get("score") or 0) if decs else None
+        if top and top.get("ticker") != "BTC":
+            pts.append(f"Strongest score on the board is {top['ticker']} at {top.get('score')}/100, "
+                       f"still below the 62 entry line, so the system sits flat.")
+    except Exception as e:
+        log(f"reply brief error (fusion): {e}")
+    try:
+        stats = get_cumulative_stats() or {}
+        if stats.get("total"):
+            pts.append(f"Public paper record: {stats['total']} trades, {stats.get('wr', 0)}% WR, "
+                       f"{float(stats.get('pnl') or 0):+.0f} USD. Every one published, losers included.")
+    except Exception as e:
+        log(f"reply brief error (stats): {e}")
+    if not pts:
+        return None
+    text = ("REPLY BRIEF — use as replies under big accounts (2-4 sentences, no links):\n\n"
+            + "\n\n".join(f"{i + 1}. {p}" for i, p in enumerate(pts))
+            + "\n\nTargets: posts about BTC/ETH levels, macro reactions, 'is this the top'. "
+              "Add one number they don't have. Never pitch. Never link.")
+    return {"platform": "x_reply", "type": "reply_brief", "ticker": None,
+            "date": _today(), "ts": _now().isoformat(), "text": text,
+            "graphic": "", "posted": False}
 
 
 def _strip_cta(text):
