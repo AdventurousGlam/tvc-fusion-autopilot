@@ -488,12 +488,24 @@ def _tg_send(text, chat_id):
     token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
     if not token or not chat_id:
         return
+    # 2026-10-05: kanały PRO/FREE przez tg_dedupe — bez podwójnych alertów po restarcie cyklu
+    guarded = chat_id in (TG_PRO_CHANNEL, TG_FREE_CHANNEL)
+    if guarded:
+        try:
+            from tg_dedupe import should_send, forget
+            if not should_send(chat_id, text):
+                log(f"telegram({chat_id[-4:]}) duplicate suppressed"); return
+        except Exception as e:
+            log(f"telegram dedupe unavailable ({e}) — sending"); guarded = False
     try:
         data = up.urlencode({"chat_id": chat_id, "text": text, "parse_mode": "HTML", "disable_web_page_preview": "true"}).encode()
         with ur.urlopen(ur.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data), timeout=10, context=SSL_CTX) as r:
             log(f"telegram({chat_id[-4:]}) {r.status}")
     except Exception as e:
         log(f"telegram({chat_id[-4:]}) failed: {e}")
+        if guarded:
+            try: forget(chat_id, text)
+            except Exception: pass
 
 def send_telegram(new_alerts, st):
     token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip(); chat = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()

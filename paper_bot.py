@@ -477,6 +477,18 @@ def _telegram_send(text: str, chat_id: str | None = None) -> bool:
         chat_id = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
     if not token or not chat_id:
         return False
+    # 2026-10-05: kanały PRO/FREE przechodzą przez tg_dedupe — ta sama treść nie
+    # wychodzi 2-3x po restarcie cyklu / niezacommitowanym stanie. Osobisty chat bez filtra.
+    guarded = chat_id in (TG_PRO_CHANNEL, TG_FREE_CHANNEL)
+    if guarded:
+        try:
+            from tg_dedupe import should_send, forget
+            if not should_send(chat_id, text):
+                print(f"[telegram] duplicate suppressed ({chat_id[-4:]})")
+                return True
+        except Exception as e:
+            print(f"[telegram] dedupe unavailable ({e}) — sending")
+            guarded = False
     import urllib.request as ur
     import urllib.parse as up
     import urllib.error as ue
@@ -497,6 +509,11 @@ def _telegram_send(text: str, chat_id: str | None = None) -> bool:
     except Exception as e:
         _TELEGRAM_LAST_ERROR = f"{type(e).__name__}: {e}"
     print(f"[telegram] send failed ({chat_id[-4:]}): {_TELEGRAM_LAST_ERROR}")
+    if guarded:
+        try:
+            forget(chat_id, text)  # wysyłka padła — pozwól na retry w następnym cyklu
+        except Exception:
+            pass
     return False
 
 
