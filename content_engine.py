@@ -1,6 +1,28 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Content Engine v5.0 — LinkedIn-first, X in safe mode
+TVC Fusion Content Engine v5.1 — lessons over data, interaction over volume
+
+WHY v5.1 (2026-10-05):
+  Week of 29.09-05.10, measured:
+    X        20 posts -> 64 impressions total (~3/post), 0 likes, 0 follows,
+             then the account was LOCKED for suspected spam (7 posts on 1.10,
+             every one with a cashtag + screenshot, same format, zero replies).
+    LinkedIn 2 posts -> 182 impressions (-53%), 84 of 3,594 followers reached (2.3%),
+             0 comments written by us. The two posts that worked were LESSONS
+             (scams 74, PCE read 69). Terminal-data posts: 1-10 impressions.
+  Conclusion: volume is negatively correlated with reach on both platforms, and the
+  audience does not want terminal verdicts yet - it wants the lesson behind them.
+
+  v5.1 changes:
+    - X only on X_DAYS (Tue/Thu/Fri/Sun), 1 post, TEXT ONLY (no graphic), no hashtags
+    - trade-close posts OFF everywhere (pure signal-bot pattern)
+    - SHOW_STATS=False until STATS_PUBLIC_FROM: no WR/PnL in any post or brief
+    - Monday LinkedIn = "what I'm watching and why" lesson, not a data dump
+    - Thursday = "what the week taught the system" (no P&L table) while stats are off
+    - reply brief: 4 X talking points + 3 LinkedIn comment angles, no stats
+    - every Telegram batch ends with the DAILY ENGAGEMENT CHECKLIST (the actual lever)
+  Targets by 2026-11-02: LinkedIn >500 weekly impressions and >=10 comments on our posts;
+  X >30 impressions/post average. If missed, change strategy again - do not add posts.
 
 WHY v5.0 (2026-10-02):
   X account reach collapsed (71 impressions/7d, posts at 0-1 impressions with 52 active
@@ -61,6 +83,21 @@ MAX_LI_PER_DAY = 1     # v5.0: 2→1
 LI_DAYS = {0, 2, 4}    # v5.0: LinkedIn only Mon/Wed/Fri
 X_SAFE_MODE = True     # v5.0: strip cashtags/URLs/NFA from X posts
 EVENING_X_SLOT = False # v5.0: disabled
+X_DAYS = {1, 3, 4, 6}  # v5.1: X only Tue/Thu/Fri/Sun (4 posts/week, recovery mode)
+X_TEXT_ONLY = True     # v5.1: no graphics on X - screenshots + cashtags = bot pattern
+TRADE_CLOSE_POSTS = False  # v5.1: no "trade closed +x%" posts anywhere
+STATS_PUBLIC_FROM = "2026-11-02"  # v5.1: v3.3 rule set 30-day window ends here
+SHOW_STATS = datetime.now(timezone.utc).strftime("%Y-%m-%d") >= STATS_PUBLIC_FROM
+
+DAILY_CHECKLIST = (
+    "DAILY ENGAGEMENT - this is the lever, not the posts:\n"
+    "X: 10 replies under big accounts (macro / on-chain / options). 2-4 sentences, "
+    "one number they don't have, no links, no pitch.\n"
+    "LinkedIn: 5 comments on posts from financial-services people (23% of your audience). "
+    "Real comments, 2-3 sentences, disagree politely when you can.\n"
+    "Your posts: answer every comment within 60 minutes. LinkedIn weighs the first hour.\n"
+    "Never: cashtags on X, screenshots on X, more than 1 post/day, links in post body."
+)
 
 TG_PERSONAL_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 CTA = "TVC Fusion PRO"  # v5.0: name only, no raw link on X
@@ -225,6 +262,9 @@ def _compact_li(text, max_lines=10):
 
 def _post(platform, ptype, text, graphic, ticker=None, extra=None):
     """Build a post dict."""
+    # v5.1: no performance numbers anywhere until STATS_PUBLIC_FROM
+    if not SHOW_STATS:
+        text = _scrub_stats(text)
     # v4.0: compact LinkedIn posts
     if platform == "linkedin":
         text = _compact_li(text)
@@ -232,6 +272,8 @@ def _post(platform, ptype, text, graphic, ticker=None, extra=None):
     links = []
     if platform == "x" and X_SAFE_MODE:
         text, links = _x_safe(text)
+    if platform == "x" and X_TEXT_ONLY:
+        graphic = ""  # v5.1: X posts go out as plain text
     p = {
         "platform": platform,
         "type": ptype,
@@ -252,6 +294,20 @@ def _post(platform, ptype, text, graphic, ticker=None, extra=None):
 _URL_RE = re.compile(r"https?://\S+|\bt\.me/\S+|\b[a-z0-9.-]+\.(?:com|io|me|net|org)/\S*", re.I)
 _CASHTAG_RE = re.compile(r"\$([A-Z]{2,6})\b")
 _NFA_RE = re.compile(r"^\s*(not financial advice|nfa|dyor)\b.*$", re.I | re.M)
+_HASHTAG_RE = re.compile(r"(?<!\w)#\w+")
+_STATS_LINE_RE = re.compile(
+    r"^.*(win rate|\bWR\b|\bP&?L\b|\bPnL\b|\d+\s*/\s*\d+\s*wins|\d+(\.\d+)?%\s*(WR|win)|"
+    r"running stats|cumulative(\s+record)?:|net:\s*\$|total pnl).*$",
+    re.I | re.M)
+
+
+def _scrub_stats(text):
+    """v5.1: drop any line that quotes win rate / PnL / trade counts, and fix
+    the blank-line gaps it leaves. Applies to every platform while SHOW_STATS is False."""
+    text = _STATS_LINE_RE.sub("", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+_CTA_LINE_RE = re.compile(r"^\s*(free signals?|follow the signals?|want to see them live\??|see it live)\s*[:→-]?.*$",
+                          re.I | re.M)
 
 
 def _x_safe(text):
@@ -262,6 +318,8 @@ def _x_safe(text):
     text = _URL_RE.sub("", text)
     text = _CASHTAG_RE.sub(r"\1", text)
     text = _NFA_RE.sub("", text)
+    text = _HASHTAG_RE.sub("", text)  # v5.1: no hashtags on X either
+    text = _CTA_LINE_RE.sub("", text)  # v5.1: "Free signals: ..." lines read as spam
     out = []
     for ln in text.split("\n"):
         st = ln.strip()
@@ -407,53 +465,65 @@ def gen_monday():
         "200+ tokens scanned — no high-conviction setups today"
     ]
 
-    bp = "\n".join(f"→ {b}" for b in bullets)
-    bias = "conditions favor the long side"
-    if btc and btc.get("fusion_score", 50) <= 40:
-        bias = "caution is warranted"
-    elif not btc or btc.get("fusion_score", 50) < 65:
-        bias = "patience is the play"
+    # v5.1: Monday is a LESSON built on one observation, not a dump of the dashboard.
+    # The two posts that reached anyone last week were the ones explaining the market
+    # to a normal person. Terminal verdicts got 1-10 impressions.
+    score = (btc or {}).get("fusion_score", 50)
+    regime_raw = (btc or {}).get("regime", "RANGING")
+    regime = regime_raw.replace("_", " ").lower()
+    L = (btc or {}).get("layers", {}) or {}
+    sm_verdict = (L.get("smart_money") or {}).get("verdict") or L.get("verdict") or ""
+    cvd_read = (L.get("cvd") or {}).get("read") or ""
+    oi_24h = (L.get("cvd") or {}).get("oi_24h")
+
+    # Pick the one thing worth explaining this week, with the plain-language lesson.
+    if "DOWN" in regime_raw or "CRASH" in regime_raw:
+        observation = (f"Bitcoin is in a confirmed downtrend on my screen: lower highs, "
+                       f"lower lows, momentum pointing down.")
+        lesson = ("The mistake most people make here is buying 'the dip' before the structure "
+                  "has changed. A dip in a downtrend is just a lower high waiting to happen. "
+                  "I don't look for longs until the market prints a higher low and holds it.")
+    elif "UP" in regime_raw and score >= 62:
+        observation = (f"Bitcoin is trending up and the data behind it is reasonably clean: "
+                       f"score {score}/100, smart money {sm_verdict or 'neutral'}.")
+        lesson = ("The temptation in a trend is to add leverage because 'it's working'. "
+                  "That's exactly when positioning gets crowded and the shake-outs get violent. "
+                  "I keep size fixed in trends. The trend pays you; leverage charges you.")
+    elif "UP" in regime_raw:
+        observation = (f"Bitcoin is trending up on price, but the inputs underneath aren't "
+                       f"confirming it yet: score {score}/100, smart money {sm_verdict or 'neutral'}"
+                       + (f", spot flow '{cvd_read}'" if cvd_read else "") + ".")
+        lesson = ("Price can lead and the data can lag, but when the gap stays open for days, "
+                  "the move usually comes back to meet the data, not the other way round. "
+                  "I treat an unconfirmed trend as a range with good PR.")
+    else:
+        observation = (f"Bitcoin is ranging. No clean trend either way, score {score}/100"
+                       + (f", open interest {float(oi_24h):+.1f}% in 24h" if oi_24h is not None else "")
+                       + ".")
+        lesson = ("Ranges are where accounts die quietly: every breakout looks real, every "
+                  "fade looks smart, and you pay for both. The only thing that has worked for me "
+                  "in a range is waiting for the edge of it and sizing small. Boring on purpose.")
 
     li = (
-        f"Here's what my trading system flagged this morning:\n\n"
-        f"{bp}\n\n"
-        f"I scan 200+ perpetual contracts every 5 minutes — on-chain flow, "
-        f"derivatives data, whale positions, price structure.\n\n"
-        f"The system doesn't predict. It measures. Right now the data says: {bias}.\n\n"
-        f"Running stats: {stats['total']} automated trades, "
-        f"{stats['wr']}% win rate, ${stats['pnl']:+.0f} PnL.\n\n"
-        f"What's on your watchlist this week?\n\n"
-        f"#CryptoTrading #SmartMoney #AlgoTrading #BuildInPublic"
+        f"What I'm watching this week, and why.\n\n"
+        f"{observation}\n\n"
+        f"{lesson}\n\n"
+        f"I spent ten years in business analysis before crypto. The habit that carried over: "
+        f"decide what would prove you wrong before you decide what you want to be true.\n\n"
+        f"What's the one level or data point you're watching this week?\n\n"
+        f"#crypto #trading #riskmanagement"
     )
 
-    if picks:
-        top = picks[0]
-        x = (
-            f"${top['ticker']} just hit our screener — "
-            f"{top.get('category', 'momentum')} signal.\n\n"
-            f"{top.get('change_24h_pct', 0):+.1f}% in 24h. "
-            f"Compression or continuation?\n\n"
-            f"Free signals: {CTA}"
-        )
-    elif btc:
-        x = (
-            f"$BTC Fusion Score: {btc.get('fusion_score', 50)}/100.\n"
-            f"Smart Money: {btc.get('layers', {}).get('verdict', 'neutral')}.\n\n"
-            f"Are you positioned for what's coming?\n\n"
-            f"Free signals: {CTA}"
-        )
-    else:
-        x = (
-            f"200+ tokens scanned. Nothing screams conviction.\n\n"
-            f"Sometimes the edge is staying flat.\n\n"
-            f"What are you watching?\n\n"
-            f"Free signals: {CTA}"
-        )
+    x = (
+        f"Monday read.\n\n"
+        f"{observation}\n\n"
+        f"{lesson.split('. ')[0]}.\n\n"
+        f"What are you watching this week?"
+    )
 
     gr = (
-        "📸 GRAPHIC: TVC Terminal dashboard — Fusion Score breakdown "
-        "+ Smart Money panel + Pump Radar\n"
-        "  URL: tradingventureclub.com/terminal/"
+        "📸 GRAPHIC (LinkedIn only): BTC daily chart with the regime structure marked "
+        "(higher lows / lower highs) — not a terminal screenshot"
     )
 
     return [_post("linkedin", "data_drop", li, gr), _post("x", "data_drop", x, gr)]
@@ -716,24 +786,41 @@ def gen_wednesday():
         regime_label = regime.replace("_", " ").title()
         contrarian += f"→ Market regime: {regime_label}\n"
 
+        # v5.1: Wednesday is written as a read for a normal person, with the
+        # bullets as evidence, not as the post. The 1.10 PCE post (69 impressions,
+        # best of the week) was exactly this shape.
+        if angle == "bullish":
+            read = ("The inputs agree with the price for once. That's rarer than it sounds: most "
+                    "of the time price runs ahead and the data catches up, or doesn't. When they "
+                    "line up, the right move is usually to do nothing clever. Hold the plan, keep "
+                    "the stop where it was, and stop checking the chart every ten minutes.")
+        elif angle == "bearish":
+            read = ("Price is being held up by people who haven't looked underneath it. The "
+                    "positioning data is thinning out while the chart still looks fine, and that "
+                    "combination has preceded every sharp drop I've sat through since 2017. It "
+                    "doesn't tell you when. It tells you not to be the last one adding.")
+        else:
+            read = ("Nobody has an edge here, including the people who sound certain. A score in "
+                    "the middle means the layers disagree with each other, and when they disagree "
+                    "the market usually chops until one side gives up. My rule in this state: no "
+                    "new positions, smaller size if I'm already in, and I write down what would "
+                    "change my mind before it does.")
+
         li = (
+            f"Mid-week read on Bitcoin, in plain language.\n\n"
             f"{contrarian}\n"
-            f"I built a system that scores every token 0-100 across on-chain, "
-            f"technical structure, and sentiment. No opinions — just measurements.\n\n"
-            f"The data doesn't care what CT thinks. "
-            f"And right now it's saying: {angle}.\n\n"
-            f"Running stats: {stats['total']} trades, {stats['wr']}% win rate.\n\n"
+            f"{read}\n\n"
+            f"I put these layers on one screen because I used to make the opposite mistake: "
+            f"trading the chart and finding out about the positioning afterwards.\n\n"
             f"What's your read on the current structure?\n\n"
-            f"See the full breakdown → {CTA}\n\n"
-            f"#Bitcoin #MarketAnalysis #SmartMoney #CryptoTrading"
+            f"#bitcoin #crypto #trading"
         )
 
         x = (
-            f"$BTC Fusion Score: {score}/100.\n"
-            f"Regime: {regime_label}.\n"
-            f"Smart Money: {sm_verdict}.\n\n"
-            f"What's YOUR read?\n\n"
-            f"Free signals: {CTA}"
+            f"Mid-week read.\n\n"
+            f"BTC score {score}/100, regime {regime_label.lower()}, smart money {sm_verdict}.\n\n"
+            f"{read.split('. ')[0]}.\n\n"
+            f"What's your read?"
         )
     else:
         li = (
@@ -774,6 +861,52 @@ def gen_thursday():
     """Weekly P&L from paper_trades.db — radical transparency."""
     weekly = get_weekly_trades()
     stats = get_cumulative_stats()
+
+    if not SHOW_STATS:
+        # v5.1: validation window - no WR / PnL / trade tables in public until
+        # STATS_PUBLIC_FROM. Thursday becomes "what the week taught the system".
+        n = len(weekly or [])
+        wins = [t for t in (weekly or []) if (t.get("pnl_usd") or 0) > 0]
+        losses = [t for t in (weekly or []) if (t.get("pnl_usd") or 0) <= 0]
+        sl_hits = [t for t in losses if t.get("hit_or_miss") == "hit_sl"]
+        if n == 0:
+            week_line = ("The system took zero trades this week. Not a bug: nothing cleared the "
+                         "entry line. Flat is a position too, and the cheapest one.")
+            lesson = ("Most of my worst years came from trading when there was nothing to trade. "
+                      "A rule that says 'no' most days is the rule that keeps the account alive "
+                      "for the days that matter.")
+        elif len(losses) > len(wins):
+            week_line = (f"The system took {n} trade{'s' if n != 1 else ''} this week and more "
+                         f"of them lost than won. I'm not going to dress that up.")
+            lesson = ("What I check on a week like this isn't the P&L, it's whether the losses "
+                      "were the kind the rules allow. "
+                      + (f"{len(sl_hits)} stopped out at the planned level - that's the system working. "
+                         if sl_hits else "")
+                      + "The dangerous loss is the one that bypassed a rule. None did.")
+        else:
+            week_line = (f"The system took {n} trade{'s' if n != 1 else ''} this week and more "
+                         f"won than lost. Good week. Also the most dangerous kind.")
+            lesson = ("After a green week the urge is to add size, loosen a filter, trade one more. "
+                      "I don't change a rule inside its 30-day window, green or red. "
+                      "The record only means something if it describes one system.")
+        li = (
+            f"Thursday check-in on the paper system.\n\n"
+            f"{week_line}\n\n"
+            f"{lesson}\n\n"
+            f"Every decision is logged before the outcome. Full numbers get published when the "
+            f"current rule set completes a 30-day window without changes, so the stats describe "
+            f"one system, not several.\n\n"
+            f"How do you review a week - by the result, or by whether you followed the plan?\n\n"
+            f"#trading #riskmanagement #crypto"
+        )
+        x = (
+            f"{week_line}\n\n"
+            f"{lesson.split('. ')[0]}.\n\n"
+            f"Result or process - which one do you grade yourself on?"
+        )
+        gr = ""
+        return [_post("linkedin", "weekly_results", li, gr),
+                _post("x", "weekly_results", x, gr)]
 
     if weekly:
         wins = [t for t in weekly if (t.get("pnl_usd") or 0) > 0]
@@ -1086,16 +1219,31 @@ def gen_sunday():
         regime = btc.get("regime", "UNKNOWN").replace("_", " ").title()
         watch_items.append(f"$BTC regime: {regime} (score {score}/100)")
 
+    # v5.1: the macro calendar is the most useful thing in a week-ahead post and the
+    # one thing chart accounts don't post. Tier-1 events in the next 7 days, in CEST.
+    try:
+        today = _now().date()
+        for ev in fusion.get("macro_events") or []:
+            if int(ev.get("tier") or 2) != 1:
+                continue
+            d_ev = datetime.strptime(ev["date"], "%Y-%m-%d").date()
+            if 0 < (d_ev - today).days <= 7:
+                hh, mm = ev.get("time_utc", "12:30").split(":")
+                cest = f"{(int(hh) + 2) % 24:02d}:{mm}"
+                name = ev["name"].split("—")[0].split("(")[0].strip()
+                watch_items.append(f"{d_ev.strftime('%a')} {cest} CEST: {name}. "
+                                   f"System goes flat 3h before, 1h after.")
+    except Exception as e:
+        log(f"sunday macro error: {e}")
+
     for d in decisions:
         if d.get("ticker") != "BTC":
-            s = d.get("fusion_score", 0)
+            s = d.get("fusion_score")
+            if not s:  # v5.1: 0/None = missing data, not "weakness"
+                continue
             if s >= 60 or s <= 35:
-                label = "bullish setup" if s >= 60 else "weakness detected"
+                label = "closest to an entry" if s >= 60 else "weakest on the board"
                 watch_items.append(f"${d['ticker']}: {label} (score {s}/100)")
-
-    if opens:
-        tickers = [p["ticker"] for p in opens[:3]]
-        watch_items.append(f"Open positions: {', '.join('$' + t for t in tickers)} — managing risk")
 
     watch_items = watch_items[:4] or [
         "All eyes on $BTC — direction determines alt behavior next week"
@@ -1119,10 +1267,10 @@ def gen_sunday():
     short_items = [w.split("—")[0].strip() for w in watch_items[:3]]
     x_list = "\n".join(f"{i+1}. {item}" for i, item in enumerate(short_items))
     x = (
-        f"Next week — watching:\n\n"
+        f"Next week, what I'm actually watching:\n\n"
         f"{x_list}\n\n"
-        f"Signals fire when conditions align. Not before.\n\n"
-        f"Free signals: {CTA}"
+        f"The calendar matters more than the chart on a week like this. "
+        f"Most bad entries I've made were 20 minutes before a number I forgot was coming."
     )
 
     gr = (
@@ -1385,7 +1533,7 @@ def _notify_new_posts(posts):
     if not posts:
         return
 
-    summary = f"📝 <b>Content Engine v5.0 — {len(posts)} nowych postów</b>\n\n"
+    summary = f"📝 <b>Content Engine v5.1 — {len(posts)} nowych postów</b>\n\n"
     platforms = {}
     for p in posts:
         pl = p["platform"].upper()
@@ -1418,6 +1566,10 @@ def _notify_new_posts(posts):
 
         _tg_send_personal(full_msg)
 
+    # v5.1: the checklist goes out with every batch, even when there is no post today.
+    if not any(p["type"] == "reply_brief" for p in posts):
+        _tg_send_personal("━━━ <b>CHECKLIST</b> ━━━\n\n" + DAILY_CHECKLIST)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
@@ -1426,7 +1578,7 @@ def _notify_new_posts(posts):
 def run():
     weekday = _now().weekday()
     theme = DAY_THEMES.get(weekday, "Unknown")
-    log(f"Content Engine v5.0 — {_now().isoformat()} — {theme}")
+    log(f"Content Engine v5.1 — {_now().isoformat()} — {theme}")
 
     q = _load_queue()
     new_posts = []
@@ -1456,6 +1608,9 @@ def run():
                 if p["platform"] == "linkedin" and weekday not in LI_DAYS:
                     log(f"  skip LinkedIn {ptype} — not a LinkedIn day (v5.0)")
                     continue
+                if p["platform"] == "x" and weekday not in X_DAYS:
+                    log(f"  skip X {ptype} — not an X day (v5.1)")
+                    continue
                 # v4.0: CTA rotation — strip CTA from non-CTA posts
                 if not _should_add_cta(q):
                     p["text"] = _strip_cta(p["text"])
@@ -1482,7 +1637,7 @@ def run():
 
     # ── 2. BONUS: TRADE CLOSE POSTS (any day, if notable) ───────────────────
 
-    closes = get_recent_closes(hours=6)
+    closes = get_recent_closes(hours=6) if TRADE_CLOSE_POSTS else []
     if closes:
         log(f"Found {len(closes)} recent closed trade(s)")
         for trade in closes:
@@ -1544,7 +1699,7 @@ def run():
 
     if new_posts:
         q["meta"]["last_run"] = _now().isoformat()
-        q["meta"]["version"] = "5.0"
+        q["meta"]["version"] = "5.1"
         q["meta"]["total_generated"] = len(q["posts"])
         _save_queue(q)
         log(f"✓ Added {len(new_posts)} new posts to queue (total: {len(q['posts'])})")
@@ -1553,7 +1708,7 @@ def run():
     else:
         log("No new posts to generate this cycle.")
         q["meta"]["last_run"] = _now().isoformat()
-        q["meta"]["version"] = "5.0"
+        q["meta"]["version"] = "5.1"
         _save_queue(q)
 
     # Cleanup: keep only last 7 days
@@ -1590,21 +1745,47 @@ def gen_reply_brief():
         if top and top.get("ticker") != "BTC":
             pts.append(f"Strongest score on the board is {top['ticker']} at {top.get('score')}/100, "
                        f"still below the 62 entry line, so the system sits flat.")
+        # v5.1: ETF flows and options are the two numbers chart-only accounts never have
+        etf = fusion.get("etf") or {}
+        eb, ee = etf.get("btc") or {}, etf.get("eth") or {}
+        if eb.get("d7") is not None or ee.get("d7") is not None:
+            parts = []
+            if eb.get("d7") is not None:
+                s = int(eb.get("streak") or 0)
+                parts.append(f"BTC {float(eb['d7']):+,.0f}M over 5 sessions"
+                             + (f", {abs(s)}-day {'inflow' if s > 0 else 'outflow'} streak" if s else ""))
+            if ee.get("d7") is not None:
+                parts.append(f"ETH {float(ee['d7']):+,.0f}M")
+            pts.append("ETF flows (Farside): " + "; ".join(parts)
+                       + ". When price tests a level and the flows don't confirm it, the test usually fails.")
     except Exception as e:
         log(f"reply brief error (fusion): {e}")
-    try:
-        stats = get_cumulative_stats() or {}
-        if stats.get("total"):
-            pts.append(f"Public paper record: {stats['total']} trades, {stats.get('wr', 0)}% WR, "
-                       f"{float(stats.get('pnl') or 0):+.0f} USD. Every one published, losers included.")
-    except Exception as e:
-        log(f"reply brief error (stats): {e}")
+    if SHOW_STATS:
+        try:
+            stats = get_cumulative_stats() or {}
+            if stats.get("total"):
+                pts.append(f"Public paper record: {stats['total']} trades, {stats.get('wr', 0)}% WR, "
+                           f"{float(stats.get('pnl') or 0):+.0f} USD. Every one published, losers included.")
+        except Exception as e:
+            log(f"reply brief error (stats): {e}")
     if not pts:
         return None
-    text = ("REPLY BRIEF — use as replies under big accounts (2-4 sentences, no links):\n\n"
+    pts = pts[:4]
+    li_angles = [
+        "Under any 'crypto is a casino' post: agree that leverage is, then explain the one data "
+        "layer (ETF flows / positioning) that makes it readable. No pitch.",
+        "Under macro posts (jobs, CPI, Fed): add how crypto priced the print - the number from "
+        "point 1 - and what the options market expected. Two sentences.",
+        "Under 'I lost money in crypto' posts: don't advise. Ask which rule they'd write now that "
+        "they didn't have then. People remember the question, not the answer.",
+    ]
+    text = ("REPLY BRIEF (X) — 10 replies today under big accounts, 2-4 sentences, no links:\n\n"
             + "\n\n".join(f"{i + 1}. {p}" for i, p in enumerate(pts))
-            + "\n\nTargets: posts about BTC/ETH levels, macro reactions, 'is this the top'. "
-              "Add one number they don't have. Never pitch. Never link.")
+            + "\n\nTargets: BTC/ETH level posts, macro reactions, 'is this the top'. "
+              "Add one number they don't have. Never pitch. Never link. Never a cashtag.\n\n"
+              "COMMENT BRIEF (LinkedIn) — 5 comments today, financial-services people first:\n\n"
+            + "\n\n".join(f"{i + 1}. {a}" for i, a in enumerate(li_angles))
+            + "\n\n" + DAILY_CHECKLIST)
     return {"platform": "x_reply", "type": "reply_brief", "ticker": None,
             "date": _today(), "ts": _now().isoformat(), "text": text,
             "graphic": "", "posted": False}
