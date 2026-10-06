@@ -1611,6 +1611,8 @@ const I18N = {
   picks_in_fusion:    { pl: 'Token jest też w Fusion Decisions',         en: 'Token is also in Fusion Decisions' },
   picks_inval:        { pl: 'Inwalidacja',                               en: 'Invalidation' },
   picks_source:       { pl: 'źródło',                                    en: 'source' },
+  picks_contract_ok:  { pl: 'kontrakt bez czerwonych flag',                en: 'contract: no red flags' },
+  picks_holders:      { pl: 'posiadaczy',                                 en: 'holders' },
   picks_radar:        { pl: 'Na radarze',                                en: 'On the radar' },
   picks_disclaimer:   { pl: 'Analiza informacyjna, nie porada inwestycyjna. Stop loss i sizing przed wejściem.', en: 'Informational analysis, not financial advice. Set stops and size before entry.' },
   // ─── FOOTER ───
@@ -5580,6 +5582,7 @@ function renderCryptoPicks(cp) {
         ${p.invalidation != null ? `<span>${t('picks_inval')} <span style="color:var(--amber)">${num(p.invalidation)}</span></span>` : ''}
       </div>
       ${p.risk_flag ? `<div style="font-size:10px;color:var(--amber)">⚠ ${p.risk_flag}</div>` : ''}
+      ${p.safety && !(p.safety.flags || []).length ? `<div style="font-size:10px;color:var(--green)">🔒 ${t('picks_contract_ok')} · ${p.safety.chain}${p.safety.holders ? ' · ' + Number(p.safety.holders).toLocaleString() + ' ' + t('picks_holders') : ''}${p.safety.top10_pct != null ? ' · top-10 ' + Number(p.safety.top10_pct).toFixed(0) + '%' : ''}</div>` : ''}
       ${p.source_url ? `<a href="${p.source_url}" target="_blank" rel="noopener" style="font-size:9.5px;color:var(--blue);text-decoration:none">${t('picks_source')} ↗</a>` : ''}
     </div>`; };
 

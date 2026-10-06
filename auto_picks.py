@@ -24,6 +24,7 @@ import sys
 import time
 import argparse
 import urllib.request as ur
+import urllib.parse as up
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
@@ -71,6 +72,159 @@ def _get_json(url, timeout=20, retries=3):
             if attempt < retries:
                 time.sleep(3 * attempt)
     raise last
+
+
+# ─── Contract safety (2026-10-06) ───────────────────────────────────────────
+# A MEXC perp tells you nothing about the token behind it. Before we show a pick,
+# especially a new listing, we look up its contract and ask two free, keyless
+# sources the questions from "crypto scam red flags": can the creator mint more,
+# freeze or pause transfers, change balances; is it a honeypot; what is the sell
+# tax; how concentrated are the holders; is the code verified.
+#   GeckoTerminal  search/pools  -> which chain + address (deepest pool wins)
+#   GoPlus         token_security -> the flags (EVM + Solana endpoints)
+# Natives and mega-caps are skipped (no contract to audit). Any failure degrades
+# to safety=None - a pick is never dropped because an API hiccupped.
+
+NATIVE_OR_SKIP = {"BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "TRX", "AVAX", "TON", "SUI",
+                  "LTC", "BCH", "DOT", "ATOM", "NEAR", "APT", "XLM", "HBAR", "ETC", "XMR", "ICP",
+                  "KAS", "SEI", "INJ", "TIA", "ALGO", "FIL", "VET", "EGLD", "FLOW", "MINA", "XTZ"}
+SAFETY_SKIP_MCAP = 2e9
+GT_SEARCH = "https://api.geckoterminal.com/api/v2/search/pools?query={q}&page=1"
+GT_CHAIN_IDS = {"eth": "1", "bsc": "56", "base": "8453", "arbitrum": "42161", "polygon_pos": "137",
+                "avax": "43114", "optimism": "10", "linea": "59144", "scroll": "534352", "blast": "81457",
+                "zksync": "324", "mantle": "5000", "opbnb": "204", "cro": "25", "ftm": "250", "gnosis": "100"}
+GOPLUS_EVM = "https://api.gopluslabs.io/api/v1/token_security/{chain}?contract_addresses={addr}"
+GOPLUS_SOL = "https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses={addr}"
+
+
+def resolve_contract(ticker):
+    """ticker -> {network, address, pool_usd} via GeckoTerminal pool search, or None."""
+    try:
+        data = _get_json(GT_SEARCH.format(q=up.quote(ticker)), timeout=15, retries=2).get("data") or []
+    except Exception as e:
+        print(f"[picks] safety: GT search failed for {ticker}: {e}")
+        return None
+    best = None
+    for pool in data:
+        at = pool.get("attributes") or {}
+        name = str(at.get("name") or "")
+        base_sym = name.split("/")[0].strip().upper()
+        if base_sym != ticker.upper():
+            continue
+        rel = pool.get("relationships") or {}
+        base_id = ((rel.get("base_token") or {}).get("data") or {}).get("id") or ""
+        if "_" not in base_id:
+            continue
+        net, addr = base_id.split("_", 1)  # GeckoTerminal ids are "<network>_<address>"
+        try:
+            usd = float(at.get("reserve_in_usd") or 0)
+        except (TypeError, ValueError):
+            usd = 0.0
+        if best is None or usd > best["pool_usd"]:
+            best = {"network": net, "address": addr, "pool_usd": round(usd)}
+    return best
+
+
+def _pct(v):
+    try:
+        return float(v) * 100 if float(v) <= 1 else float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def contract_safety(ticker):
+    """Returns {"chain","address","flags":[...],"holders","top10_pct","sell_tax_pct","source"} or None."""
+    c = resolve_contract(ticker)
+    if not c:
+        return None
+    net, addr = c["network"], c["address"]
+    flags, holders, top10, sell_tax = [], None, None, None
+    try:
+        if net == "solana":
+            res = _get_json(GOPLUS_SOL.format(addr=addr), timeout=15, retries=2).get("result") or {}
+            r = res.get(addr) or next(iter(res.values()), {}) if res else {}
+            if not r:
+                return None
+            status = lambda k: str((r.get(k) or {}).get("status", "0")) == "1" if isinstance(r.get(k), dict) else str(r.get(k, "0")) == "1"
+            if status("mintable"):
+                flags.append("mint authority active — supply can be inflated")
+            if status("freezable"):
+                flags.append("freeze authority active — accounts can be frozen")
+            if status("closable"):
+                flags.append("token account closable by authority")
+            if status("balance_mutable_authority"):
+                flags.append("authority can change balances")
+            if status("non_transferable"):
+                flags.append("non-transferable")
+            if str(r.get("transfer_fee_upgradable", "0")) == "1" or (r.get("transfer_fee") or {}).get("current_fee_rate") not in (None, "", "0", 0):
+                flags.append("transfer fee set or upgradable")
+            holders = int(r.get("holder_count") or 0) or None
+        else:
+            chain = GT_CHAIN_IDS.get(net)
+            if not chain:
+                return {"chain": net, "address": addr, "flags": [], "holders": None, "top10_pct": None,
+                        "sell_tax_pct": None, "source": "GeckoTerminal (chain not covered by GoPlus)"}
+            res = _get_json(GOPLUS_EVM.format(chain=chain, addr=addr), timeout=15, retries=2).get("result") or {}
+            r = res.get(addr.lower()) or next(iter(res.values()), {}) if res else {}
+            if not r:
+                return None
+            yes = lambda k: str(r.get(k, "0")) == "1"
+            if yes("is_honeypot"):
+                flags.append("HONEYPOT — cannot sell")
+            if yes("is_mintable"):
+                flags.append("mintable — supply can be inflated")
+            if yes("owner_change_balance"):
+                flags.append("owner can change balances")
+            if yes("hidden_owner"):
+                flags.append("hidden owner")
+            if yes("can_take_back_ownership"):
+                flags.append("ownership can be reclaimed")
+            if yes("transfer_pausable"):
+                flags.append("transfers pausable")
+            if yes("is_blacklisted"):
+                flags.append("blacklist function present")
+            if yes("is_proxy"):
+                flags.append("proxy contract — logic can change")
+            if r.get("is_open_source") is not None and not yes("is_open_source"):
+                flags.append("source not verified")
+            st = _pct(r.get("sell_tax"))
+            if st is not None and st >= 5:
+                flags.append(f"sell tax {st:.0f}%")
+            sell_tax = round(st, 1) if st is not None else None
+            holders = int(r.get("holder_count") or 0) or None
+        hl = r.get("holders") or []
+        if hl:
+            top10 = 0.0
+            for h in hl[:10]:
+                p = _pct(h.get("percent"))
+                if p:
+                    top10 += p
+            top10 = round(top10, 1)
+            if top10 >= 50:
+                flags.append(f"top-10 holders hold {top10:.0f}% of supply")
+    except Exception as e:
+        print(f"[picks] safety: GoPlus failed for {ticker} ({net}): {e}")
+        return {"chain": net, "address": addr, "flags": [], "holders": None, "top10_pct": None,
+                "sell_tax_pct": None, "source": "GeckoTerminal only (GoPlus unavailable)"}
+    return {"chain": net, "address": addr, "flags": flags, "holders": holders, "top10_pct": top10,
+            "sell_tax_pct": sell_tax, "source": "GoPlus + GeckoTerminal"}
+
+
+def enrich_safety(picks):
+    """Attach contract safety to each pick; fold hard flags into risk_flag."""
+    for p in picks:
+        t = p.get("ticker", "")
+        if t in NATIVE_OR_SKIP or (p.get("mcap_usd") or 0) >= SAFETY_SKIP_MCAP:
+            p["safety"] = None
+            continue
+        s = contract_safety(t)
+        p["safety"] = s
+        if s and s["flags"]:
+            extra = "contract: " + "; ".join(s["flags"][:3])
+            p["risk_flag"] = f"{p['risk_flag']}; {extra}" if p.get("risk_flag") else extra
+        elif s:
+            p["safety_ok"] = True
+        time.sleep(2.5)  # GeckoTerminal 30/min, GoPlus free tier — be polite
 
 
 # ─── Dane ────────────────────────────────────────────────────────────────────
@@ -445,6 +599,12 @@ def generate(force=False, telegram=False):
         if len(picks) >= TOP_N and len(radar) >= RADAR_N:
             break
 
+    # 2026-10-06: contract safety for every pick that has a contract to audit
+    try:
+        enrich_safety(picks)
+    except Exception as e:
+        print(f"[picks] safety enrichment failed: {e}")
+
     out = {
         "date": today,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -511,6 +671,11 @@ def _send_telegram(out):
         lines.append(f"   S: <code>{p['support']}</code> · R: <code>{p['resistance']}</code>")
         if p.get("risk_flag"):
             lines.append(f"   ⚠️ {p['risk_flag']}")
+        sf = p.get("safety")
+        if sf and not sf.get("flags"):
+            lines.append(f"   🔒 contract: no red flags ({sf['chain']}"
+                         + (f", {sf['holders']:,} holders" if sf.get("holders") else "")
+                         + (f", top-10 {sf['top10_pct']:.0f}%" if sf.get("top10_pct") is not None else "") + ")")
         if i < len(out["picks"]) - 1:
             lines.append("")
     if out["radar"]:
