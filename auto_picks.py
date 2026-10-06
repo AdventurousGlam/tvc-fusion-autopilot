@@ -97,32 +97,52 @@ GOPLUS_EVM = "https://api.gopluslabs.io/api/v1/token_security/{chain}?contract_a
 GOPLUS_SOL = "https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses={addr}"
 
 
-def resolve_contract(ticker):
-    """ticker -> {network, address, pool_usd} via GeckoTerminal pool search, or None."""
+def resolve_contract(ticker, mcap_hint=None):
+    """ticker -> ranked list of candidate contracts [{network, address, pool_usd, fdv_usd, matched}].
+    Same-symbol copycats are common and some even fake their pool numbers, so:
+      1. with a market-cap hint, keep only pools whose FDV is within 0.15x..8x of it and rank
+         by how close FDV is to the hint (ratio closest to 1 first), then by pool depth;
+      2. without a hint, rank by pool depth and mark matched=False.
+    contract_safety() then walks the list and accepts the first one that passes a holder-count
+    sanity check, so a 42-holder "ZRO" never gets audited as LayerZero."""
     try:
         data = _get_json(GT_SEARCH.format(q=up.quote(ticker)), timeout=15, retries=2).get("data") or []
     except Exception as e:
         print(f"[picks] safety: GT search failed for {ticker}: {e}")
-        return None
-    best = None
+        return []
+    seen, cands = set(), []
     for pool in data:
         at = pool.get("attributes") or {}
         name = str(at.get("name") or "")
-        base_sym = name.split("/")[0].strip().upper()
-        if base_sym != ticker.upper():
+        if name.split("/")[0].strip().upper() != ticker.upper():
             continue
         rel = pool.get("relationships") or {}
         base_id = ((rel.get("base_token") or {}).get("data") or {}).get("id") or ""
-        if "_" not in base_id:
+        if "_" not in base_id or base_id in seen:
             continue
+        seen.add(base_id)
         net, addr = base_id.split("_", 1)  # GeckoTerminal ids are "<network>_<address>"
-        try:
-            usd = float(at.get("reserve_in_usd") or 0)
-        except (TypeError, ValueError):
-            usd = 0.0
-        if best is None or usd > best["pool_usd"]:
-            best = {"network": net, "address": addr, "pool_usd": round(usd)}
-    return best
+        def _f(v):
+            try:
+                return float(v) if v not in (None, "") else None
+            except (TypeError, ValueError):
+                return None
+        usd = _f(at.get("reserve_in_usd")) or 0.0
+        fdv = _f(at.get("fdv_usd")) or _f(at.get("market_cap_usd"))
+        cands.append({"network": net, "address": addr, "pool_usd": round(usd), "fdv_usd": fdv})
+    if not cands:
+        return []
+    if mcap_hint and mcap_hint > 0:
+        import math
+        ok = [c for c in cands if c["fdv_usd"] and 0.15 <= c["fdv_usd"] / mcap_hint <= 8]
+        for c in ok:
+            c["matched"] = True
+        ok.sort(key=lambda c: (abs(math.log(c["fdv_usd"] / mcap_hint)), -c["pool_usd"]))
+        return ok
+    cands.sort(key=lambda c: -c["pool_usd"])
+    for c in cands:
+        c["matched"] = False
+    return cands
 
 
 def _pct(v):
@@ -132,82 +152,99 @@ def _pct(v):
         return None
 
 
-def contract_safety(ticker):
-    """Returns {"chain","address","flags":[...],"holders","top10_pct","sell_tax_pct","source"} or None."""
-    c = resolve_contract(ticker)
-    if not c:
-        return None
-    net, addr = c["network"], c["address"]
+def _audit(net, addr):
+    """GoPlus audit of one contract. Returns (flags, holders, top10, sell_tax, covered)."""
     flags, holders, top10, sell_tax = [], None, None, None
-    try:
-        if net == "solana":
-            res = _get_json(GOPLUS_SOL.format(addr=addr), timeout=15, retries=2).get("result") or {}
-            r = res.get(addr) or next(iter(res.values()), {}) if res else {}
-            if not r:
-                return None
-            status = lambda k: str((r.get(k) or {}).get("status", "0")) == "1" if isinstance(r.get(k), dict) else str(r.get(k, "0")) == "1"
-            if status("mintable"):
-                flags.append("mint authority active — supply can be inflated")
-            if status("freezable"):
-                flags.append("freeze authority active — accounts can be frozen")
-            if status("closable"):
-                flags.append("token account closable by authority")
-            if status("balance_mutable_authority"):
-                flags.append("authority can change balances")
-            if status("non_transferable"):
-                flags.append("non-transferable")
-            if str(r.get("transfer_fee_upgradable", "0")) == "1" or (r.get("transfer_fee") or {}).get("current_fee_rate") not in (None, "", "0", 0):
-                flags.append("transfer fee set or upgradable")
-            holders = int(r.get("holder_count") or 0) or None
-        else:
-            chain = GT_CHAIN_IDS.get(net)
-            if not chain:
-                return {"chain": net, "address": addr, "flags": [], "holders": None, "top10_pct": None,
-                        "sell_tax_pct": None, "source": "GeckoTerminal (chain not covered by GoPlus)"}
-            res = _get_json(GOPLUS_EVM.format(chain=chain, addr=addr), timeout=15, retries=2).get("result") or {}
-            r = res.get(addr.lower()) or next(iter(res.values()), {}) if res else {}
-            if not r:
-                return None
-            yes = lambda k: str(r.get(k, "0")) == "1"
-            if yes("is_honeypot"):
-                flags.append("HONEYPOT — cannot sell")
-            if yes("is_mintable"):
-                flags.append("mintable — supply can be inflated")
-            if yes("owner_change_balance"):
-                flags.append("owner can change balances")
-            if yes("hidden_owner"):
-                flags.append("hidden owner")
-            if yes("can_take_back_ownership"):
-                flags.append("ownership can be reclaimed")
-            if yes("transfer_pausable"):
-                flags.append("transfers pausable")
-            if yes("is_blacklisted"):
-                flags.append("blacklist function present")
-            if yes("is_proxy"):
-                flags.append("proxy contract — logic can change")
-            if r.get("is_open_source") is not None and not yes("is_open_source"):
-                flags.append("source not verified")
-            st = _pct(r.get("sell_tax"))
-            if st is not None and st >= 5:
-                flags.append(f"sell tax {st:.0f}%")
-            sell_tax = round(st, 1) if st is not None else None
-            holders = int(r.get("holder_count") or 0) or None
-        hl = r.get("holders") or []
-        if hl:
-            top10 = 0.0
-            for h in hl[:10]:
-                p = _pct(h.get("percent"))
-                if p:
-                    top10 += p
-            top10 = round(top10, 1)
-            if top10 >= 50:
-                flags.append(f"top-10 holders hold {top10:.0f}% of supply")
-    except Exception as e:
-        print(f"[picks] safety: GoPlus failed for {ticker} ({net}): {e}")
-        return {"chain": net, "address": addr, "flags": [], "holders": None, "top10_pct": None,
-                "sell_tax_pct": None, "source": "GeckoTerminal only (GoPlus unavailable)"}
-    return {"chain": net, "address": addr, "flags": flags, "holders": holders, "top10_pct": top10,
-            "sell_tax_pct": sell_tax, "source": "GoPlus + GeckoTerminal"}
+    if net == "solana":
+        res = _get_json(GOPLUS_SOL.format(addr=addr), timeout=15, retries=2).get("result") or {}
+        r = res.get(addr) or (next(iter(res.values())) if res else {})
+        if not r:
+            return None
+        status = lambda k: str((r.get(k) or {}).get("status", "0")) == "1" if isinstance(r.get(k), dict) else str(r.get(k, "0")) == "1"
+        if status("mintable"):
+            flags.append("mint authority active — supply can be inflated")
+        if status("freezable"):
+            flags.append("freeze authority active — accounts can be frozen")
+        if status("closable"):
+            flags.append("token account closable by authority")
+        if status("balance_mutable_authority"):
+            flags.append("authority can change balances")
+        if status("non_transferable"):
+            flags.append("non-transferable")
+        if str(r.get("transfer_fee_upgradable", "0")) == "1" or (r.get("transfer_fee") or {}).get("current_fee_rate") not in (None, "", "0", 0):
+            flags.append("transfer fee set or upgradable")
+        holders = int(r.get("holder_count") or 0) or None
+    else:
+        chain = GT_CHAIN_IDS.get(net)
+        if not chain:
+            return ([], None, None, None, False)
+        res = _get_json(GOPLUS_EVM.format(chain=chain, addr=addr), timeout=15, retries=2).get("result") or {}
+        r = res.get(addr.lower()) or (next(iter(res.values())) if res else {})
+        if not r:
+            return None
+        yes = lambda k: str(r.get(k, "0")) == "1"
+        if yes("is_honeypot"):
+            flags.append("HONEYPOT — cannot sell")
+        if yes("is_mintable"):
+            flags.append("mintable — supply can be inflated")
+        if yes("owner_change_balance"):
+            flags.append("owner can change balances")
+        if yes("hidden_owner"):
+            flags.append("hidden owner")
+        if yes("can_take_back_ownership"):
+            flags.append("ownership can be reclaimed")
+        if yes("transfer_pausable"):
+            flags.append("transfers pausable")
+        if yes("is_blacklisted"):
+            flags.append("blacklist function present")
+        if yes("is_proxy"):
+            flags.append("proxy contract — logic can change")
+        if r.get("is_open_source") is not None and not yes("is_open_source"):
+            flags.append("source not verified")
+        st = _pct(r.get("sell_tax"))
+        if st is not None and st >= 5:
+            flags.append(f"sell tax {st:.0f}%")
+        sell_tax = round(st, 1) if st is not None else None
+        holders = int(r.get("holder_count") or 0) or None
+    hl = r.get("holders") or []
+    if hl:
+        top10 = 0.0
+        for h in hl[:10]:
+            pc = _pct(h.get("percent"))
+            if pc:
+                top10 += pc
+        top10 = round(top10, 1)
+        if top10 >= 50:
+            flags.append(f"top-10 holders hold {top10:.0f}% of supply")
+    return (flags, holders, top10, sell_tax, True)
+
+
+def contract_safety(ticker, mcap_hint=None):
+    """Returns {"chain","address","flags":[...],"holders","top10_pct","sell_tax_pct","source"} or None.
+    Walks the ranked candidates; a contract is accepted only if its holder count is plausible
+    for the asset's size (>=1,000 holders when mcap >= $50M, >=200 otherwise). If nothing
+    passes, returns None — no information beats wrong information."""
+    cands = resolve_contract(ticker, mcap_hint)
+    min_holders = 1000 if (mcap_hint or 0) >= 50e6 else 200
+    for c in cands[:4]:
+        net, addr = c["network"], c["address"]
+        try:
+            res = _audit(net, addr)
+        except Exception as e:
+            print(f"[picks] safety: GoPlus failed for {ticker} ({net}): {e}")
+            continue
+        if res is None:
+            continue
+        flags, holders, top10, sell_tax, covered = res
+        if not covered:
+            continue  # chain GoPlus doesn't cover — try the next candidate
+        if holders is not None and holders < min_holders:
+            print(f"[picks] safety: {ticker} on {net} has {holders} holders — copycat/bridge, skipping")
+            continue
+        return {"chain": net, "address": addr, "flags": flags, "holders": holders, "top10_pct": top10,
+                "sell_tax_pct": sell_tax,
+                "source": "GoPlus + GeckoTerminal" + ("" if c.get("matched") else " (symbol match, unverified)")}
+    return None
 
 
 def enrich_safety(picks):
@@ -217,7 +254,7 @@ def enrich_safety(picks):
         if t in NATIVE_OR_SKIP or (p.get("mcap_usd") or 0) >= SAFETY_SKIP_MCAP:
             p["safety"] = None
             continue
-        s = contract_safety(t)
+        s = contract_safety(t, p.get("mcap_usd"))
         p["safety"] = s
         if s and s["flags"]:
             extra = "contract: " + "; ".join(s["flags"][:3])
