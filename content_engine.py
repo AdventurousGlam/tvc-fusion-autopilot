@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Content Engine v5.1 — lessons over data, interaction over volume
+TVC Fusion Content Engine v5.2 — lessons over data, interaction over volume
+
+v5.2 (2026-10-06): reply brief ships 4 data-driven reply SKELETONS (bullish / bearish /
+  "is this the top" / alt-season) + target accounts list. Skeletons, not replies:
+  the first sentence must still refer to the post being answered.
 
 WHY v5.1 (2026-10-05):
   Week of 29.09-05.10, measured:
@@ -1533,7 +1537,7 @@ def _notify_new_posts(posts):
     if not posts:
         return
 
-    summary = f"📝 <b>Content Engine v5.1 — {len(posts)} nowych postów</b>\n\n"
+    summary = f"📝 <b>Content Engine v5.2 — {len(posts)} nowych postów</b>\n\n"
     platforms = {}
     for p in posts:
         pl = p["platform"].upper()
@@ -1578,7 +1582,7 @@ def _notify_new_posts(posts):
 def run():
     weekday = _now().weekday()
     theme = DAY_THEMES.get(weekday, "Unknown")
-    log(f"Content Engine v5.1 — {_now().isoformat()} — {theme}")
+    log(f"Content Engine v5.2 — {_now().isoformat()} — {theme}")
 
     q = _load_queue()
     new_posts = []
@@ -1699,7 +1703,7 @@ def run():
 
     if new_posts:
         q["meta"]["last_run"] = _now().isoformat()
-        q["meta"]["version"] = "5.1"
+        q["meta"]["version"] = "5.2"
         q["meta"]["total_generated"] = len(q["posts"])
         _save_queue(q)
         log(f"✓ Added {len(new_posts)} new posts to queue (total: {len(q['posts'])})")
@@ -1708,7 +1712,7 @@ def run():
     else:
         log("No new posts to generate this cycle.")
         q["meta"]["last_run"] = _now().isoformat()
-        q["meta"]["version"] = "5.1"
+        q["meta"]["version"] = "5.2"
         _save_queue(q)
 
     # Cleanup: keep only last 7 days
@@ -1771,6 +1775,11 @@ def gen_reply_brief():
     if not pts:
         return None
     pts = pts[:4]
+
+    # v5.2: reply SKELETONS built from today's numbers. Not ready replies - the first
+    # sentence must still refer to the post you're answering. They cut the work in half.
+    skel = _reply_skeletons(fusion)
+
     li_angles = [
         "Under any 'crypto is a casino' post: agree that leverage is, then explain the one data "
         "layer (ETF flows / positioning) that makes it readable. No pitch.",
@@ -1781,14 +1790,95 @@ def gen_reply_brief():
     ]
     text = ("REPLY BRIEF (X) — 10 replies today under big accounts, 2-4 sentences, no links:\n\n"
             + "\n\n".join(f"{i + 1}. {p}" for i, p in enumerate(pts))
-            + "\n\nTargets: BTC/ETH level posts, macro reactions, 'is this the top'. "
-              "Add one number they don't have. Never pitch. Never link. Never a cashtag.\n\n"
+            + "\n\nSKELETONS (adapt the first sentence to the post, keep the number):\n\n"
+            + "\n\n".join(f"• {k}:\n{v}" for k, v in skel.items())
+            + "\n\nWhere: @CryptoHayes @LynAldenContact @KobeissiLetter @caprioleio @WClementeIII "
+              "@Pentosh1 @glassnode @coinglass_com @Checkmatey @DylanLeClair_ @MacroScope17. "
+              "Reply within 30 min of their post. Never pitch. Never link. Never a cashtag.\n\n"
               "COMMENT BRIEF (LinkedIn) — 5 comments today, financial-services people first:\n\n"
             + "\n\n".join(f"{i + 1}. {a}" for i, a in enumerate(li_angles))
             + "\n\n" + DAILY_CHECKLIST)
     return {"platform": "x_reply", "type": "reply_brief", "ticker": None,
             "date": _today(), "ts": _now().isoformat(), "text": text,
             "graphic": "", "posted": False}
+
+
+def _reply_skeletons(fusion):
+    """v5.2: four reply skeletons (bullish post / bearish post / 'is this the top' /
+    alt-season post) written from today's BTC layers and the strongest alt score.
+    Plain words, no cashtags, no links; the user prepends one sentence about the post."""
+    decs = fusion.get("decisions") or []
+    regime = str(fusion.get("regime") or "RANGING")
+    btc = next((d for d in decs if d.get("ticker") == "BTC"), None) or {}
+    L = btc.get("layers") or {}
+    sm, cvd, fl = L.get("smart_money") or {}, L.get("cvd") or {}, L.get("flush") or {}
+    score = int(btc.get("score") or btc.get("fusion_score") or 50)
+    net = float(sm.get("net") or 0)
+    oi = float(cvd.get("oi_24h") or 0)
+    read = str(cvd.get("read") or "neutral").replace("_", " ")
+    flush = int(fl.get("score") or 0)
+    sm_word = "net long" if net > 0.15 else ("net short" if net < -0.15 else "flat")
+    oi_word = (f"OI up {oi:.0f}% in 24h" if oi >= 3 else
+               f"OI down {abs(oi):.0f}% in 24h" if oi <= -3 else "OI flat on the day")
+    spot_word = ("spot is net buying" if "accum" in read else
+                 "spot is net selling" if "distrib" in read else "spot flow is neutral")
+    mid = 40 <= score < 62
+    out = {}
+
+    # 1. under a bullish call
+    if score >= 62:
+        out["Under a bullish post"] = (
+            f"The inputs agree with you for once: score {score}/100, large HL wallets {sm_word}, "
+            f"{oi_word} and {spot_word}. The risk now is everyone adding leverage because it's working.")
+    elif oi >= 8:
+        out["Under a bullish post"] = (
+            f"Price agrees, the inputs don't yet. {oi_word[0].upper() + oi_word[1:]} while "
+            f"{spot_word} — that's leverage doing the lifting, not demand, and leverage gets "
+            f"shaken out first. "
+            + ("Large wallets lean long, so maybe they're right; the setup is just fragile."
+               if net > 0.15 else "Large wallets aren't leaning in either."))
+    else:
+        out["Under a bullish post"] = (
+            f"Maybe, but the inputs aren't there yet. Score sits at {score}/100, {oi_word} and "
+            f"{spot_word} — nobody is buying the breakout, they're waiting for it. "
+            + ("Large wallets lean long, so the bias is right; the timing isn't confirmed."
+               if net > 0.15 else "Large wallets aren't leaning in either."))
+
+    # 2. under a bearish call
+    if flush >= 50:
+        out["Under a bearish post"] = (
+            f"The flush setup is actually here: Flush Risk {flush}/100, {oi_word}, {spot_word}. "
+            f"If this breaks, it breaks fast. Where's your invalidation?")
+    else:
+        out["Under a bearish post"] = (
+            f"The flush setup isn't here. Flush Risk reads {flush}/100: {oi_word}, no funding extreme, "
+            f"large wallets {sm_word}. Markets can still drop from here, but it'd be news-driven, "
+            f"not positioning-driven — different trade.")
+
+    # 3. under "is this the top?"
+    if oi >= 8 and "distrib" in read:
+        out["Under 'is this the top?'"] = (
+            f"It has the signature: OI up {oi:.0f}% in 24h while spot sells into it. That's borrowed "
+            f"buying, and borrowed buying gets repaid. Not a prediction, a positioning read.")
+    else:
+        out["Under 'is this the top?'"] = (
+            f"Tops usually come with crowded leverage: OI spiking while spot sells. Right now "
+            f"{oi_word} and {spot_word}. "
+            + ("That's not a top signature, that's a range nobody wants to trade. Boring is the read."
+               if mid else "Doesn't fit the pattern yet.")
+        )
+
+    # 4. under an alt-season post
+    alts = [d for d in decs if d.get("ticker") != "BTC" and (d.get("score") or d.get("fusion_score"))]
+    if alts:
+        top = max(alts, key=lambda d: d.get("score") or d.get("fusion_score") or 0)
+        ts = int(top.get("score") or top.get("fusion_score") or 0)
+        out["Under an alt-season post"] = (
+            f"On my board the strongest alt is {top['ticker']} at {ts}/100 and the entry line is 62. "
+            + ("It cleared it — that's the first alt to do so in a while." if ts >= 62 else
+               "Every alt is below it. Alt season starts when they clear that line on their own data, "
+               "not when BTC pauses."))
+    return out
 
 
 def _strip_cta(text):
