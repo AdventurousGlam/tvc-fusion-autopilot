@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Paper Trading Bot v3.3
+TVC Fusion Paper Trading Bot v3.4
+
+v3.4 (2026-10-07) — SCALE-IN PARTIAL ENTRY
+  - Gdy soft gates (Fib filter, 5m confirmation, R:R) blokują trade, ale layers
+    są 3/3 unanimous + score silnie kierunkowy → wejście 30% normalnego rozmiaru.
+  - Nowe stałe: SCALE_IN_ENABLED, SCALE_IN_SIZE_FACTOR=0.30, SCALE_IN_MIN_LAYERS=3,
+    SCALE_IN_LONG_MIN_SCORE=60, SCALE_IN_SHORT_MAX_SCORE=40, SCALE_IN_MIN_RR=0.5.
+  - Nowa funkcja: _check_scale_in_eligible() — sprawdza layers unanimity + score.
+  - Trade'y scale-in dostają tag 'scale_in' w context_tags do osobnej oceny.
+  - Backtest 48 dni: 9 missed trades (avg +6.5%) vs 4 saves (avg -1.8%) = NET +15.4%.
 
 v3.3 (2026-10-02) — LONG THRESHOLD RECALIBRATION
   - Dane 19.09–02.10: 70% odczytów score w 50–64, tylko 9/160 ≥ 65, 0 wejść od 25.09.
@@ -220,6 +229,24 @@ FIB_THRESHOLD_BY_REGIME = {
     "TRENDING_DOWN_VOLATILE": 0.50,
 }
 FIB_THRESHOLD_DEFAULT = 0.80  # v1.0: fallback 0.70→0.80
+
+# ═══════════════════════════════════════════════════════════════════════════
+# v3.4 (2026-10-07) — SCALE-IN PARTIAL ENTRY
+#   Backtest 48 dni (19.08–07.10): 17 zablokowanych sygnałów z danymi:
+#     9 MISSED (53%, avg 6.5% move), 4 SAVED (24%, avg 1.8%), 4 FLAT.
+#   Scale-in 30% simulation: +17.6% earned − 2.2% lost = NET +15.4%.
+#
+#   Mechanizm: gdy trade jest zablokowany przez SOFT gate (Fib, 5m confirm),
+#   ale layers 3/3 unanimous + score silnie kierunkowy → wejdź 30% pozycji.
+#   NIE omija hard gates (score, veto, daily limit, cooldown, de-dupe).
+#   Tag 'scale_in' do osobnego audytu.
+# ═══════════════════════════════════════════════════════════════════════════
+SCALE_IN_ENABLED = True
+SCALE_IN_SIZE_FACTOR = 0.30      # 30% normalnego rozmiaru pozycji
+SCALE_IN_MIN_LAYERS = 3          # wymagane: 3/3 layers agree
+SCALE_IN_LONG_MIN_SCORE = 60     # score ≥ 60 dla long scale-in
+SCALE_IN_SHORT_MAX_SCORE = 40    # score ≤ 40 dla short scale-in
+SCALE_IN_MIN_RR = 0.5            # obniżony R:R guard (z 1.0 na 0.5)
 
 # STATYSTYKI — liczone od wdrożenia bramek v0.3 (trade'y v0.2 = archiwum).
 STATS_SINCE = "2026-09-22T00:00:00"  # v1.0 — czysty start (stare trade'y = archiwum)
@@ -563,6 +590,7 @@ def _fmt_px(v) -> str:
 
 def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime, override=False, db_conn=None):
     """Telegram: otwarcie pozycji. PRO = natychmiast (pełny). FREE = kolejkowany z 15-min opóźnieniem.
+    override — True = scale-in (v3.4) lub CHoCH override (legacy).
     db_conn — jeśli podane, używa tego połączenia do kolejki FREE (unika SQLite lock conflict
     gdy caller trzyma otwartą transakcję na tym samym pliku db)."""
     try:
@@ -589,7 +617,7 @@ def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime
             f"TP1: <code>{_fmt_px(tp1)}</code>  (R:R {rr1})",
             f"TP2: <code>{_fmt_px(tp2)}</code>  (R:R {rr2})",
             "",
-            f"Regime: {regime_label}{' · ⚡ CHoCH override' if override else ''}",
+            f"Regime: {regime_label}{' · 🔸 Scale-in 30%' if override else ''}",
             f"✅ Smart Money confirmed (≥2/3 layers aligned)",
         ]
         pro_text = "\n".join(pro_lines)
@@ -1106,6 +1134,44 @@ def _fill_pending(conn):
             _cancel_pending(conn, r["id"], "expired")
 
 
+def _check_scale_in_eligible(dec: dict, direction: str, score: int) -> tuple[bool, str]:
+    """v3.4 — Sprawdź czy trade kwalifikuje się do scale-in partial entry.
+    Wymaga: SCALE_IN_ENABLED + layers 3/3 unanimous + silny score.
+    Zwraca (eligible, reason)."""
+    if not SCALE_IN_ENABLED:
+        return False, "scale-in disabled"
+
+    layers = dec.get("layers") or {}
+    # Layers agreement: sprawdź confirmed count
+    confirmed = 0
+    for key in ("sm", "cvd", "pump", "funding_h", "flush"):
+        val = layers.get(key)
+        if val and isinstance(val, str) and val.lower() not in ("neutral", "none", ""):
+            confirmed += 1
+    # Alternatywna ścieżka: layers.confirmed_count jeśli istnieje
+    lc = layers.get("confirmed_count")
+    if lc is not None:
+        try:
+            confirmed = int(lc)
+        except (TypeError, ValueError):
+            pass
+
+    if confirmed < SCALE_IN_MIN_LAYERS:
+        return False, f"layers {confirmed}/{SCALE_IN_MIN_LAYERS} (need unanimous)"
+
+    # Veto nadal blokuje
+    if layers.get("veto"):
+        return False, f"veto active: {layers.get('veto')}"
+
+    # Score musi być silnie kierunkowy
+    if direction == "long" and score < SCALE_IN_LONG_MIN_SCORE:
+        return False, f"long score {score} < {SCALE_IN_LONG_MIN_SCORE}"
+    if direction == "short" and score > SCALE_IN_SHORT_MAX_SCORE:
+        return False, f"short score {score} > {SCALE_IN_SHORT_MAX_SCORE}"
+
+    return True, f"layers {confirmed}/3 unanimous, score {score}"
+
+
 def cmd_open(args):
     db_init()
     path, fmt = find_fusion_input()
@@ -1239,8 +1305,12 @@ def cmd_open(args):
         # Fusion generuje TP/SL na podstawie ceny w momencie skanu, ale bot wchodzi
         # po cenie rynkowej (która może być wyższa/niższa). Jeśli cena przeszła
         # bliżej TP niż SL, R:R spada poniżej 1:1 → skip. (Fix: SOL 11.09, R:R=0.0)
+        # v3.4: soft gate — jeśli R:R jest niskie ale > SCALE_IN_MIN_RR, scale-in może wejść.
+        soft_blocked = False        # v3.4: flaga soft gate block
+        soft_block_reasons = []     # v3.4: powody zablokowania (do logów)
         sl_from_json = dec.get("sl")
         tp1_from_json = dec.get("tp1")
+        _live_rr = None
         if sl_from_json and tp1_from_json:
             try:
                 _sl = float(sl_from_json)
@@ -1249,11 +1319,17 @@ def cmd_open(args):
                 _reward = abs(_tp - entry_price)
                 _live_rr = _reward / max(1e-12, _risk)
                 if _live_rr < MIN_RR_AT_ENTRY:
-                    print(f"[skip] {ticker} {direction.upper()} — R:R at live price = {_live_rr:.2f} "
-                          f"(< {MIN_RR_AT_ENTRY}) entry={entry_price} SL={_sl} TP1={_tp}")
-                    skipped += 1
-                    continue
-                # Also check TP is on the right side of entry
+                    # v3.4: R:R poniżej MIN ale powyżej SCALE_IN_MIN → soft block (scale-in candidate)
+                    if _live_rr >= SCALE_IN_MIN_RR:
+                        soft_blocked = True
+                        soft_block_reasons.append(f"R:R={_live_rr:.2f} < {MIN_RR_AT_ENTRY}")
+                        print(f"[soft-block] {ticker} {direction.upper()} — R:R={_live_rr:.2f} (soft, scale-in candidate)")
+                    else:
+                        print(f"[skip] {ticker} {direction.upper()} — R:R at live price = {_live_rr:.2f} "
+                              f"(< {SCALE_IN_MIN_RR}) entry={entry_price} SL={_sl} TP1={_tp}")
+                        skipped += 1
+                        continue
+                # Also check TP is on the right side of entry (hard block — stale data)
                 if direction == "long" and _tp <= entry_price:
                     print(f"[skip] {ticker} LONG — TP1 {_tp} <= entry {entry_price} (stale levels)")
                     skipped += 1
@@ -1265,40 +1341,43 @@ def cmd_open(args):
             except (TypeError, ValueError):
                 pass  # missing/bad levels — proceed, SL/TP will be set to None
 
-        # v0.9 — REGUŁA #6: FIBONACCI PULLBACK FILTER (regime-aware)
-        # Don't chase! Threshold depends on market regime: trending markets
-        # allow entries closer to 30d high (0.90), ranging markets require
-        # deeper pullback (0.70), downtrends even more (0.50).
+        # v0.9 — REGUŁA #6: FIBONACCI PULLBACK FILTER (regime-aware) — SOFT GATE
         fib_pos = dec.get("fib_position")
         if fib_pos is not None:
             try:
                 fib_pos = float(fib_pos)
                 fib_long_thresh = FIB_THRESHOLD_BY_REGIME.get(regime, FIB_THRESHOLD_DEFAULT)
-                fib_short_thresh = 1.0 - fib_long_thresh  # mirror: 0.90→0.10, 0.70→0.30, 0.50→0.50
+                fib_short_thresh = 1.0 - fib_long_thresh
                 if direction == "long" and fib_pos > fib_long_thresh:
-                    print(f"[skip] {ticker} LONG — chasing: price at {fib_pos:.0%} of 30d range "
-                          f"(above {fib_long_thresh:.0%} Fib threshold for {regime})")
-                    skipped += 1
-                    continue
+                    soft_blocked = True
+                    soft_block_reasons.append(f"Fib={fib_pos:.0%} > {fib_long_thresh:.0%}")
+                    print(f"[soft-block] {ticker} LONG — chasing: Fib {fib_pos:.0%} > {fib_long_thresh:.0%} (scale-in candidate)")
                 if direction == "short" and fib_pos < fib_short_thresh:
-                    print(f"[skip] {ticker} SHORT — chasing bottom: price at {fib_pos:.0%} of 30d range "
-                          f"(below {fib_short_thresh:.0%} Fib threshold for {regime})")
-                    skipped += 1
-                    continue
+                    soft_blocked = True
+                    soft_block_reasons.append(f"Fib={fib_pos:.0%} < {fib_short_thresh:.0%}")
+                    print(f"[soft-block] {ticker} SHORT — chasing bottom: Fib {fib_pos:.0%} < {fib_short_thresh:.0%} (scale-in candidate)")
             except (TypeError, ValueError):
                 pass
 
-        # v1.0 — REGUŁA #7: 5-MINUTE MICRO-CONFIRMATION
-        # Don't enter blind! Check 5m candles for momentum confirmation:
-        # ≥1 green candle in last 2 (bounce) + RSI(14) > 35 (not freefall).
+        # v1.0 — REGUŁA #7: 5-MINUTE MICRO-CONFIRMATION — SOFT GATE
         try:
             confirm_ok, confirm_reason = _check_5m_confirmation(ticker, direction)
             if not confirm_ok:
-                print(f"[skip] {ticker} {direction.upper()} — no 5m confirmation: {confirm_reason}")
-                skipped += 1
-                continue
+                soft_blocked = True
+                soft_block_reasons.append(f"5m: {confirm_reason}")
+                print(f"[soft-block] {ticker} {direction.upper()} — no 5m confirmation (scale-in candidate)")
         except Exception as e:
             print(f"[5m-confirm] {ticker} — exception: {e}, proceeding anyway")
+
+        # v3.4 — SCALE-IN DECISION: jeśli soft gate zablokował, sprawdź czy kwalifikuje się
+        if soft_blocked:
+            scale_eligible, scale_reason = _check_scale_in_eligible(dec, direction, score)
+            if not scale_eligible:
+                print(f"[skip] {ticker} {direction.upper()} — soft-blocked ({'; '.join(soft_block_reasons)}) "
+                      f"+ no scale-in ({scale_reason})")
+                skipped += 1
+                continue
+            print(f"[scale-in] ✅ {ticker} {direction.upper()} — soft-blocked BUT {scale_reason} → entering 30%")
 
         # v3.1 — ATR-BASED MINIMUM SL DISTANCE GUARD
         # Jeśli SL ze struktury jest bliżej niż 1.2× ATR(14, 1h), rozszerz.
@@ -1316,8 +1395,9 @@ def cmd_open(args):
                         _new_risk = abs(entry_price - _new_sl)
                         _new_reward = abs(_tp_f - entry_price)
                         _new_rr = _new_reward / max(1e-12, _new_risk)
-                        if _new_rr < MIN_RR_AT_ENTRY:
-                            print(f"[skip] {ticker} {direction.upper()} — R:R after ATR-widen = {_new_rr:.2f} (< {MIN_RR_AT_ENTRY})")
+                        _rr_floor = SCALE_IN_MIN_RR if is_scale_in else MIN_RR_AT_ENTRY
+                        if _new_rr < _rr_floor:
+                            print(f"[skip] {ticker} {direction.upper()} — R:R after ATR-widen = {_new_rr:.2f} (< {_rr_floor})")
                             skipped += 1
                             continue
             except (TypeError, ValueError) as e:
@@ -1336,7 +1416,14 @@ def cmd_open(args):
                 if lo <= score < hi:
                     size_pct = pct
                     break
-        print(f"[size] {ticker} {direction.upper()} score={score} regime={regime} → {size_pct}% of capital")
+        # v3.4 — SCALE-IN SIZE REDUCTION
+        is_scale_in = soft_blocked  # if we got here with soft_blocked=True, it's a scale-in
+        if is_scale_in:
+            original_size = size_pct
+            size_pct = round(size_pct * SCALE_IN_SIZE_FACTOR, 2)
+            print(f"[size] {ticker} {direction.upper()} score={score} regime={regime} → {original_size}% × {SCALE_IN_SIZE_FACTOR} = {size_pct}% (scale-in)")
+        else:
+            print(f"[size] {ticker} {direction.upper()} score={score} regime={regime} → {size_pct}% of capital")
         size_usd = PAPER_CAPITAL * (size_pct / 100)
 
         sources = dec.get("sources", {})
@@ -1353,7 +1440,7 @@ def cmd_open(args):
             1 if dec.get("onchain_data_thin") else 0,
             datetime.now(timezone.utc).isoformat(),
             None,  # closed_at
-            ("low_tier" if (direction == "long" and 62 <= score < 68) else None),  # v3.3: tag do audytu tieru 62-67
+            ("scale_in" if is_scale_in else ("low_tier" if (direction == "long" and 62 <= score < 68) else None)),  # v3.4: scale_in tag; v3.3: low_tier audit
             None, None,  # entry_zone_low, entry_zone_high (v0.5: no pending)
             (dec.get("levels") or {}).get("rr"),
         )
@@ -1371,11 +1458,12 @@ def cmd_open(args):
         opened += 1
         opened_today += 1
         arrow = "↗" if direction == "long" else "↘"
-        print(f"[open] {arrow} {direction.upper():5s} {ticker} @ {entry_price:.4f}  size ${size_usd:.2f}  "
+        scale_tag = " [SCALE-IN 30%]" if is_scale_in else ""
+        print(f"[open] {arrow} {direction.upper():5s} {ticker} @ {entry_price:.4f}  size ${size_usd:.2f}{scale_tag}  "
               f"SL {dec.get('sl')} TP1 {dec.get('tp1')} TP2 {dec.get('tp2')}  "
               f"score {dec.get('score')}")
         _notify_open(ticker, direction, entry_price, size_usd, dec.get("sl"), dec.get("tp1"),
-                     dec.get("tp2"), dec.get("score"), regime, False, db_conn=conn)
+                     dec.get("tp2"), dec.get("score"), regime, is_scale_in, db_conn=conn)
 
     conn.commit()
     conn.close()
