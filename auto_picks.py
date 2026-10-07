@@ -216,6 +216,17 @@ def _audit(net, addr):
         top10 = round(top10, 1)
         if top10 >= 50:
             flags.append(f"top-10 holders hold {top10:.0f}% of supply")
+    # v1.1 (2026-10-07) — established-token guard. GoPlus simulates a sell; tokens
+    # with operator/forwarder roles (SAND = The Sandbox, 207k holders, Binance spot)
+    # come back is_honeypot=1 + owner_change_balance=1 although they trade freely.
+    # A real honeypot with >50k holders and a listed perp does not exist, so for
+    # such tokens we keep the facts but drop the "cannot sell" verdict and say
+    # what it actually is: admin/operator powers, not a sell block.
+    if holders and holders >= 50_000:
+        hard = {"HONEYPOT — cannot sell", "owner can change balances", "hidden owner"}
+        if any(f in hard for f in flags):
+            flags = [f for f in flags if f not in hard]
+            flags.insert(0, "admin/operator can move balances (GoPlus sim; established token, trades freely)")
     return (flags, holders, top10, sell_tax, True)
 
 

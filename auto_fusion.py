@@ -58,6 +58,9 @@ BINANCE = {
     "BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT",
     "XRP": "XRPUSDT", "SUI": "SUIUSDT",
 }
+# v3.4 — ad-hoc mode (--tickers LINK,ONDO): lista tokenów do oceny zamiast stałej
+# piątki. Pusta = normalny tryb produkcyjny. Ustawiane w __main__.
+ADHOC_TICKERS = []
 
 
 def _get_json(url, timeout=15, retries=3):
@@ -1960,7 +1963,10 @@ def generate_fusion():
         FETCH_ERRORS.append(f"layers.inputs: {type(e).__name__}: {e}"); layer_inputs = {}
 
     decisions = []
-    for ticker in ["BTC", "ETH", "SOL", "XRP", "SUI"]:
+    for ticker in (ADHOC_TICKERS or ["BTC", "ETH", "SOL", "XRP", "SUI"]):
+        if ticker not in prices:
+            print(f"[adhoc] {ticker}: no Binance price (pair {BINANCE.get(ticker)} missing?) — skipped")
+            continue
         klines_d220 = fetch_klines(ticker, limit=220) or []   # v0.4: 220 dni → MA200D/MA50D + swingi dzienne
         klines = klines_d220[-30:] if klines_d220 else fetch_klines(ticker)  # daily, 30 candles — trend/momentum baseline
         daily_ta_score = compute_ta_score(klines)
@@ -2163,6 +2169,34 @@ def generate_fusion():
         ),
     }
 
+    # v3.4 — ad-hoc: osobny plik, czytelne podsumowanie, bez uploadu/Telegrama
+    if ADHOC_TICKERS:
+        fusion["adhoc"] = True
+        out_path = FUSION_DIR / f"fusion_adhoc_{fusion['date']}.json"
+        out_path.write_text(json.dumps(_sanitize_nan(fusion), indent=2, ensure_ascii=False))
+        print(f"\n[adhoc] Regime: {regime} · F&G {fng['current'] if fng else 'n/a'}")
+        print(f"[adhoc] {'TICKER':<7}{'SCORE':>6}  {'ACTION':<12}{'ONCHAIN':>8}{'TA':>5}  {'PRICE':>12}  {'24H':>7}  {'7D':>7}  FUND/h   OI$")
+        for d in decisions:
+            src = d.get("sources") or {}
+            dbg = src.get("onchain_debug") or {}
+            px = prices.get(d["ticker"], {})
+            c = (layer_inputs.get("ctx") or {}).get(d["ticker"], {})
+            print(f"[adhoc] {d['ticker']:<7}{d['score']:>6}  {d['action']:<12}"
+                  f"{src.get('onchain', '-'):>8}{src.get('technical', '-'):>5}  "
+                  f"{px.get('price', 0):>12.4f}  {px.get('change_24h', 0):>+6.1f}%  {px.get('change_7d', 0) or 0:>+6.1f}%  "
+                  f"{c.get('funding_h', 0):>+.4f}  {c.get('oi_usd', 0)/1e6:>.0f}M")
+            notes = []
+            if dbg.get("funding") is not None: notes.append(f"funding sub {dbg.get('funding')}")
+            if dbg.get("oi") is not None: notes.append(f"oi sub {dbg.get('oi')}")
+            if dbg.get("sm") is not None: notes.append(f"sm sub {dbg.get('sm')}")
+            if d.get("size_pct", 0) > 0 and d.get("direction"):
+                notes.append(f"{d['direction']} {d['size_pct']}% · entry {d.get('entry_low')}–{d.get('entry_high')} · sl {d.get('sl')} · tp1 {d.get('tp1')} · tp2 {d.get('tp2')}")
+            if d.get("entry_quality"): notes.append(f"entry quality {d['entry_quality']}")
+            if d.get("fib_position") is not None: notes.append(f"fib pos {d['fib_position']:.2f} (0=swing low, 1=swing high)")
+            if notes: print(f"[adhoc]        · " + " · ".join(str(n) for n in notes))
+        print(f"[adhoc] Saved {out_path} — NOT uploaded, bot untouched.")
+        return fusion
+
     # Write to file
     out_path = FUSION_DIR / f"fusion_{fusion['date']}.json"
     out_path.write_text(json.dumps(_sanitize_nan(fusion), indent=2, ensure_ascii=False))
@@ -2260,7 +2294,24 @@ def loop_mode(interval_hours):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="TVC Auto-Fusion (no Claude credits)")
     parser.add_argument("--loop", type=str, help="Loop mode with interval (e.g. '4h' or '2h')")
+    parser.add_argument("--tickers", type=str,
+                        help="Ad-hoc mode: score ONLY these tickers (e.g. 'LINK,ONDO'). "
+                             "Writes fusion_adhoc_<date>.json, no Gist upload, no Telegram, "
+                             "paper_bot untouched. Ticker must have a <TICKER>USDT pair on Binance.")
     args = parser.parse_args()
+
+    if args.tickers:
+        # Ad-hoc scoring (v3.4): ten sam pipeline (regime z BTC, TA 1d/1h/15m, MS,
+        # on-chain v2.0 z HL funding/OI/whales + OM gdy dostępne), ale dla dowolnych
+        # tokenów z Binance. Wynik idzie do osobnego pliku — nic nie dotyka bota,
+        # Gista ani Telegrama (30-dniowy freeze logiki bota nienaruszony).
+        ADHOC_TICKERS = [t.strip().upper() for t in args.tickers.split(",") if t.strip()]
+        for t in ADHOC_TICKERS:
+            BINANCE.setdefault(t, f"{t}USDT")
+            if t not in SM_TICKERS:
+                SM_TICKERS.append(t)      # HL ctx (funding/OI) + whales + OM dla tych coinów
+            OM_COINS.setdefault(t, t)
+        print(f"[adhoc] Scoring {', '.join(ADHOC_TICKERS)} (BTC still used for regime)")
 
     if args.loop:
         hours = float(args.loop.rstrip("h"))

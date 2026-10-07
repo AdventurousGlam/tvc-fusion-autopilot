@@ -20,17 +20,24 @@ Output: correlation_data.json
 Runs once daily in GitHub Actions (before auto_fusion.py).
 auto_fusion.py reads correlation_data.json and embeds it as "correlation_matrix".
 
-Dependencies: yfinance (pip install yfinance)
+v2.0 (2026-10-06): pandas refactor. Prices → one DataFrame (index=date, columns=assets),
+returns via pct_change(), alignment via dropna(), correlation via DataFrame.corr().
+Replaces ~60 lines of hand-rolled loops (daily_returns / pearson / nested matrix fill)
+with 4 vectorised calls. Output JSON format unchanged; values identical to v1
+(sample Pearson — normalisation cancels, so numpy's and the manual formula agree).
+
+Dependencies: pandas, yfinance (pip install pandas yfinance)
 """
 
 import json
-import math
 import ssl
 import time
 import sys
 import urllib.request as ur
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+
+import pandas as pd
 
 try:
     import certifi
@@ -137,98 +144,64 @@ def fetch_trad_daily(days=92):
     return result
 
 
-# --- Compute daily returns ---
+# --- pandas pipeline (v2.0) ---
 
-def daily_returns(prices):
-    """Convert [(date, close), ...] → {date: pct_return}.
-    Return = (close_today - close_yesterday) / close_yesterday
-    """
-    ret = {}
-    for i in range(1, len(prices)):
-        d_prev, p_prev = prices[i - 1]
-        d_curr, p_curr = prices[i]
-        if p_prev > 0:
-            ret[d_curr] = (p_curr - p_prev) / p_prev
-    return ret
-
-
-# --- Pearson correlation ---
-
-def pearson(xs, ys):
-    """Compute Pearson correlation between two lists of equal length.
-    Returns float in [-1, 1] or 0.0 if insufficient data.
-    """
-    n = len(xs)
-    if n < 3:
-        return 0.0
-    mx = sum(xs) / n
-    my = sum(ys) / n
-    num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
-    dx = math.sqrt(sum((x - mx) ** 2 for x in xs))
-    dy = math.sqrt(sum((y - my) ** 2 for y in ys))
-    if dx == 0 or dy == 0:
-        return 0.0
-    return num / (dx * dy)
+def to_price_frame(crypto_prices, trad_prices):
+    """{ticker: [(date, close), ...]} → DataFrame(index=date, columns=ALL_ASSETS, values=close).
+    Assets with no data become all-NaN columns (kept so the matrix shape stays 14×14)."""
+    series = {}
+    for ticker in ALL_ASSETS:
+        rows = crypto_prices.get(ticker) or trad_prices.get(ticker) or []
+        s = pd.Series({d: p for d, p in rows}, dtype="float64", name=ticker)
+        series[ticker] = s
+    df = pd.DataFrame(series).sort_index()
+    df.index.name = "date"
+    return df[ALL_ASSETS]
 
 
-# --- Build matrix for a given timeframe ---
+def daily_returns_frame(prices_df):
+    """Close prices → simple daily returns, one column per asset.
+    Each asset's return is computed against ITS OWN previous observation (so a Monday
+    equity close is compared with Friday, not with a NaN weekend) — same as v1, and the
+    reason we don't call pct_change() on the whole frame at once."""
+    cols = {a: prices_df[a].dropna().pct_change().iloc[1:] for a in prices_df.columns}
+    return pd.DataFrame(cols).sort_index()[list(prices_df.columns)]
 
-def build_matrix(all_returns, num_days):
-    """Given {asset: {date: return}} and a timeframe (num_days),
-    compute the NxN Pearson correlation matrix using the most recent num_days of shared dates.
-    """
-    # Find dates shared by ALL assets (intersection)
-    date_sets = [set(r.keys()) for r in all_returns.values() if r]
-    if not date_sets:
+
+def build_matrix(returns_df, num_days):
+    """Pearson correlation over the last `num_days` dates shared by every asset that has data.
+    Mirrors v1 semantics: intersection of dates, trailing window, assets without data get 0.0."""
+    live = [a for a in ALL_ASSETS if returns_df[a].notna().any()]
+    if not live:
         return None
-    common_dates = sorted(set.intersection(*date_sets))
-
-    # Take the last `num_days` common dates
-    if len(common_dates) < 5:
-        print(f"[matrix] Only {len(common_dates)} common dates — need at least 5")
+    aligned = returns_df[live].dropna(how="any")      # intersection of dates across live assets
+    if len(aligned) < 5:
+        print(f"[matrix] Only {len(aligned)} common dates — need at least 5")
         return None
-    dates = common_dates[-num_days:] if len(common_dates) >= num_days else common_dates
-
-    assets = ALL_ASSETS
-    n = len(assets)
-    matrix = [[0.0] * n for _ in range(n)]
-
-    for i in range(n):
-        for j in range(n):
-            if i == j:
-                matrix[i][j] = 1.0
-            elif j > i:
-                ri = all_returns.get(assets[i], {})
-                rj = all_returns.get(assets[j], {})
-                xs = [ri.get(d, 0.0) for d in dates]
-                ys = [rj.get(d, 0.0) for d in dates]
-                corr = pearson(xs, ys)
-                matrix[i][j] = round(corr, 3)
-                matrix[j][i] = round(corr, 3)
-
-    return {"assets": assets, "matrix": matrix, "data_points": len(dates)}
+    window = aligned.tail(num_days)
+    corr = window.corr(method="pearson")               # NxN for live assets
+    corr = corr.reindex(index=ALL_ASSETS, columns=ALL_ASSETS).fillna(0.0)
+    for a in ALL_ASSETS:
+        corr.loc[a, a] = 1.0
+    matrix = corr.round(3).values.tolist()
+    return {"assets": ALL_ASSETS, "matrix": matrix, "data_points": int(len(window))}
 
 
 # --- Main ---
 
 def main():
     print("=" * 60)
-    print("[correlation_matrix] Starting...")
+    print("[correlation_matrix] Starting... (pandas v2.0)")
     print("=" * 60)
 
-    # 1. Fetch prices
+    # 1. Fetch prices → one DataFrame
     crypto_prices = fetch_crypto_daily(days=TIMEFRAMES[-1] + 5)
     trad_prices = fetch_trad_daily(days=TIMEFRAMES[-1] + 5)
+    prices_df = to_price_frame(crypto_prices, trad_prices)
 
-    # 2. Compute daily returns for each asset
-    all_returns = {}
-    for ticker in CRYPTO_ASSETS:
-        all_returns[ticker] = daily_returns(crypto_prices.get(ticker, []))
-    for ticker in TRAD_ASSETS:
-        all_returns[ticker] = daily_returns(trad_prices.get(ticker, []))
-
-    # Check we have enough data
-    counts = {t: len(r) for t, r in all_returns.items()}
+    # 2. Daily returns (vectorised)
+    returns_df = daily_returns_frame(prices_df)
+    counts = returns_df.notna().sum().to_dict()
     print(f"[returns] Data points per asset: {counts}")
 
     empty = [t for t, c in counts.items() if c < 5]
@@ -240,7 +213,7 @@ def main():
 
     for tf in TIMEFRAMES:
         key = f"{tf}d"
-        m = build_matrix(all_returns, tf)
+        m = build_matrix(returns_df, tf)
         if m:
             output[key] = m
             print(f"[matrix] {key}: {m['data_points']} data points ✓")
