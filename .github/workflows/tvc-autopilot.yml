@@ -18,7 +18,9 @@ permissions:
 
 jobs:
   run:
-    runs-on: ubuntu-latest
+    # Przypięte zamiast ubuntu-latest — GitHub przenosi ubuntu-latest na Ubuntu 26
+    # od 19.10.2026. Przypięcie daje czas na kontrolowaną migrację.
+    runs-on: ubuntu-24.04
     env:
       HOME: /home/runner/home-clone
       GITHUB_TOKEN: ${{ secrets.GIST_PAT }}
@@ -29,9 +31,12 @@ jobs:
       OPENMARKET_API_KEY: ${{ secrets.OPENMARKET_API_KEY }}
     steps:
       - name: Checkout repo (standard path)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
-          fetch-depth: 0
+          # Było fetch-depth: 0 — klonowało CAŁĄ historię (158 MB, 11k commitów)
+          # co 5 minut. 20 commitów w zupełności wystarcza do pull --rebase
+          # w kroku commitującym, a przebieg jest wyraźnie krótszy.
+          fetch-depth: 20
 
       - name: Link checkout do $HOME/Claude/TVCFusion (skrypty używają Path.home())
         run: |
@@ -39,12 +44,12 @@ jobs:
           ln -s "$GITHUB_WORKSPACE" /home/runner/home-clone/Claude/TVCFusion
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
 
       - name: Install optional deps
-        run: pip install certifi ccxt yfinance pandas
+        run: pip install --retries 3 --timeout 30 certifi ccxt yfinance pandas
 
       - name: Cicha weryfikacja Telegram (getMe+getChat, bez wysyłania wiadomości)
         working-directory: /home/runner/home-clone/Claude/TVCFusion
@@ -54,6 +59,8 @@ jobs:
       # obudzonego Maca). Generuje raz dziennie po 05:00 UTC; poza tym oknem jest no-op.
       # Nigdy nie wywraca cyklu (exit 0). Wynik trafia do fusion_latest.json przez auto_fusion.
       - name: Crypto Picks (raz dziennie, MEXC screener + Telegram)
+        id: picks
+        continue-on-error: true
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 auto_picks.py --telegram
 
@@ -62,7 +69,7 @@ jobs:
       # radar_cache.json (serie cen/OI, fills) żyje w actions/cache, nie w repo — za duży
       # na commit co 5 min. Wyniki (pump_radar.json, alerty z track recordem) są commitowane.
       - name: Pump Radar cache (restore)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /home/runner/home-clone/Claude/TVCFusion/radar_cache.json
           key: radar-cache-${{ github.run_id }}
@@ -70,6 +77,8 @@ jobs:
             radar-cache-
 
       - name: Pump Radar (skan rynku + track record + Telegram przy HIGH)
+        id: radar
+        continue-on-error: true
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 pump_radar.py --telegram
 
@@ -81,15 +90,24 @@ jobs:
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 polymarket_predictions.py || true
 
+      # Trzy kroki poniżej mają continue-on-error: pojedynczy timeout API nie może
+      # zabijać całego cyklu razem z commitem. Status każdego trafia do kroku
+      # "Bilans cyklu", który decyduje o alercie i zapisuje autopilot_health.json.
       - name: Run auto_fusion (fresh algorytmiczne sygnały)
+        id: fusion
+        continue-on-error: true
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 auto_fusion.py
 
       - name: Otwórz nowe pozycje z fresh sygnałów (long i short)
+        id: open
+        continue-on-error: true
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 paper_bot.py open
 
       - name: Refresh paper positions + upload do Gist
+        id: refresh
+        continue-on-error: true
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 paper_bot.py refresh
 
@@ -131,6 +149,69 @@ jobs:
             echo "Poza oknem EOD ($HOUR:$MIN UTC) — pomijam."
           fi
 
+      # Zlicza, które kroki padły, i utrzymuje licznik AWARII Z RZĘDU w
+      # autopilot_health.json (plik jest commitowany, więc stan przeżywa między
+      # przebiegami). Pojedyncza wpadka = cisza, bo następny cykl za 5 min ją nadrobi.
+      - name: Bilans cyklu (autopilot_health.json)
+        id: health
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
+        env:
+          R_PICKS:   ${{ steps.picks.outcome }}
+          R_RADAR:   ${{ steps.radar.outcome }}
+          R_FUSION:  ${{ steps.fusion.outcome }}
+          R_OPEN:    ${{ steps.open.outcome }}
+          R_REFRESH: ${{ steps.refresh.outcome }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 - <<'PY'
+          import json, os, datetime, pathlib
+
+          # Kroki decydujące o tym, czy cykl policzył świeże dane.
+          # picks/radar są poboczne — ich awaria nie jest awarią cyklu.
+          CRITICAL = ["R_FUSION", "R_OPEN", "R_REFRESH"]
+          NAMES = {"R_PICKS":"crypto_picks","R_RADAR":"pump_radar","R_FUSION":"auto_fusion",
+                   "R_OPEN":"paper_bot open","R_REFRESH":"paper_bot refresh"}
+
+          res  = {k: os.environ.get(k, "skipped") for k in NAMES}
+          bad  = [NAMES[k] for k in CRITICAL if res[k] == "failure"]
+          soft = [NAMES[k] for k in ("R_PICKS","R_RADAR") if res[k] == "failure"]
+
+          p = pathlib.Path("autopilot_health.json")
+          try:
+              h = json.loads(p.read_text())
+          except Exception:
+              h = {}
+
+          streak = int(h.get("consecutive_failures", 0))
+          streak = streak + 1 if bad else 0
+          now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+          h.update({
+              "last_run": now,
+              "last_run_url": os.environ.get("RUN_URL", ""),
+              "steps": {NAMES[k]: res[k] for k in NAMES},
+              "failed_critical": bad,
+              "failed_soft": soft,
+              "consecutive_failures": streak,
+          })
+          if not bad:
+              h["last_ok"] = now
+          p.write_text(json.dumps(h, indent=2))
+
+          # Alert dopiero przy 3 awariach z rzędu (~15 min bez świeżych danych).
+          alert = bool(bad) and streak >= 3
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"alert={'true' if alert else 'false'}\n")
+              f.write(f"streak={streak}\n")
+              f.write(f"failed={', '.join(bad) or '-'}\n")
+              f.write(f"soft={', '.join(soft) or '-'}\n")
+
+          print(f"kroki: {h['steps']}")
+          print(f"krytyczne awarie: {bad or 'brak'} | z rzędu: {streak} | alert: {alert}")
+          if soft:
+              print(f"poboczne awarie (bez alertu): {soft}")
+          PY
+
       - name: Commit zaktualizowany stan z powrotem do repo
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         env:
@@ -139,7 +220,7 @@ jobs:
           git config user.name "tvc-autopilot"
           git config user.email "autopilot@tvcfusion.local"
           git add fusion_*.json paper_trades.db
-          for f in crypto_picks.json layers_cache.json pump_radar.json pump_radar_alerts.json correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json tg_sent.json; do [ -e "$f" ] && git add "$f"; done; true
+          for f in crypto_picks.json layers_cache.json pump_radar.json pump_radar_alerts.json correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json tg_sent.json autopilot_health.json; do [ -e "$f" ] && git add "$f"; done; true
           if git diff --cached --quiet; then
             echo "Brak zmian do commitu."
             exit 0
@@ -166,7 +247,7 @@ jobs:
               git checkout --theirs -- paper_trades.db 2>/dev/null || true
               git checkout --theirs -- crypto_picks.json 2>/dev/null || true
               git checkout --theirs -- layers_cache.json pump_radar.json pump_radar_alerts.json 2>/dev/null || true
-              git checkout --theirs -- correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json tg_sent.json 2>/dev/null || true
+              git checkout --theirs -- correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json tg_sent.json autopilot_health.json 2>/dev/null || true
               git add -A
               if git rebase --continue; then
                 echo "Konflikt rozwiązany automatycznie."
@@ -180,9 +261,26 @@ jobs:
           echo "Push nie powiódł się po 5 próbach."
           exit 1
 
-      # v0.3 — alert awarii: jeśli którykolwiek krok padł, Telegram dostaje wiadomość
-      # z linkiem do logu. Bez sekretów krok jest cichym no-opem.
-      - name: Alert Telegram przy awarii cyklu
+      # v0.4 — alert dopiero przy 3 krytycznych awariach Z RZĘDU (~15 min bez świeżych
+      # danych). Wcześniej odzywał się po każdym pojedynczym cyklu, co przy 288 cyklach
+      # na dobę dawało kilka fałszywych alarmów dziennie przy ~1,4% realnych awarii.
+      - name: Alert Telegram (dopiero przy 3 awariach z rzędu)
+        if: steps.health.outputs.alert == 'true'
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Brak sekretów Telegram — pomijam alert."; exit 0
+          fi
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "text=🚨 <b>TVC Autopilot — ${{ steps.health.outputs.streak }} cykle z rzędu nieudane</b>
+          Padło: ${{ steps.health.outputs.failed }}
+          Run #${{ github.run_number }} · $(date -u +%H:%M) UTC
+          Log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >/dev/null || true
+
+      # Awaria infrastruktury (checkout, Python, pip, push) — kroki, których
+      # continue-on-error NIE obejmuje. Tu alert ma iść od razu.
+      - name: Alert Telegram przy awarii infrastruktury
         if: failure()
         run: |
           if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
@@ -191,6 +289,7 @@ jobs:
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
             --data-urlencode "parse_mode=HTML" \
-            --data-urlencode "text=🚨 <b>TVC Autopilot — cykl NIE POWIÓDŁ SIĘ</b>
+            --data-urlencode "text=⚠️ <b>TVC Autopilot — awaria infrastruktury</b>
+          (checkout / Python / pip / push — nie skrypt)
           Run #${{ github.run_number }} · $(date -u +%H:%M) UTC
           Log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >/dev/null || true
