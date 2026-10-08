@@ -1,21 +1,21 @@
 {
   "date": "2026-10-08",
-  "version": "auto-0016",
+  "version": "auto-0021",
   "regime": "TRENDING_DOWN",
   "regime_details": {
     "bull_pts": 1,
-    "bear_pts": 4,
+    "bear_pts": 3,
     "bull_has_momentum": false,
     "bear_has_momentum": true,
     "signals": [
-      "24h=-2.7% (bear)",
+      "24h=-2.6% (bear)",
       "3d=-2.9% (bear)",
       "EMA8>EMA21 (bull)",
-      "3/3 red candles (strong bear structure)"
+      "2/3 red + lower highs (bear structure)"
     ],
     "version": "2.0"
   },
-  "regime_note": "Auto-generated 2026-10-08 00:16 UTC. BTC $83291 (-2.67% 24h), F&G 64 (Greed), BTC.D 58.74%. Regime v2.0: bull=1 bear=4 → TRENDING_DOWN. Weekday sizing ×1.0.",
+  "regime_note": "Auto-generated 2026-10-08 00:21 UTC. BTC $83336 (-2.57% 24h), F&G 64 (Greed), BTC.D 58.74%. Regime v2.0: bull=1 bear=3 → TRENDING_DOWN. Weekday sizing ×1.0.",
   "weights": {
     "onchain": 0.4,
     "ta": 0.4,
@@ -32,31 +32,31 @@
       "action": "SELL",
       "regime": "TRENDING_DOWN",
       "size_pct": 0.5,
-      "entry_low": 1.1277,
-      "entry_high": 1.1413,
-      "sl": 1.1481,
+      "entry_low": 1.1406,
+      "entry_high": 1.1454,
+      "sl": 1.1511,
       "tp1": 1.1059,
       "tp2": 1.0944,
       "sources": {
-        "onchain": 49,
-        "ta": 43,
-        "technical": 43,
+        "onchain": 46,
+        "ta": 44,
+        "technical": 44,
         "news": 50,
         "sentiment": 64,
-        "momentum": 53,
+        "momentum": 56,
         "onchain_debug": {
-          "momentum": 42.4,
-          "cvd": 68.5,
-          "cvd_ratio": 0.093,
+          "momentum": 43.6,
+          "cvd": 65.0,
+          "cvd_ratio": 0.075,
           "sm": 37.5,
           "funding": 50.0,
-          "oi": 50,
+          "oi": 28,
           "liq": 50,
           "has_liq_data": null,
-          "final": 50.0
+          "final": 46.0
         }
       },
-      "momentum_score": 53,
+      "momentum_score": 56,
       "onchain_data_thin": false,
       "market_structure": {
         "1h": {
@@ -73,10 +73,19 @@
         }
       },
       "levels": {
-        "rr": 2.1,
-        "atr_pct": 0.996,
-        "ema21_1h": 1.1321,
+        "rr": 4.62,
+        "atr_pct": 1.061,
+        "ema21_1h": 1.1325,
         "supports": [
+          {
+            "price": 1.1314,
+            "touches": 3.0,
+            "labels": [
+              "swing1h_L",
+              "EMA21_1h",
+              "swing1h_H"
+            ]
+          },
           {
             "price": 1.1153,
             "touches": 1.0,
@@ -97,13 +106,6 @@
             "touches": 2.0,
             "labels": [
               "swingD_L"
-            ]
-          },
-          {
-            "price": 1.0572,
-            "touches": 1.5,
-            "labels": [
-              "Fib38.2"
             ]
           }
         ],
@@ -139,11 +141,13 @@
           }
         ]
       },
-      "fib_position": 0.736850571014959,
+      "fib_position": 0.7463406787839795,
       "entry_quality": {
-        "verdict": "ok",
-        "flags": [],
-        "note": "R:R 2.1 · SL 1.2% pod swing1h_L · TP1 swing1h_L+ · ATR1h 1.00%"
+        "verdict": "wait",
+        "flags": [
+          "under_resistance"
+        ],
+        "note": "R:R 4.6 · SL 1.2% pod swing1h_L · TP1 swing1h_L+ · ATR1h 1.06% · under_resistance"
       },
       "layers": {
         "smart_money": {
@@ -156,11 +160,11 @@
           "verdict": "neutral"
         },
         "cvd": {
-          "read": "spot_led_up",
-          "ratio_4h": 0.093,
-          "px_4h": 0.65,
-          "oi_4h": 1.51,
-          "oi_24h": -9.35
+          "read": "neutral",
+          "ratio_4h": 0.075,
+          "px_4h": 1.08,
+          "oi_4h": 2.6,
+          "oi_24h": -8.14
         },
         "funding_h": 0.00125,
         "flush": {
@@ -171,33 +175,34 @@
           }
         },
         "pump": {
-          "score": 35,
-          "level": "elevated",
+          "score": 25,
+          "level": "low",
           "parts": {
             "compression": 10,
-            "sfp_bull": 15,
-            "cvd_accum": 10
+            "sfp_bull": 15
           }
         },
-        "agree": 0,
-        "confirms": [],
+        "agree": 1,
+        "confirms": [
+          "pump"
+        ],
         "veto": null,
-        "note": "SM neutral (-1.00, $0M) · CVD spot_led_up (+0.09, OI4h 1.51%) · Flush 15 low · Pump 35 elevated · fund +0.0013%/h · zgoda 0/3 []"
+        "note": "SM neutral (-1.00, $0M) · CVD neutral (+0.08, OI4h 2.6%) · Flush 15 low · Pump 25 low · fund +0.0013%/h · zgoda 1/3 [pump]"
       },
       "onchain_debug": {
-        "momentum": 42.4,
-        "cvd": 68.5,
-        "cvd_ratio": 0.093,
+        "momentum": 43.6,
+        "cvd": 65.0,
+        "cvd_ratio": 0.075,
         "sm": 37.5,
         "funding": 50.0,
-        "oi": 50,
+        "oi": 28,
         "liq": 50,
         "has_liq_data": null,
-        "final": 50.0
+        "final": 46.0
       },
       "choch_override": false,
-      "risk_flag": "Auto-generated 00:16. TA 43/100 (daily 38 · 1h momo 53 · MS 1h:neutral · 15m:neutral). Current $1.13 (-3.83% 24h).",
-      "invalidation_note": "SL @ $1.1481 · R:R 2.1 · SL 1.2% pod swing1h_L · TP1 swing1h_L+ · ATR1h 1.00%"
+      "risk_flag": "Auto-generated 00:21. TA 44/100 (daily 38 · 1h momo 56 · MS 1h:neutral · 15m:neutral). Current $1.14 (-3.19% 24h).",
+      "invalidation_note": "SL @ $1.1511 · R:R 4.6 · SL 1.2% pod swing1h_L · TP1 swing1h_L+ · ATR1h 1.06% · under_resistance"
     },
     {
       "rank": 2,
@@ -207,9 +212,9 @@
       "action": "SELL",
       "regime": "TRENDING_DOWN",
       "size_pct": 0.5,
-      "entry_low": 1.4351,
-      "entry_high": 1.4422,
-      "sl": 1.4559,
+      "entry_low": 1.4352,
+      "entry_high": 1.4424,
+      "sl": 1.456,
       "tp1": 1.4085,
       "tp2": 1.3375,
       "sources": {
@@ -220,15 +225,15 @@
         "sentiment": 64,
         "momentum": 47,
         "onchain_debug": {
-          "momentum": 40.1,
-          "cvd": 57.9,
-          "cvd_ratio": 0.039,
+          "momentum": 40.4,
+          "cvd": 58.7,
+          "cvd_ratio": 0.044,
           "sm": 27.7,
           "funding": 50.0,
           "oi": 50,
           "liq": 50,
           "has_liq_data": null,
-          "final": 44.4
+          "final": 44.7
         }
       },
       "momentum_score": 47,
@@ -248,9 +253,9 @@
         }
       },
       "levels": {
-        "rr": 1.75,
-        "atr_pct": 0.835,
-        "ema21_1h": 1.4387,
+        "rr": 1.76,
+        "atr_pct": 0.846,
+        "ema21_1h": 1.4388,
         "supports": [
           {
             "price": 1.4057,
@@ -320,13 +325,13 @@
           }
         ]
       },
-      "fib_position": 0.4254801847799661,
+      "fib_position": 0.4281546316557261,
       "entry_quality": {
         "verdict": "wait",
         "flags": [
           "extended"
         ],
-        "note": "R:R 1.8 · SL 1.2% pod MA50D+ · TP1 Fib61.8+ · ATR1h 0.84% · extended"
+        "note": "R:R 1.8 · SL 1.2% pod MA50D+ · TP1 Fib61.8+ · ATR1h 0.85% · extended"
       },
       "layers": {
         "smart_money": {
@@ -340,10 +345,10 @@
         },
         "cvd": {
           "read": "neutral",
-          "ratio_4h": 0.039,
-          "px_4h": -0.06,
-          "oi_4h": -0.02,
-          "oi_24h": -9.19
+          "ratio_4h": 0.044,
+          "px_4h": 0.01,
+          "oi_4h": 0.09,
+          "oi_24h": -9.07
         },
         "funding_h": 0.00125,
         "flush": {
@@ -368,22 +373,22 @@
           "pump"
         ],
         "veto": null,
-        "note": "SM short (-1.00, $9M) · CVD neutral (+0.04, OI4h -0.02%) · Flush 25 low · Pump 25 low · fund +0.0013%/h · zgoda 2/3 [sm,pump]"
+        "note": "SM short (-1.00, $9M) · CVD neutral (+0.04, OI4h 0.09%) · Flush 25 low · Pump 25 low · fund +0.0013%/h · zgoda 2/3 [sm,pump]"
       },
       "onchain_debug": {
-        "momentum": 40.1,
-        "cvd": 57.9,
-        "cvd_ratio": 0.039,
+        "momentum": 40.4,
+        "cvd": 58.7,
+        "cvd_ratio": 0.044,
         "sm": 27.7,
         "funding": 50.0,
         "oi": 50,
         "liq": 50,
         "has_liq_data": null,
-        "final": 44.4
+        "final": 44.7
       },
       "choch_override": false,
-      "risk_flag": "Auto-generated 00:16. TA 45/100 (daily 47 · 1h momo 47 · MS 1h:bearish · 15m:bullish). Current $1.42 (-5.13% 24h).",
-      "invalidation_note": "SL @ $1.4559 · R:R 1.8 · SL 1.2% pod MA50D+ · TP1 Fib61.8+ · ATR1h 0.84% · extended"
+      "risk_flag": "Auto-generated 00:21. TA 45/100 (daily 47 · 1h momo 47 · MS 1h:bearish · 15m:bullish). Current $1.42 (-4.98% 24h).",
+      "invalidation_note": "SL @ $1.456 · R:R 1.8 · SL 1.2% pod MA50D+ · TP1 Fib61.8+ · ATR1h 0.85% · extended"
     },
     {
       "rank": 3,
@@ -393,10 +398,10 @@
       "action": "SELL",
       "regime": "TRENDING_DOWN",
       "size_pct": 0.5,
-      "entry_low": 2585.26,
-      "entry_high": 2595.37,
-      "sl": 2621.4,
-      "tp1": 2558.07,
+      "entry_low": 2585.34,
+      "entry_high": 2595.4,
+      "sl": 2621.46,
+      "tp1": 2558.09,
       "tp2": 2544.04,
       "sources": {
         "onchain": 30,
@@ -404,20 +409,20 @@
         "technical": 51,
         "news": 50,
         "sentiment": 64,
-        "momentum": 49,
+        "momentum": 50,
         "onchain_debug": {
-          "momentum": 40.7,
+          "momentum": 40.9,
           "cvd": 10,
-          "cvd_ratio": -0.277,
+          "cvd_ratio": -0.26,
           "sm": 21.2,
           "funding": 50.0,
           "oi": 50,
           "liq": 50,
           "has_liq_data": null,
-          "final": 30.9
+          "final": 31.0
         }
       },
-      "momentum_score": 49,
+      "momentum_score": 50,
       "onchain_data_thin": false,
       "market_structure": {
         "1h": {
@@ -435,11 +440,11 @@
       },
       "levels": {
         "rr": 1.04,
-        "atr_pct": 0.544,
-        "ema21_1h": 2589.46,
+        "atr_pct": 0.551,
+        "ema21_1h": 2589.6,
         "supports": [
           {
-            "price": 2552.96,
+            "price": 2552.98,
             "touches": 2.5,
             "labels": [
               "swing1h_L",
@@ -473,7 +478,7 @@
         ],
         "resistances": [
           {
-            "price": 2595.37,
+            "price": 2595.4,
             "touches": 4.0,
             "labels": [
               "EMA21_1h",
@@ -508,7 +513,7 @@
           }
         ]
       },
-      "fib_position": 0.4766311376711412,
+      "fib_position": 0.48084556036212783,
       "entry_quality": {
         "verdict": "skip",
         "flags": [
@@ -516,7 +521,7 @@
           "under_resistance",
           "low_rr"
         ],
-        "note": "R:R 1.0 · SL 1.2% pod EMA21_1h+ · TP1 swing1h_L+ · ATR1h 0.54% · extended, under_resistance, low_rr"
+        "note": "R:R 1.0 · SL 1.2% pod EMA21_1h+ · TP1 swing1h_L+ · ATR1h 0.55% · extended, under_resistance, low_rr"
       },
       "layers": {
         "smart_money": {
@@ -530,10 +535,10 @@
         },
         "cvd": {
           "read": "spot_distrib",
-          "ratio_4h": -0.277,
-          "px_4h": -0.07,
-          "oi_4h": -0.92,
-          "oi_24h": -3.77
+          "ratio_4h": -0.26,
+          "px_4h": -0.01,
+          "oi_4h": -0.74,
+          "oi_24h": -3.62
         },
         "funding_h": 0.00125,
         "flush": {
@@ -558,22 +563,22 @@
           "pump"
         ],
         "veto": null,
-        "note": "SM short (-0.77, $161M) · CVD spot_distrib (-0.28, OI4h -0.92%) · Flush 25 low · Pump 10 low · fund +0.0013%/h · zgoda 3/3 [sm,cvd,pump]"
+        "note": "SM short (-0.77, $161M) · CVD spot_distrib (-0.26, OI4h -0.74%) · Flush 25 low · Pump 10 low · fund +0.0013%/h · zgoda 3/3 [sm,cvd,pump]"
       },
       "onchain_debug": {
-        "momentum": 40.7,
+        "momentum": 40.9,
         "cvd": 10,
-        "cvd_ratio": -0.277,
+        "cvd_ratio": -0.26,
         "sm": 21.2,
         "funding": 50.0,
         "oi": 50,
         "liq": 50,
         "has_liq_data": null,
-        "final": 30.9
+        "final": 31.0
       },
       "choch_override": false,
-      "risk_flag": "Auto-generated 00:16. TA 51/100 (daily 51 · 1h momo 49 · MS 1h:neutral · 15m:bullish). Current $2572.63 (-4.69% 24h).",
-      "invalidation_note": "SL @ $2621.4 · R:R 1.0 · SL 1.2% pod EMA21_1h+ · TP1 swing1h_L+ · ATR1h 0.54% · extended, under_resistance, low_rr"
+      "risk_flag": "Auto-generated 00:21. TA 51/100 (daily 51 · 1h momo 50 · MS 1h:neutral · 15m:bullish). Current $2574.52 (-4.54% 24h).",
+      "invalidation_note": "SL @ $2621.46 · R:R 1.0 · SL 1.2% pod EMA21_1h+ · TP1 swing1h_L+ · ATR1h 0.55% · extended, under_resistance, low_rr"
     },
     {
       "rank": 4,
@@ -583,22 +588,22 @@
       "action": "SELL",
       "regime": "TRENDING_DOWN",
       "size_pct": 0.6,
-      "entry_low": 83572.77,
-      "entry_high": 83789.88,
-      "sl": 84685.5,
-      "tp1": 82789.99,
-      "tp2": 81514.27,
+      "entry_low": 83445.99,
+      "entry_high": 83592.65,
+      "sl": 84315.25,
+      "tp1": 81514.27,
+      "tp2": 80737.74,
       "sources": {
         "onchain": 29,
         "ta": 48,
         "technical": 48,
         "news": 50,
         "sentiment": 64,
-        "momentum": 48,
+        "momentum": 49,
         "onchain_debug": {
-          "momentum": 45.2,
+          "momentum": 45.4,
           "cvd": 10,
-          "cvd_ratio": -0.218,
+          "cvd_ratio": -0.21,
           "sm": 12.5,
           "funding": 50.0,
           "oi": 50,
@@ -607,7 +612,7 @@
           "final": 29.7
         }
       },
-      "momentum_score": 48,
+      "momentum_score": 49,
       "onchain_data_thin": false,
       "market_structure": {
         "1h": {
@@ -624,9 +629,9 @@
         }
       },
       "levels": {
-        "rr": 0.89,
-        "atr_pct": 0.434,
-        "ema21_1h": 83681.33,
+        "rr": 2.52,
+        "atr_pct": 0.44,
+        "ema21_1h": 83684.62,
         "supports": [
           {
             "price": 82624.74,
@@ -648,7 +653,7 @@
             ]
           },
           {
-            "price": 80575.86,
+            "price": 80576.58,
             "touches": 1.5,
             "labels": [
               "MA50D"
@@ -665,12 +670,12 @@
         ],
         "resistances": [
           {
-            "price": 83544.53,
+            "price": 83544.94,
             "touches": 8.0,
             "labels": [
               "swing1h_L",
-              "EMA21_1h",
-              "swing1h_H"
+              "swing1h_H",
+              "EMA21_1h"
             ]
           },
           {
@@ -699,15 +704,13 @@
           }
         ]
       },
-      "fib_position": 0.6697216701400909,
+      "fib_position": 0.6733369810986748,
       "entry_quality": {
-        "verdict": "skip",
+        "verdict": "wait",
         "flags": [
-          "extended",
-          "under_resistance",
-          "low_rr"
+          "under_resistance"
         ],
-        "note": "R:R 0.9 · SL 1.2% pod swing1h_L+ · TP1 swingD_H+ · ATR1h 0.43% · extended, under_resistance, low_rr"
+        "note": "R:R 2.5 · SL 1.2% pod swing1h_L+ · TP1 Fib50.0+ · ATR1h 0.44% · under_resistance"
       },
       "layers": {
         "smart_money": {
@@ -721,10 +724,10 @@
         },
         "cvd": {
           "read": "spot_distrib",
-          "ratio_4h": -0.218,
-          "px_4h": -0.18,
-          "oi_4h": -0.51,
-          "oi_24h": -7.81
+          "ratio_4h": -0.21,
+          "px_4h": -0.13,
+          "oi_4h": -0.36,
+          "oi_24h": -7.64
         },
         "funding_h": 0.00125,
         "flush": {
@@ -749,12 +752,12 @@
           "pump"
         ],
         "veto": null,
-        "note": "SM short (-1.00, $173M) · CVD spot_distrib (-0.22, OI4h -0.51%) · Flush 25 low · Pump 10 low · fund +0.0013%/h · zgoda 3/3 [sm,cvd,pump]"
+        "note": "SM short (-1.00, $173M) · CVD spot_distrib (-0.21, OI4h -0.36%) · Flush 25 low · Pump 10 low · fund +0.0013%/h · zgoda 3/3 [sm,cvd,pump]"
       },
       "onchain_debug": {
-        "momentum": 45.2,
+        "momentum": 45.4,
         "cvd": 10,
-        "cvd_ratio": -0.218,
+        "cvd_ratio": -0.21,
         "sm": 12.5,
         "funding": 50.0,
         "oi": 50,
@@ -763,39 +766,39 @@
         "final": 29.7
       },
       "choch_override": false,
-      "risk_flag": "Auto-generated 00:16. TA 48/100 (daily 47 · 1h momo 48 · MS 1h:neutral · 15m:bullish). Current $83291.07 (-2.67% 24h).",
-      "invalidation_note": "SL @ $84685.5 · R:R 0.9 · SL 1.2% pod swing1h_L+ · TP1 swingD_H+ · ATR1h 0.43% · extended, under_resistance, low_rr"
+      "risk_flag": "Auto-generated 00:21. TA 48/100 (daily 47 · 1h momo 49 · MS 1h:neutral · 15m:bullish). Current $83336.00 (-2.57% 24h).",
+      "invalidation_note": "SL @ $84315.25 · R:R 2.5 · SL 1.2% pod swing1h_L+ · TP1 Fib50.0+ · ATR1h 0.44% · under_resistance"
     },
     {
       "rank": 5,
       "ticker": "SOL",
       "direction": "short",
-      "score": 37,
+      "score": 36,
       "action": "SELL",
       "regime": "TRENDING_DOWN",
-      "size_pct": 0.97,
-      "entry_low": 116.56,
-      "entry_high": 116.91,
-      "sl": 117.84,
-      "tp1": 114.05,
-      "tp2": 112.75,
+      "size_pct": 1.05,
+      "entry_low": 116.66,
+      "entry_high": 116.98,
+      "sl": 117.89,
+      "tp1": 115.56,
+      "tp2": 114.05,
       "sources": {
-        "onchain": 35,
-        "ta": 41,
-        "technical": 41,
+        "onchain": 36,
+        "ta": 38,
+        "technical": 38,
         "news": 50,
         "sentiment": 64,
         "momentum": 50,
         "onchain_debug": {
-          "momentum": 44.0,
-          "cvd": 31.5,
-          "cvd_ratio": -0.093,
+          "momentum": 44.3,
+          "cvd": 34.4,
+          "cvd_ratio": -0.078,
           "sm": 14.2,
-          "funding": 52.5,
+          "funding": 52.2,
           "oi": 50,
           "liq": 50,
           "has_liq_data": null,
-          "final": 35.6
+          "final": 36.4
         }
       },
       "momentum_score": 50,
@@ -815,9 +818,9 @@
         }
       },
       "levels": {
-        "rr": 2.43,
-        "atr_pct": 0.674,
-        "ema21_1h": 117.01,
+        "rr": 1.17,
+        "atr_pct": 0.686,
+        "ema21_1h": 117.02,
         "supports": [
           {
             "price": 115.33,
@@ -888,13 +891,14 @@
           }
         ]
       },
-      "fib_position": 0.7037418468932369,
+      "fib_position": 0.7071747339512531,
       "entry_quality": {
-        "verdict": "wait",
+        "verdict": "skip",
         "flags": [
-          "under_resistance"
+          "under_resistance",
+          "low_rr"
         ],
-        "note": "R:R 2.4 · SL 1.2% pod swingD_L+ · TP1 Fib38.2 · ATR1h 0.67% · under_resistance"
+        "note": "R:R 1.2 · SL 1.2% pod swingD_L+ · TP1 swing1h_L+ · ATR1h 0.69% · under_resistance, low_rr"
       },
       "layers": {
         "smart_money": {
@@ -907,13 +911,13 @@
           "verdict": "short"
         },
         "cvd": {
-          "read": "spot_distrib",
-          "ratio_4h": -0.093,
-          "px_4h": 0.11,
-          "oi_4h": 0.39,
-          "oi_24h": -0.86
+          "read": "neutral",
+          "ratio_4h": -0.078,
+          "px_4h": 0.18,
+          "oi_4h": 0.41,
+          "oi_24h": -0.79
         },
-        "funding_h": 0.00075882,
+        "funding_h": 0.0008086,
         "flush": {
           "score": 25,
           "level": "low",
@@ -930,33 +934,32 @@
             "sfp_bull": 15
           }
         },
-        "agree": 3,
+        "agree": 2,
         "confirms": [
           "sm",
-          "cvd",
           "pump"
         ],
         "veto": null,
-        "note": "SM short (-1.00, $14M) · CVD spot_distrib (-0.09, OI4h 0.39%) · Flush 25 low · Pump 25 low · fund +0.0008%/h · zgoda 3/3 [sm,cvd,pump]"
+        "note": "SM short (-1.00, $14M) · CVD neutral (-0.08, OI4h 0.41%) · Flush 25 low · Pump 25 low · fund +0.0008%/h · zgoda 2/3 [sm,pump]"
       },
       "onchain_debug": {
-        "momentum": 44.0,
-        "cvd": 31.5,
-        "cvd_ratio": -0.093,
+        "momentum": 44.3,
+        "cvd": 34.4,
+        "cvd_ratio": -0.078,
         "sm": 14.2,
-        "funding": 52.5,
+        "funding": 52.2,
         "oi": 50,
         "liq": 50,
         "has_liq_data": null,
-        "final": 35.6
+        "final": 36.4
       },
       "choch_override": false,
-      "risk_flag": "Auto-generated 00:16. TA 41/100 (daily 41 · 1h momo 50 · MS 1h:bearish · 15m:neutral). Current $116.32 (-3.55% 24h).",
-      "invalidation_note": "SL @ $117.84 · R:R 2.4 · SL 1.2% pod swingD_L+ · TP1 Fib38.2 · ATR1h 0.67% · under_resistance"
+      "risk_flag": "Auto-generated 00:21. TA 38/100 (daily 37 · 1h momo 50 · MS 1h:bearish · 15m:neutral). Current $116.42 (-3.36% 24h).",
+      "invalidation_note": "SL @ $117.89 · R:R 1.2 · SL 1.2% pod swingD_L+ · TP1 swing1h_L+ · ATR1h 0.69% · under_resistance, low_rr"
     }
   ],
   "aggregate_long_risk_pct": 0,
-  "aggregate_short_risk_pct": 3.1,
+  "aggregate_short_risk_pct": 3.2,
   "correlation_warnings": [
     "Auto-fusion nie zawiera qualitative context (news, catalysts). Traktuj jako baseline — Claude fusion daje szerszy context."
   ],
@@ -1084,8 +1087,8 @@
     "age_days": 1
   },
   "pump_radar": {
-    "generated_at": "2026-10-08T00:16:22.210772+00:00",
-    "universe_n": 85,
+    "generated_at": "2026-10-08T00:21:26.385014+00:00",
+    "universe_n": 84,
     "top": [],
     "near": [
       {
@@ -1097,14 +1100,14 @@
           "funding": 35
         },
         "tags": [],
-        "price": 15.261,
-        "r24": 5.52,
-        "px_1h": 2.26,
-        "oi_1h": -0.6,
-        "oi_4h": 7.4,
-        "funding_8h": -0.1289,
-        "vol24": 13458447,
-        "oi_usd": 4329152,
+        "price": 15.26,
+        "r24": 5.51,
+        "px_1h": 1.73,
+        "oi_1h": -1.2,
+        "oi_4h": 7.1,
+        "funding_8h": -0.137,
+        "vol24": 13464250,
+        "oi_usd": 4316593,
         "whale_net_1h": 0,
         "whale_wallets": 0
       },
@@ -1117,14 +1120,14 @@
           "funding": 35
         },
         "tags": [],
-        "price": 0.092371,
-        "r24": -17.1,
-        "px_1h": 0.23,
-        "oi_1h": 0.0,
-        "oi_4h": -13.8,
-        "funding_8h": -0.133,
-        "vol24": 6781179,
-        "oi_usd": 2290105,
+        "price": 0.092455,
+        "r24": -17.3,
+        "px_1h": 1.09,
+        "oi_1h": 1.0,
+        "oi_4h": -13.7,
+        "funding_8h": -0.1345,
+        "vol24": 6741853,
+        "oi_usd": 2293241,
         "whale_net_1h": 153,
         "whale_wallets": 1
       },
@@ -1138,14 +1141,14 @@
           "compression": 10
         },
         "tags": [],
-        "price": 88.87,
-        "r24": -0.12,
-        "px_1h": 0.17,
-        "oi_1h": 1.9,
-        "oi_4h": 14.5,
-        "funding_8h": -0.0328,
-        "vol24": 57519203,
-        "oi_usd": 79323304,
+        "price": 88.84,
+        "r24": -0.15,
+        "px_1h": 0.1,
+        "oi_1h": -9.0,
+        "oi_4h": 2.4,
+        "funding_8h": -0.0333,
+        "vol24": 58671385,
+        "oi_usd": 70983564,
         "whale_net_1h": 0,
         "whale_wallets": 0
       },
@@ -1158,16 +1161,36 @@
           "funding": 25
         },
         "tags": [],
-        "price": 2.899,
-        "r24": 6.46,
-        "px_1h": -0.79,
-        "oi_1h": -0.9,
-        "oi_4h": 0.2,
-        "funding_8h": -0.088,
-        "vol24": 6940158,
-        "oi_usd": 1738545,
+        "price": 2.906,
+        "r24": 6.72,
+        "px_1h": 0.24,
+        "oi_1h": -0.4,
+        "oi_4h": 0.1,
+        "funding_8h": -0.0883,
+        "vol24": 6945682,
+        "oi_usd": 1737980,
         "whale_net_1h": 0,
         "whale_wallets": 0
+      },
+      {
+        "ticker": "PUMP",
+        "src": "HL",
+        "score": 20,
+        "level": "none",
+        "parts": {
+          "whales": 20
+        },
+        "tags": [],
+        "price": 0.006233,
+        "r24": 0.31,
+        "px_1h": -0.42,
+        "oi_1h": -0.3,
+        "oi_4h": -5.1,
+        "funding_8h": 0.01,
+        "vol24": 239776998,
+        "oi_usd": 317670704,
+        "whale_net_1h": 533741,
+        "whale_wallets": 7
       },
       {
         "ticker": "HYPE",
@@ -1178,15 +1201,15 @@
           "whales": 20
         },
         "tags": [],
-        "price": 88.385,
-        "r24": -0.15,
-        "px_1h": 0.24,
-        "oi_1h": 0.2,
-        "oi_4h": 0.8,
-        "funding_8h": -0.0052,
-        "vol24": 80373479,
-        "oi_usd": 1751277205,
-        "whale_net_1h": 582572,
+        "price": 88.549,
+        "r24": 0.02,
+        "px_1h": 0.35,
+        "oi_1h": 0.3,
+        "oi_4h": 1.1,
+        "funding_8h": 0.0014,
+        "vol24": 80446111,
+        "oi_usd": 1755152881,
+        "whale_net_1h": 574212,
         "whale_wallets": 8
       },
       {
@@ -1201,15 +1224,15 @@
         "tags": [
           "late"
         ],
-        "price": 0.4426,
-        "r24": 33.51,
-        "px_1h": -3.0,
-        "oi_1h": -4.6,
-        "oi_4h": 1.1,
-        "funding_8h": -0.19,
-        "vol24": 9533274,
-        "oi_usd": 6670676,
-        "whale_net_1h": 10690,
+        "price": 0.4416,
+        "r24": 33.21,
+        "px_1h": -2.75,
+        "oi_1h": -5.3,
+        "oi_4h": -0.1,
+        "funding_8h": -0.1908,
+        "vol24": 9595288,
+        "oi_usd": 6596645,
+        "whale_net_1h": 23749,
         "whale_wallets": 2
       }
     ],
@@ -1833,11 +1856,11 @@
     "errors": [
       "listings.upbit: HTTP Error 403: Forbidden"
     ],
-    "elapsed_s": 11.9,
+    "elapsed_s": 15.9,
     "hit_def": "+2.0% w 1h / +3.0% w 4h"
   },
   "correlation_matrix": {
-    "generated_at": "2026-10-08T00:16:32.019593+00:00",
+    "generated_at": "2026-10-08T00:21:35.407457+00:00",
     "7d": {
       "assets": [
         "BTC",
@@ -1867,9 +1890,9 @@
           0.413,
           0.497,
           0.343,
-          0.73,
-          0.502,
-          0.346,
+          0.735,
+          0.505,
+          0.352,
           0.107
         ],
         [
@@ -1883,9 +1906,9 @@
           0.375,
           0.538,
           0.643,
-          0.829,
-          0.62,
-          0.266,
+          0.835,
+          0.623,
+          0.273,
           0.181
         ],
         [
@@ -1899,9 +1922,9 @@
           0.583,
           0.314,
           0.521,
-          0.65,
-          0.49,
-          -0.079,
+          0.659,
+          0.494,
+          -0.072,
           0.463
         ],
         [
@@ -1915,9 +1938,9 @@
           -0.421,
           0.329,
           0.286,
-          0.25,
-          -0.122,
-          0.618,
+          0.251,
+          -0.121,
+          0.621,
           -0.446
         ],
         [
@@ -1931,9 +1954,9 @@
           0.387,
           0.423,
           0.672,
-          0.725,
-          0.533,
-          0.119,
+          0.734,
+          0.536,
+          0.127,
           0.303
         ],
         [
@@ -1947,9 +1970,9 @@
           0.291,
           0.253,
           0.825,
-          0.678,
-          0.453,
-          0.072,
+          0.685,
+          0.456,
+          0.079,
           0.042
         ],
         [
@@ -1963,9 +1986,9 @@
           0.064,
           0.233,
           0.784,
-          0.408,
-          0.731,
-          -0.037,
+          0.415,
+          0.733,
+          -0.031,
           0.443
         ],
         [
@@ -1980,8 +2003,8 @@
           -0.002,
           0.226,
           0.611,
-          0.318,
-          -0.454,
+          0.32,
+          -0.45,
           0.14
         ],
         [
@@ -1995,9 +2018,9 @@
           -0.002,
           1.0,
           -0.047,
-          0.653,
-          0.617,
-          0.772,
+          0.651,
+          0.618,
+          0.775,
           0.272
         ],
         [
@@ -2011,58 +2034,58 @@
           0.226,
           -0.047,
           1.0,
-          0.456,
-          0.292,
-          -0.317,
+          0.463,
+          0.295,
+          -0.312,
           0.091
         ],
         [
-          0.73,
-          0.829,
-          0.65,
-          0.25,
-          0.725,
-          0.678,
-          0.408,
+          0.735,
+          0.835,
+          0.659,
+          0.251,
+          0.734,
+          0.685,
+          0.415,
           0.611,
-          0.653,
-          0.456,
+          0.651,
+          0.463,
           1.0,
-          0.625,
-          0.254,
-          0.043
+          0.629,
+          0.256,
+          0.05
         ],
         [
-          0.502,
-          0.62,
-          0.49,
-          -0.122,
-          0.533,
-          0.453,
-          0.731,
-          0.318,
-          0.617,
-          0.292,
-          0.625,
+          0.505,
+          0.623,
+          0.494,
+          -0.121,
+          0.536,
+          0.456,
+          0.733,
+          0.32,
+          0.618,
+          0.295,
+          0.629,
           1.0,
-          0.257,
+          0.26,
           0.535
         ],
         [
-          0.346,
-          0.266,
-          -0.079,
-          0.618,
-          0.119,
-          0.072,
-          -0.037,
-          -0.454,
-          0.772,
-          -0.317,
-          0.254,
-          0.257,
+          0.352,
+          0.273,
+          -0.072,
+          0.621,
+          0.127,
+          0.079,
+          -0.031,
+          -0.45,
+          0.775,
+          -0.312,
+          0.256,
+          0.26,
           1.0,
-          -0.166
+          -0.163
         ],
         [
           0.107,
@@ -2075,9 +2098,9 @@
           0.14,
           0.272,
           0.091,
-          0.043,
+          0.05,
           0.535,
-          -0.166,
+          -0.163,
           1.0
         ]
       ],
@@ -2112,9 +2135,9 @@
           0.444,
           0.474,
           0.632,
-          0.274,
-          0.346,
-          -0.278,
+          0.276,
+          0.347,
+          -0.276,
           0.573
         ],
         [
@@ -2128,9 +2151,9 @@
           0.506,
           0.624,
           0.666,
-          0.266,
-          0.359,
-          -0.184,
+          0.269,
+          0.36,
+          -0.182,
           0.433
         ],
         [
@@ -2144,9 +2167,9 @@
           0.612,
           0.55,
           0.76,
-          0.424,
+          0.426,
           0.515,
-          -0.296,
+          -0.294,
           0.545
         ],
         [
@@ -2162,7 +2185,7 @@
           0.758,
           0.367,
           0.348,
-          -0.032,
+          -0.031,
           0.543
         ],
         [
@@ -2176,9 +2199,9 @@
           0.516,
           0.604,
           0.817,
-          0.308,
-          0.396,
-          -0.25,
+          0.311,
+          0.397,
+          -0.247,
           0.595
         ],
         [
@@ -2192,9 +2215,9 @@
           0.446,
           0.541,
           0.849,
-          0.286,
+          0.288,
           0.345,
-          -0.28,
+          -0.278,
           0.691
         ],
         [
@@ -2208,9 +2231,9 @@
           0.571,
           0.524,
           0.896,
-          0.453,
+          0.455,
           0.609,
-          -0.175,
+          -0.173,
           0.588
         ],
         [
@@ -2224,9 +2247,9 @@
           1.0,
           0.264,
           0.572,
-          0.601,
+          0.602,
           0.605,
-          -0.172,
+          -0.17,
           0.355
         ],
         [
@@ -2240,9 +2263,9 @@
           0.264,
           1.0,
           0.392,
-          -0.207,
-          -0.08,
-          0.206,
+          -0.204,
+          -0.079,
+          0.208,
           0.094
         ],
         [
@@ -2256,58 +2279,58 @@
           0.572,
           0.392,
           1.0,
-          0.54,
-          0.543,
-          -0.178,
+          0.542,
+          0.544,
+          -0.176,
           0.606
         ],
         [
-          0.274,
-          0.266,
-          0.424,
+          0.276,
+          0.269,
+          0.426,
           0.367,
-          0.308,
-          0.286,
-          0.453,
-          0.601,
-          -0.207,
-          0.54,
+          0.311,
+          0.288,
+          0.455,
+          0.602,
+          -0.204,
+          0.542,
           1.0,
-          0.889,
-          0.022,
-          0.398
+          0.89,
+          0.023,
+          0.399
         ],
         [
-          0.346,
-          0.359,
+          0.347,
+          0.36,
           0.515,
           0.348,
-          0.396,
+          0.397,
           0.345,
           0.609,
           0.605,
-          -0.08,
-          0.543,
-          0.889,
+          -0.079,
+          0.544,
+          0.89,
           1.0,
-          -0.047,
+          -0.046,
           0.528
         ],
         [
+          -0.276,
+          -0.182,
+          -0.294,
+          -0.031,
+          -0.247,
           -0.278,
-          -0.184,
-          -0.296,
-          -0.032,
-          -0.25,
-          -0.28,
-          -0.175,
-          -0.172,
-          0.206,
-          -0.178,
-          0.022,
-          -0.047,
+          -0.173,
+          -0.17,
+          0.208,
+          -0.176,
+          0.023,
+          -0.046,
           1.0,
-          -0.365
+          -0.364
         ],
         [
           0.573,
@@ -2320,9 +2343,9 @@
           0.355,
           0.094,
           0.606,
-          0.398,
+          0.399,
           0.528,
-          -0.365,
+          -0.364,
           1.0
         ]
       ],
@@ -2357,9 +2380,9 @@
           0.583,
           0.616,
           0.374,
-          0.485,
+          0.486,
           0.479,
-          -0.34,
+          -0.339,
           0.576
         ],
         [
@@ -2373,9 +2396,9 @@
           0.602,
           0.699,
           0.419,
-          0.411,
+          0.412,
           0.403,
-          -0.312,
+          -0.311,
           0.49
         ],
         [
@@ -2389,9 +2412,9 @@
           0.659,
           0.658,
           0.46,
-          0.446,
+          0.447,
           0.503,
-          -0.396,
+          -0.395,
           0.586
         ],
         [
@@ -2407,7 +2430,7 @@
           0.606,
           0.525,
           0.46,
-          -0.278,
+          -0.277,
           0.561
         ],
         [
@@ -2421,9 +2444,9 @@
           0.626,
           0.677,
           0.519,
-          0.414,
+          0.415,
           0.432,
-          -0.364,
+          -0.363,
           0.508
         ],
         [
@@ -2437,7 +2460,7 @@
           0.573,
           0.669,
           0.572,
-          0.413,
+          0.414,
           0.395,
           -0.354,
           0.649
@@ -2453,9 +2476,9 @@
           0.662,
           0.668,
           0.565,
-          0.529,
+          0.53,
           0.521,
-          -0.302,
+          -0.301,
           0.61
         ],
         [
@@ -2469,9 +2492,9 @@
           1.0,
           0.459,
           0.461,
-          0.52,
+          0.521,
           0.522,
-          -0.295,
+          -0.294,
           0.38
         ],
         [
@@ -2485,9 +2508,9 @@
           0.459,
           1.0,
           0.366,
-          0.106,
+          0.107,
           0.141,
-          -0.143,
+          -0.142,
           0.318
         ],
         [
@@ -2501,25 +2524,25 @@
           0.461,
           0.366,
           1.0,
-          0.235,
+          0.236,
           0.282,
-          -0.132,
+          -0.131,
           0.196
         ],
         [
-          0.485,
-          0.411,
-          0.446,
+          0.486,
+          0.412,
+          0.447,
           0.525,
+          0.415,
           0.414,
-          0.413,
-          0.529,
-          0.52,
-          0.106,
-          0.235,
+          0.53,
+          0.521,
+          0.107,
+          0.236,
           1.0,
           0.852,
-          -0.176,
+          -0.175,
           0.501
         ],
         [
@@ -2535,22 +2558,22 @@
           0.282,
           0.852,
           1.0,
-          -0.254,
+          -0.253,
           0.535
         ],
         [
-          -0.34,
-          -0.312,
-          -0.396,
-          -0.278,
-          -0.364,
+          -0.339,
+          -0.311,
+          -0.395,
+          -0.277,
+          -0.363,
           -0.354,
-          -0.302,
-          -0.295,
-          -0.143,
-          -0.132,
-          -0.176,
-          -0.254,
+          -0.301,
+          -0.294,
+          -0.142,
+          -0.131,
+          -0.175,
+          -0.253,
           1.0,
           -0.453
         ],
@@ -2618,9 +2641,9 @@
           0.655,
           0.759,
           0.466,
-          0.495,
+          0.496,
           0.403,
-          -0.119,
+          -0.118,
           0.25
         ],
         [
@@ -2634,7 +2657,7 @@
           0.696,
           0.732,
           0.519,
-          0.456,
+          0.457,
           0.449,
           -0.206,
           0.345
@@ -2698,7 +2721,7 @@
           0.703,
           0.694,
           0.634,
-          0.432,
+          0.433,
           0.408,
           -0.111,
           0.351
@@ -2714,7 +2737,7 @@
           1.0,
           0.572,
           0.577,
-          0.47,
+          0.471,
           0.508,
           -0.17,
           0.296
@@ -2732,7 +2755,7 @@
           0.47,
           0.284,
           0.239,
-          -0.04,
+          -0.039,
           0.211
         ],
         [
@@ -2746,25 +2769,25 @@
           0.577,
           0.47,
           1.0,
-          0.226,
+          0.227,
           0.312,
-          -0.061,
+          -0.06,
           0.206
         ],
         [
           0.535,
-          0.495,
-          0.456,
+          0.496,
+          0.457,
           0.478,
           0.402,
           0.427,
-          0.432,
-          0.47,
+          0.433,
+          0.471,
           0.284,
-          0.226,
+          0.227,
           1.0,
           0.85,
-          -0.2,
+          -0.199,
           0.412
         ],
         [
@@ -2780,22 +2803,22 @@
           0.312,
           0.85,
           1.0,
-          -0.218,
+          -0.217,
           0.431
         ],
         [
           -0.172,
-          -0.119,
+          -0.118,
           -0.206,
           -0.154,
           -0.097,
           -0.14,
           -0.111,
           -0.17,
-          -0.04,
-          -0.061,
-          -0.2,
-          -0.218,
+          -0.039,
+          -0.06,
+          -0.199,
+          -0.217,
           1.0,
           -0.569
         ],
@@ -2820,7 +2843,7 @@
     }
   },
   "market_predictions": {
-    "generated_at": "2026-10-08T00:16:33.659273+00:00",
+    "generated_at": "2026-10-08T00:21:36.961887+00:00",
     "current": {
       "BTC": {
         "direction": "NEUTRAL",
@@ -2828,13 +2851,13 @@
         "up_pct": 50,
         "down_pct": 50,
         "interval": "5m",
-        "market_question": "Bitcoin Up or Down - October 7, 8:15PM-8:20PM ET",
-        "slug": "btc-updown-5m-1791418500",
+        "market_question": "Bitcoin Up or Down - October 7, 8:20PM-8:25PM ET",
+        "slug": "btc-updown-5m-1791418800",
         "source": "slug",
-        "price_at_snapshot": 83291.08,
-        "snapshot_time": "2026-10-08T00:16:33.170161+00:00",
+        "price_at_snapshot": 83336.0,
+        "snapshot_time": "2026-10-08T00:21:36.342980+00:00",
         "active": false,
-        "live_price": 83291.08,
+        "live_price": 83336.0,
         "live_change_pct": 0.0
       },
       "ETH": {
@@ -2843,13 +2866,13 @@
         "up_pct": 50,
         "down_pct": 50,
         "interval": "5m",
-        "market_question": "Ethereum Up or Down - October 7, 8:15PM-8:20PM ET",
-        "slug": "eth-updown-5m-1791418500",
+        "market_question": "Ethereum Up or Down - October 7, 8:20PM-8:25PM ET",
+        "slug": "eth-updown-5m-1791418800",
         "source": "slug",
-        "price_at_snapshot": 2572.63,
-        "snapshot_time": "2026-10-08T00:16:33.659200+00:00",
+        "price_at_snapshot": 2574.52,
+        "snapshot_time": "2026-10-08T00:21:36.961767+00:00",
         "active": false,
-        "live_price": 2572.63,
+        "live_price": 2574.52,
         "live_change_pct": 0.0
       }
     },
@@ -3276,5 +3299,5 @@
     "macro.stooq.BTC-USD: ValueError: stooq btcusd: 0 wierszy",
     "macro.BTC-USD: HTTPError: HTTP Error 429: Too Many Requests"
   ],
-  "conclusion": "Regime TRENDING_DOWN. Long risk 0.0% · Short risk 3.1% capital. Top pick: SUI score 48 (SELL)."
+  "conclusion": "Regime TRENDING_DOWN. Long risk 0.0% · Short risk 3.2% capital. Top pick: SUI score 48 (SELL)."
 }
