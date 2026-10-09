@@ -53,11 +53,21 @@ def _sanitize_nan(obj):
     return obj
 FUSION_DIR = Path.home() / "Claude" / "TVCFusion"
 
+# ═══════════════════════════════════════════════════════════════════════════
+# KOSZYK — jedno źródło prawdy dla całego pliku (v4.0, 2026-10-09)
+# Weryfikacja pokrycia: probe_universe.py — wszystkie poniższe mają komplet
+# trzech warstw (Hyperliquid perp, Binance futures, Binance spot).
+# Etap 2 (po 2 tyg. obserwacji): ETC, ARB, OP, SEI, TIA, ATOM, INJ, AAVE, UNI, LDO
+# Odrzucone — brak perpa na Binance (brak fundingu/OI/likwidacji): TON, MKR, PEPE, BONK
+# ═══════════════════════════════════════════════════════════════════════════
+TICKERS = [
+    "BTC", "ETH", "SOL", "XRP", "SUI",
+    "DOGE", "ADA", "AVAX", "LINK", "DOT",
+    "LTC", "BCH", "TRX", "NEAR", "APT",
+]
+
 # Ticker → Binance symbol
-BINANCE = {
-    "BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT",
-    "XRP": "XRPUSDT", "SUI": "SUIUSDT",
-}
+BINANCE = {t: f"{t}USDT" for t in TICKERS}
 # v3.4 — ad-hoc mode (--tickers LINK,ONDO): lista tokenów do oceny zamiast stałej
 # piątki. Pusta = normalny tryb produkcyjny. Ustawiane w __main__.
 ADHOC_TICKERS = []
@@ -941,8 +951,8 @@ def compute_size(score, regime, ticker):
         return 0
 
     multiplier *= weekend_mult
-    # SUI/small altcoins → cap
-    if ticker in ("SUI", "XRP"):
+    # alty (wszystko poza BTC/ETH) → cap na wielkość pozycji
+    if ticker not in ("BTC", "ETH"):
         return round(min(1.0, base * multiplier), 2)
     return round(min(2.5, base * multiplier), 2)
 
@@ -1064,7 +1074,7 @@ EXTENDED_CHG24_PCT = 4.0    # |24h| > 4% → pogoń
 MIN_RR = 1.5                # R:R do najbliższego oporu poniżej tego = skip
 MAX_SL_PCT = 6.0            # SL pod strukturą dalej niż 6% = struktura za daleko, skip
 MIN_SL_PCT = 1.2            # SL nie bliżej niż 1.2% (szum 1h)
-WEEKEND_SKIP_TICKERS = ("SOL", "XRP", "SUI")   # alty: brak nowych wejść sob/niedz (płynność)
+WEEKEND_SKIP_TICKERS = tuple(t for t in TICKERS if t not in ("BTC", "ETH"))  # alty: brak nowych wejść sob/niedz (płynność)
 LEVEL_CLUSTER_PCT = 0.5     # poziomy bliżej niż 0.5% sklejamy w jeden (touches++)
 
 
@@ -1279,7 +1289,7 @@ HL_INFO = "https://api.hyperliquid.xyz/info"
 HL_LEADERBOARD = "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard"
 LAYERS_CACHE = FUSION_DIR / "layers_cache.json"
 SM_REFRESH_MIN = 30
-SM_TICKERS = ["BTC", "ETH", "SOL", "XRP", "SUI"]
+SM_TICKERS = list(TICKERS)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # OpenMarket API — cross-exchange derivatives data (funding, OI, liquidations)
@@ -1289,9 +1299,16 @@ SM_TICKERS = ["BTC", "ETH", "SOL", "XRP", "SUI"]
 OM_BASE = "https://api.openmarket.xyz/v1"
 OM_KEY = os.environ.get("OPENMARKET_API_KEY", "")
 OM_CACHE_FILE = FUSION_DIR / "om_cache.json"
-OM_CACHE_MIN = 20  # minuty — max 3 fetche/h × 15w = 45w/h → 1080w/24h, z hard-stopem@950
+OM_CACHE_MIN = 30  # v4.0: 20→30. Przy 20 min było 1080w/24h, czyli PONAD limit 1000 —
+                   # hard-stop @950 wycinał OM pod koniec doby. 30 min × 5 coinów × 3 typy
+                   # = 15w/run × 2 runs/h × 24h = 720w/24h, z zapasem na retry.
 # Mapowanie SM_TICKERS → OpenMarket coin names
-OM_COINS = {"BTC": "BTC", "ETH": "ETH", "SOL": "SOL", "XRP": "XRP", "SUI": "SUI"}
+# v4.0: OM celowo TYLKO dla rdzenia, nie dla całego koszyka. Free tier = 1000 weight/dobę,
+# a każdy coin kosztuje 3 weight na fetch. 15 coinów = 3240w/dobę = warstwa pada po 2h.
+# OM jest źródłem pomocniczym (funding/OI/likwidacje mamy też z innych źródeł),
+# więc pozostałe 10 tokenów po prostu nie korzysta z tej warstwy.
+OM_CORE = ["BTC", "ETH", "SOL", "XRP", "SUI"]
+OM_COINS = {t: t for t in OM_CORE}
 # Giełda priorytetowa dla Free tier (brak multi-exchange aggregation)
 OM_EXCHANGE = "BINANCE_FUTURES"
 
@@ -1963,7 +1980,7 @@ def generate_fusion():
         FETCH_ERRORS.append(f"layers.inputs: {type(e).__name__}: {e}"); layer_inputs = {}
 
     decisions = []
-    for ticker in (ADHOC_TICKERS or ["BTC", "ETH", "SOL", "XRP", "SUI"]):
+    for ticker in (ADHOC_TICKERS or TICKERS):
         if ticker not in prices:
             print(f"[adhoc] {ticker}: no Binance price (pair {BINANCE.get(ticker)} missing?) — skipped")
             continue

@@ -185,6 +185,15 @@ SHORT_SIZE_CAP_PCT = 5.0    # v2.1: fallback (was 0.5% — zbyt mały na realny 
 # Zachowane: trailing SL, reopen cooldown, daily limit, Telegram, equity.
 # ═══════════════════════════════════════════════════════════════════════════
 MIN_LONG_SCORE = 58            # Reguła #1: bazowy minimalny score dla LONG
+# KANDYDAT DO ZMIANY (nie wdrożony 09.10.2026 — jedna zmienna na raz, patrz niżej):
+#   Audyt 54 czystych trade'ów (bez flip_choch i sl_rescan_bug), 09.10.2026:
+#     <58: 7% WR, -119$ | 58-62: 38% WR, +5$ | 62-65: 38% WR, -7$
+#     65-68: 56% WR, +27$ | 68+: 64% WR, +127$
+#   Cały dodatni wynik pochodzi z pasma >=65. Propozycja: MIN_LONG_SCORE 58→65,
+#   TRENDING_UP 62→65, RANGING 68→72.
+#   Wstrzymane, bo 09.10 rozszerzyliśmy koszyk z 5 do 15 tokenów — najpierw trzeba
+#   zobaczyć efekt samego koszyka, inaczej nie da się przypisać zmiany wyniku.
+#   Wrócić do tego po ~2 tygodniach obserwacji (ok. 23.10.2026).
 MAX_SHORT_SCORE = 42           # Reguła #1: bazowy SHORT gdy score jest bearish
 MIN_RR_AT_ENTRY = 1.0          # Reguła #1b: min R:R w momencie wejścia (ochrona przed stale TP)
 REOPEN_COOLDOWN_MINUTES = 90   # anty-overtrading: po zamknięciu tickera 90min przerwy
