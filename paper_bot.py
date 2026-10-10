@@ -113,6 +113,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import tvc_params as _params   # v4.1: strojone progi spoza repozytorium (GitHub Secrets)
+
 
 def _sanitize_nan(obj):
     """Recursively replace NaN/Inf floats with None — json.dumps allows NaN by default
@@ -141,24 +143,19 @@ EXCHANGE_ID = os.environ.get("TVC_EXCHANGE", "bybit")
 
 # v0.8 — TIERED SIZING by fusion score (higher conviction = bigger position)
 # Replaces flat 3% cap. Shorts stay conservative (unlimited upside risk).
-TIERED_LONG_SIZES = {        # (min_score, max_score): size_pct
-    # v3.3: dolny tier 62-67 = pół probe (dane 25.09: 63-65 → +1.9, +1.9, +0.1, +0.1, -1.2)
-    (62, 68): 4.0,           # low tier — mała pozycja, zbieramy dane
-    (68, 72): 6.0,           # probe — minimum viable position
-    (72, 76): 12.0,          # moderate conviction
-    (76, 85): 25.0,          # high conviction
-    (85, 101): 40.0,         # very high conviction (v3.0: 80→40, cap na rozsądnym poziomie)
-}
+# v4.1: wartości produkcyjne w sekrecie TVC_PARAMS (patrz tvc_params.py).
+# Poniższe liczby to zachowawcze wartości zastępcze — NIE są strojone.
+TIERED_LONG_SIZES = _params.ranges("TIERED_LONG_SIZES", {
+    (70, 80): 5.0,
+    (80, 101): 10.0,
+})
 
-# v2.1 — TIERED SHORT SIZING: symetryczny do LONG, ale mniejszy (unlimited upside risk).
 # Score jest "odwrócony": niższy score = silniejszy sygnał short.
-TIERED_SHORT_SIZES = {       # (min_score, max_score): size_pct
-    (45, 56): 5.0,           # mild bearish (only in TRENDING_DOWN/CRASH regimes)
-    (35, 45): 8.0,           # moderate bearish
-    (25, 35): 15.0,          # strong bearish
-    (0, 25):  20.0,          # very strong bearish — highest conviction short
-}
-SHORT_SIZE_CAP_PCT = 5.0    # v2.1: fallback (was 0.5% — zbyt mały na realny trade)
+TIERED_SHORT_SIZES = _params.ranges("TIERED_SHORT_SIZES", {
+    (20, 40): 5.0,
+    (0, 20): 8.0,
+})
+SHORT_SIZE_CAP_PCT = _params.get("SHORT_SIZE_CAP_PCT", 5.0)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # v0.5 — SIMPLIFIED 5-RULE SYSTEM (Tushar Chande: <10 rules)
@@ -184,7 +181,7 @@ SHORT_SIZE_CAP_PCT = 5.0    # v2.1: fallback (was 0.5% — zbyt mały na realny 
 # dla shortów, MIN_HOLD flip protection.
 # Zachowane: trailing SL, reopen cooldown, daily limit, Telegram, equity.
 # ═══════════════════════════════════════════════════════════════════════════
-MIN_LONG_SCORE = 58            # Reguła #1: bazowy minimalny score dla LONG
+MIN_LONG_SCORE = _params.get("MIN_LONG_SCORE", 70)   # v4.1: produkcyjny próg w TVC_PARAMS
 # KANDYDAT DO ZMIANY (nie wdrożony 09.10.2026 — jedna zmienna na raz, patrz niżej):
 #   Audyt 54 czystych trade'ów (bez flip_choch i sl_rescan_bug), 09.10.2026:
 #     <58: 7% WR, -119$ | 58-62: 38% WR, +5$ | 62-65: 38% WR, -7$
@@ -194,50 +191,50 @@ MIN_LONG_SCORE = 58            # Reguła #1: bazowy minimalny score dla LONG
 #   Wstrzymane, bo 09.10 rozszerzyliśmy koszyk z 5 do 15 tokenów — najpierw trzeba
 #   zobaczyć efekt samego koszyka, inaczej nie da się przypisać zmiany wyniku.
 #   Wrócić do tego po ~2 tygodniach obserwacji (ok. 23.10.2026).
-MAX_SHORT_SCORE = 42           # Reguła #1: bazowy SHORT gdy score jest bearish
-MIN_RR_AT_ENTRY = 1.0          # Reguła #1b: min R:R w momencie wejścia (ochrona przed stale TP)
-REOPEN_COOLDOWN_MINUTES = 90   # anty-overtrading: po zamknięciu tickera 90min przerwy
-MAX_NEW_TRADES_PER_DAY = 3     # v3.0: 5→3 (mniej trade'ów, wyższa jakość)
+MAX_SHORT_SCORE = _params.get("MAX_SHORT_SCORE", 30)
+MIN_RR_AT_ENTRY = _params.get("MIN_RR_AT_ENTRY", 1.5)
+REOPEN_COOLDOWN_MINUTES = _params.get("REOPEN_COOLDOWN_MINUTES", 180)
+MAX_NEW_TRADES_PER_DAY = _params.get("MAX_NEW_TRADES_PER_DAY", 2)
 
 # v3.0 — Regime-aware score thresholds for LONG (data-driven):
 # Audyt 71 trade'ów: score<64=20%WR (katastrofa), score≥68=57%WR (+2.08% netto).
 # RANGING = pułapka: 43T, 14%WR, −44.54% PnL → wymaga ekstremalnej konwikcji.
 # TRENDING_DOWN/CRASH → BLOCKED (100 = impossible threshold).
-MIN_LONG_SCORE_BY_REGIME = {
-    "TRENDING_UP":            62,    # v3.3: 68→62 (score rzadko >65; tier 62-67 = pół pozycji)
-    "TRENDING_UP_VOLATILE":   62,    # v3.3: 68→62
-    "RANGING":                68,    # v3.3: 72→68 (RANGING nadal wymaga wysokiej konwikcji)
+MIN_LONG_SCORE_BY_REGIME = _params.mapping("MIN_LONG_SCORE_BY_REGIME", {
+    "TRENDING_UP":            75,
+    "TRENDING_UP_VOLATILE":   75,
+    "RANGING":                80,
     "TRENDING_DOWN":          100,   # BLOKADA longi w downtrend
-    "TRENDING_DOWN_VOLATILE": 100,   # BLOKADA longi w downtrend volatile
-    "CRASH":                  100,   # BLOKADA longi w crash
-}
+    "TRENDING_DOWN_VOLATILE": 100,
+    "CRASH":                  100,
+})
 
 # v3.0 — Regime-aware score thresholds for SHORT (data-driven):
 # Audyt: 0% WR na 19 shortach (wszystkie pre-v0.3). System nie ma ŻADNEGO
 # potwierdzonego edge'a na shortach. Shorty włączone tylko z ekstremalną
 # konwikcją w TRENDING_DOWN/CRASH. W uptrendzie: praktycznie wyłączone.
-MAX_SHORT_SCORE_BY_REGIME = {
-    "TRENDING_UP":            0,     # v3.2: BLOKADA — 0% WR na 26 shortach, zero edge'a
-    "TRENDING_UP_VOLATILE":   0,     # v3.2: BLOKADA
-    "RANGING":                0,     # v3.2: BLOKADA — 100% shortów w RANGING = SL hit
-    "TRENDING_DOWN":          45,    # v3.2: 52→45 (shorty TYLKO w potwierdz. downtrend, strict)
-    "TRENDING_DOWN_VOLATILE": 45,    # v3.2: 52→45
-    "CRASH":                  50,    # v3.2: 58→50 (crash = jedyny regime gdzie short ma sens)
-}
-MAX_HOLD_DAYS = 5              # v0.9 — auto-close zombie pozycji po 5 dniach
+MAX_SHORT_SCORE_BY_REGIME = _params.mapping("MAX_SHORT_SCORE_BY_REGIME", {
+    "TRENDING_UP":            0,     # BLOKADA
+    "TRENDING_UP_VOLATILE":   0,     # BLOKADA
+    "RANGING":                0,     # BLOKADA
+    "TRENDING_DOWN":          30,
+    "TRENDING_DOWN_VOLATILE": 30,
+    "CRASH":                  35,
+})
+MAX_HOLD_DAYS = _params.get("MAX_HOLD_DAYS", 5)
 
 # v0.9 — Fibonacci pullback threshold zależny od reżimu rynku.
 # W trendzie wzrostowym bot akceptuje wejścia bliżej szczytu 30d zakresu,
 # bo pullback do 50% może nie nadejść przez tygodnie. W konsolidacji
 # i downtrend — bardziej restrykcyjny (wymaga głębszego pullbacku).
-FIB_THRESHOLD_BY_REGIME = {
-    "TRENDING_UP":          0.90,
-    "TRENDING_UP_VOLATILE": 0.90,
-    "RANGING":              0.80,   # v1.0: 0.70→0.80 (mniej restrykcyjny w konsolidacji)
+FIB_THRESHOLD_BY_REGIME = _params.mapping("FIB_THRESHOLD_BY_REGIME", {
+    "TRENDING_UP":          0.70,
+    "TRENDING_UP_VOLATILE": 0.70,
+    "RANGING":              0.60,
     "TRENDING_DOWN":        0.50,
     "TRENDING_DOWN_VOLATILE": 0.50,
-}
-FIB_THRESHOLD_DEFAULT = 0.80  # v1.0: fallback 0.70→0.80
+})
+FIB_THRESHOLD_DEFAULT = _params.get("FIB_THRESHOLD_DEFAULT", 0.60)
 
 # ═══════════════════════════════════════════════════════════════════════════
 # v3.4 (2026-10-07) — SCALE-IN PARTIAL ENTRY
@@ -251,11 +248,11 @@ FIB_THRESHOLD_DEFAULT = 0.80  # v1.0: fallback 0.70→0.80
 #   Tag 'scale_in' do osobnego audytu.
 # ═══════════════════════════════════════════════════════════════════════════
 SCALE_IN_ENABLED = True
-SCALE_IN_SIZE_FACTOR = 0.30      # 30% normalnego rozmiaru pozycji
-SCALE_IN_MIN_LAYERS = 3          # wymagane: 3/3 layers agree
-SCALE_IN_LONG_MIN_SCORE = 60     # score ≥ 60 dla long scale-in
-SCALE_IN_SHORT_MAX_SCORE = 40    # score ≤ 40 dla short scale-in
-SCALE_IN_MIN_RR = 0.5            # obniżony R:R guard (z 1.0 na 0.5)
+SCALE_IN_SIZE_FACTOR = _params.get("SCALE_IN_SIZE_FACTOR", 0.25)
+SCALE_IN_MIN_LAYERS = _params.get("SCALE_IN_MIN_LAYERS", 3)
+SCALE_IN_LONG_MIN_SCORE = _params.get("SCALE_IN_LONG_MIN_SCORE", 70)
+SCALE_IN_SHORT_MAX_SCORE = _params.get("SCALE_IN_SHORT_MAX_SCORE", 30)
+SCALE_IN_MIN_RR = _params.get("SCALE_IN_MIN_RR", 1.0)
 
 # STATYSTYKI — liczone od wdrożenia bramek v0.3 (trade'y v0.2 = archiwum).
 STATS_SINCE = "2026-09-22T00:00:00"  # v1.0 — czysty start (stare trade'y = archiwum)
@@ -1182,6 +1179,10 @@ def _check_scale_in_eligible(dec: dict, direction: str, score: int) -> tuple[boo
 
 
 def cmd_open(args):
+    # v4.1 — bez sekretu TVC_PARAMS progi są zastępcze, nie strojone.
+    # Lepiej nie otworzyć nic niż otworzyć na przypadkowych progach.
+    if not _params.require_loaded("otwierać pozycji"):
+        return
     db_init()
     path, fmt = find_fusion_input()
     data = extract_fusion_json(path, fmt)
@@ -1504,10 +1505,10 @@ def _fetch_ohlc_since(ex, ticker: str, since_iso: str, timeframe: str = "5m"):
 # BREAKEVEN_TRIGGER: profit % kiedy SL auto-move to breakeven+
 # TRAILING_TRIGGER: profit % kiedy zaczynamy trailing SL
 # TRAILING_DISTANCE: SL follows current price at this distance %
-BREAKEVEN_TRIGGER = 3.0   # v3.1: 1.5→3.0% (dane: +1.5% to normalny noise w crypto)
-TRAILING_TRIGGER = 5.0    # v3.1: 3.0→5.0% (start trailing dopiero po solidnym ruchu)
-TRAILING_DISTANCE = 4.0   # v3.1: 2.5→4.0% (crypto robi 3-5% swing regularnie)
-BREAKEVEN_OFFSET = 1.003  # v3.1: entry × 1.003 = +0.3% (was ×1.001 = +0.1%, zbyt wrażliwe)
+BREAKEVEN_TRIGGER = _params.get("BREAKEVEN_TRIGGER", 2.0)
+TRAILING_TRIGGER = _params.get("TRAILING_TRIGGER", 4.0)
+TRAILING_DISTANCE = _params.get("TRAILING_DISTANCE", 3.0)
+BREAKEVEN_OFFSET = _params.get("BREAKEVEN_OFFSET", 1.002)
 
 
 def _now_ms() -> int:
@@ -2817,8 +2818,8 @@ def _fetch_atr14_1h(ticker: str) -> float:
     return sum(trs) / len(trs) if trs else 0.0
 
 
-ATR_SL_MULTIPLIER = 1.2        # v3.1: minimum SL distance = 1.2× ATR(14) na 1h (LONG)
-ATR_SL_MULTIPLIER_SHORT = 2.0  # v3.2: shorty potrzebują więcej przestrzeni (2× ATR)
+ATR_SL_MULTIPLIER = _params.get("ATR_SL_MULTIPLIER", 1.5)
+ATR_SL_MULTIPLIER_SHORT = _params.get("ATR_SL_MULTIPLIER_SHORT", 2.0)
 
 
 def _widen_sl_by_atr(ticker: str, entry_price: float, sl_price: float,

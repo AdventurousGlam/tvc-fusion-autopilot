@@ -28,6 +28,8 @@ import urllib.request as ur
 from datetime import datetime, timezone
 from pathlib import Path
 
+import tvc_params as _params   # v4.1: strojone wagi i progi spoza repozytorium
+
 try:
     import certifi
     SSL_CTX = ssl.create_default_context(cafile=certifi.where())
@@ -826,19 +828,19 @@ def compute_score(ticker, onchain_score, ta_score, fng):
     if fng:
         raw_fng = fng["current"]
         if raw_fng > 70:
-            sentiment_score = 50 + (raw_fng - 70) * 0.3   # greed → neutral-ish
+            sentiment_score = 50 + (raw_fng - 70) * FNG_GREED_COEF
         elif raw_fng < 30:
-            sentiment_score = 50 - (30 - raw_fng) * 0.6   # fear → moderate bearish
+            sentiment_score = 50 - (30 - raw_fng) * FNG_FEAR_COEF
         else:
             sentiment_score = raw_fng
     else:
         sentiment_score = 50
 
     total = (
-        onchain_score * 0.40
-        + ta_score * 0.40
-        + sentiment_score * 0.15
-        + news_score * 0.05
+        onchain_score * W_ONCHAIN
+        + ta_score * W_TA
+        + sentiment_score * W_SENTIMENT
+        + news_score * W_NEWS
     )
 
     # v1.0 — CONFLUENCE BONUS: gdy 2+ sub-scores zgadzają się (bullish > 58
@@ -1069,11 +1071,24 @@ def generate_catalyst_calendar():
 # opory, a entry_quality mówi botowi: ok (wejdź teraz) / wait (złóż wejście oczekujące
 # w strefie) / skip (nie ma sensu).
 # ═══════════════════════════════════════════════════════════════════════════
-EXTENDED_ATR_MULT = 1.0     # cena > EMA21(1h) + 1.0×ATR(1h) → rozciągnięta, czekaj na pullback
-EXTENDED_CHG24_PCT = 4.0    # |24h| > 4% → pogoń
-MIN_RR = 1.5                # R:R do najbliższego oporu poniżej tego = skip
-MAX_SL_PCT = 6.0            # SL pod strukturą dalej niż 6% = struktura za daleko, skip
-MIN_SL_PCT = 1.2            # SL nie bliżej niż 1.2% (szum 1h)
+# v4.1: wartości produkcyjne w sekrecie TVC_PARAMS. Poniżej zachowawcze zastępcze.
+# Wagi Fusion Score — muszą sumować się do 1.0.
+W_ONCHAIN = _params.get("W_ONCHAIN", 0.25)
+W_TA = _params.get("W_TA", 0.25)
+W_SENTIMENT = _params.get("W_SENTIMENT", 0.25)
+W_NEWS = _params.get("W_NEWS", 0.25)
+FNG_GREED_COEF = _params.get("FNG_GREED_COEF", 0.5)
+FNG_FEAR_COEF = _params.get("FNG_FEAR_COEF", 0.5)
+
+_w_sum = W_ONCHAIN + W_TA + W_SENTIMENT + W_NEWS
+if abs(_w_sum - 1.0) > 0.001:
+    print(f"[params] ⚠️  Wagi Fusion Score sumują się do {_w_sum:.3f}, nie 1.0 — sprawdź TVC_PARAMS")
+
+EXTENDED_ATR_MULT = _params.get("EXTENDED_ATR_MULT", 1.0)
+EXTENDED_CHG24_PCT = _params.get("EXTENDED_CHG24_PCT", 3.0)
+MIN_RR = _params.get("MIN_RR", 2.0)
+MAX_SL_PCT = _params.get("MAX_SL_PCT", 5.0)
+MIN_SL_PCT = _params.get("MIN_SL_PCT", 1.5)
 WEEKEND_SKIP_TICKERS = tuple(t for t in TICKERS if t not in ("BTC", "ETH"))  # alty: brak nowych wejść sob/niedz (płynność)
 LEVEL_CLUSTER_PCT = 0.5     # poziomy bliżej niż 0.5% sklejamy w jeden (touches++)
 
