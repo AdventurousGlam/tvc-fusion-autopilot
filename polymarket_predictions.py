@@ -42,6 +42,10 @@ OUT_FILE = FUSION_DIR / "market_predictions.json"
 # Confidence threshold
 CONFIDENCE_THRESHOLD = 55  # lowered from 65 — UP/DOWN markets are often close to 50/50
 
+# v2.1 (12.10.2026) — rozstrzyganie prognoz
+MIN_DEAD_ZONE_PCT = 0.15     # podłoga martwej strefy w %, gdy rynek stoi
+MIN_RESOLVED_FOR_STATS = 30  # poniżej tylu rozstrzygnięć nie pokazujemy skuteczności
+
 # Assets to track
 ASSETS = ["BTC", "ETH"]
 ASSET_SLUGS = {"BTC": "btc", "ETH": "eth"}
@@ -279,6 +283,55 @@ def _keyword_search_fallback(asset):
     return None
 
 
+def get_klines_closes(asset, interval="5m", limit=200):
+    """Zamknięcia świec z Binance — do policzenia zmienności okna rozstrzygnięcia."""
+    symbol = BINANCE_SYMBOLS.get(asset)
+    if not symbol:
+        return []
+    try:
+        url = (f"https://data-api.binance.vision/api/v3/klines"
+               f"?symbol={symbol}&interval={interval}&limit={limit}")
+        return [float(k[4]) for k in _get_json(url, timeout=12, retries=2)]
+    except Exception as e:
+        print(f"[binance] klines {asset} {interval}: {e}")
+        return []
+
+
+# Okno rozstrzygnięcia na interwał rynku Polymarketu: (interwał świecy, ile świec = horyzont)
+_HORIZON_BARS = {
+    "5m":  ("1m", 5),
+    "15m": ("1m", 15),
+    "1h":  ("5m", 12),
+    "4h":  ("15m", 16),
+    "1d":  ("1h", 24),
+}
+
+
+def dead_zone_pct(asset, interval):
+    """
+    Martwa strefa: ile cena MUSI się ruszyć, żeby prognoza w ogóle podlegała ocenie.
+
+    Powód przebudowy (12.10.2026): rozstrzyganie było gołym `price_end > price_start`,
+    więc ruch +0,004% liczył się jako trafiony UP. Panel pokazywał 31% skuteczności
+    na trzynastu próbkach rozstrzygniętych szumem — mierzył wyłącznie zaokrąglenie.
+
+    Strefa = 0,5 × typowy ruch 1σ w oknie horyzontu, policzony z ostatnich świec.
+    Podłoga MIN_DEAD_ZONE_PCT chroni przed sytuacją, gdy rynek stoi i sigma → 0.
+    """
+    bar, n = _HORIZON_BARS.get(interval, ("1h", 24))
+    closes = get_klines_closes(asset, bar, limit=max(60, n * 6))
+    if len(closes) < 20:
+        return MIN_DEAD_ZONE_PCT
+    rets = [(closes[i] / closes[i - 1] - 1) for i in range(1, len(closes)) if closes[i - 1]]
+    if len(rets) < 10:
+        return MIN_DEAD_ZONE_PCT
+    mean = sum(rets) / len(rets)
+    var = sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)
+    sigma_bar = var ** 0.5
+    sigma_horizon_pct = sigma_bar * (n ** 0.5) * 100      # skalowanie pierwiastkiem czasu
+    return max(MIN_DEAD_ZONE_PCT, round(0.5 * sigma_horizon_pct, 3))
+
+
 def get_binance_price(asset):
     """Fetch current price from Binance."""
     symbol = BINANCE_SYMBOLS.get(asset)
@@ -343,26 +396,27 @@ def check_outcomes(state):
             continue
 
         direction = entry.get("direction", "NEUTRAL")
-        if direction == "UP":
-            actual_correct = price_end > price_start
-        elif direction == "DOWN":
-            actual_correct = price_end < price_start
-        else:
-            actual_correct = None
+        price_change = ((price_end - price_start) / price_start) * 100
+        dz = dead_zone_pct(asset, entry.get("interval", "1d"))
 
         entry["price_end"] = round(price_end, 2)
-        if actual_correct is None:
+        entry["price_change_pct"] = round(price_change, 2)
+        entry["dead_zone_pct"] = dz
+
+        if direction not in ("UP", "DOWN"):
             entry["outcome"] = "neutral"
-        elif actual_correct:
+        elif abs(price_change) < dz:
+            # Ruch mniejszy niż szum okna — prognoza nie podlega ocenie.
+            # NIE liczy się ani jako trafiona, ani jako chybiona.
+            entry["outcome"] = "flat"
+        elif (direction == "UP" and price_change > 0) or (direction == "DOWN" and price_change < 0):
             entry["outcome"] = "correct"
         else:
             entry["outcome"] = "wrong"
 
-        price_change = ((price_end - price_start) / price_start) * 100
-        entry["price_change_pct"] = round(price_change, 2)
         updated += 1
         print(f"[outcome] {entry.get('date','')} {asset} {direction} → "
-              f"{entry['outcome']} ({price_change:+.2f}%)")
+              f"{entry['outcome']} ({price_change:+.2f}% vs martwa strefa ±{dz:.2f}%)")
 
     if updated:
         print(f"[outcome] Resolved {updated} pending predictions")
@@ -393,12 +447,25 @@ def compute_stats(log):
                 "total": len(asset_resolved),
             }
 
+    # v2.1: dopóki nie ma MIN_RESOLVED_FOR_STATS rozstrzygnięć, nie podajemy procentu.
+    # Panel pokazywał "31% skuteczności" z trzynastu próbek rozstrzygniętych szumem —
+    # liczba wyglądała na wynik, a była przypadkiem.
+    flat = [e for e in log if e.get("outcome") == "flat"]
+    pending = [e for e in log if e.get("outcome") == "pending"]
+    enough = len(resolved) >= MIN_RESOLVED_FOR_STATS
+
     return {
-        "overall_accuracy": overall_acc,
-        "confident_accuracy": confident_acc,
+        "overall_accuracy": overall_acc if enough else None,
+        "confident_accuracy": confident_acc if enough else None,
         "total_predictions": len(resolved),
         "confident_predictions": len(confident),
-        "per_asset": per_asset,
+        "per_asset": per_asset if enough else {},
+        # v2.1 — jawnie, żeby panel mógł powiedzieć prawdę zamiast rysować procent
+        "stats_ready": enough,
+        "min_sample": MIN_RESOLVED_FOR_STATS,
+        "flat_count": len(flat),          # ruch w granicach szumu — nieoceniane
+        "pending_count": len(pending),
+        "baseline_note": "Punktem odniesienia jest 50% — rzut monetą. Poniżej tego prognozy szkodzą.",
     }
 
 

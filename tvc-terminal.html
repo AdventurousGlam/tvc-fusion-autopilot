@@ -1379,6 +1379,9 @@ const I18N = {
   me_desc:            { pl: '<strong>ETF</strong> = dzienne przepływy netto spot ETF (Farside, mln USD, sesje giełdowe) — to jest realny popyt instytucjonalny, nie narracja; ten sam strumień zasila sub-score On-Chain BTC/ETH w fusion. <strong>Makro</strong> = korelacja 30 sesji dziennych zwrotów BTC z Nasdaq, S&P, dolarem, 10-latkami i złotem: > +0.5 z NQ = crypto handluje jak beta na ryzyko i stopy rządzą; < −0.4 z DXY = dolar rządzi.', en: '<strong>ETF</strong> = daily net flows of spot ETFs (Farside, USD mln, trading sessions) — real institutional demand, not narrative; the same feed drives the BTC/ETH On-Chain sub-score in fusion. <strong>Macro</strong> = 30-session correlation of BTC daily returns with Nasdaq, S&P, dollar, 10Y and gold: > +0.5 with NQ = crypto trades as risk beta and rates rule; < −0.4 with DXY = dollar rules.' },
   me_no_data:         { pl: 'brak danych (Farside niedostępny)',           en: 'no data (Farside unavailable)' },
   me_browser:         { pl: 'z przeglądarki',                              en: 'from browser' },
+  me_unavail_tag:     { pl: 'źródło niedostępne',                          en: 'source unavailable' },
+  me_unavail_body:    { pl: 'Przepływy ETF i dane makro pochodzą z Farside i rynków tradycyjnych.<br>Oba źródła odrzuciły ostatnie zapytanie — panel wróci przy najbliższym udanym cyklu.<br>Pozostałe panele działają na własnych danych i nie są tym dotknięte.',
+                        en: 'ETF flows and macro come from Farside and traditional markets.<br>Both sources refused the last request — this panel returns on the next successful cycle.<br>Other panels run on their own data and are unaffected.' },
   me_note_mixed:      { pl: 'Korelacje umiarkowane — makro to tło, nie sterownik', en: 'Moderate correlations — macro is backdrop, not driver' },
   me_note_risk:       { pl: 'BTC handluje jak beta na ryzyko — makro i stopy rządzą kierunkiem', en: 'BTC trades as risk beta — macro and rates drive direction' },
   me_note_dollar:     { pl: 'Dolar rządzi — patrz na DXY przed wejściem',   en: 'Dollar rules — check DXY before entry' },
@@ -1681,6 +1684,12 @@ const I18N = {
   pred_total:         { pl: 'Łącznie predykcji',                    en: 'Total predictions' },
   pred_log_title:     { pl: 'Historia predykcji',                   en: 'Prediction history' },
   pred_no_data:       { pl: 'Brak danych predykcji — czekam na polymarket_predictions.py', en: 'No prediction data — waiting for polymarket_predictions.py' },
+  pred_collecting:    { pl: 'Skuteczność pojawi się po {min} rozstrzygnięciach — na razie jest ich {n}. Procent z mniejszej próby opisywałby przypadek, nie system.',
+                        en: 'Accuracy appears after {min} resolved calls — there are {n} so far. A percentage from a smaller sample would describe chance, not the system.' },
+  pred_flat_note:     { pl: '{n} prognoz rozstrzygniętych jako ruch w granicach szumu — nieoceniane.',
+                        en: '{n} calls landed inside the noise band — not scored either way.' },
+  pred_skipped:       { pl: '{n} rynków bez przewagi (50/50) — pominięte, to nie są prognozy.',
+                        en: '{n} markets with no edge (50/50) — skipped, those are not predictions.' },
 };
 
 function t(key) { return (I18N[key] && I18N[key][_lang]) || (I18N[key] && I18N[key].pl) || key; }
@@ -2015,9 +2024,14 @@ function renderPredictions() {
   const log = predData.log || [];
 
   // Cards for each asset
+  // v2.1 (12.10.2026): rynek bez przewagi (NEUTRAL / brak danych / stale) NIE jest
+  // prognozą i nie dostaje karty — wcześniej panel pokazywał "NEUTRAL UP: 50%",
+  // czyli brak sygnału podany klientowi jako odczyt systemu.
   let cards = '';
+  let skipped = 0;
   for (const [ticker, info] of Object.entries(current)) {
     const pct = info.pct || 50;
+    if (info.stale || (info.direction || '').toUpperCase() === 'NEUTRAL' || (pct > 35 && pct < 65)) { skipped++; continue; }
     const _rawDir = (info.direction || '').toLowerCase();
     const dir = _rawDir === 'up' ? 'up' : (_rawDir === 'down' ? 'down' : (pct >= 65 ? 'up' : (pct <= 35 ? 'down' : 'neutral')));
     const dirLabel = dir === 'up' ? t('pred_up') : (dir === 'down' ? t('pred_down') : t('pred_neutral'));
@@ -2037,16 +2051,20 @@ function renderPredictions() {
     </div>`;
   }
 
-  // Stats
-  const acc = stats.overall_accuracy ?? '—';
-  const conf = stats.confident_accuracy ?? '—';
-  const totalPred = stats.total_predictions ?? '—';
+  // Stats — v2.1: poniżej progu próby pokazujemy postęp zbierania, nie procent.
+  const ready = stats.stats_ready !== false;
+  const minN = stats.min_sample || 30;
+  const resolvedN = stats.total_predictions ?? 0;
+  const acc = ready ? (stats.overall_accuracy ?? '—') : `${resolvedN}/${minN}`;
+  const conf = ready ? (stats.confident_accuracy ?? '—') : '—';
+  const totalPred = resolvedN;
 
   // Log
   let logHtml = `<div class="pred-log-row header"><span>${_lang==='pl'?'Data':'Date'}</span><span>Ticker</span><span>${_lang==='pl'?'Predykcja':'Prediction'}</span><span>${_lang==='pl'?'Wynik':'Result'}</span><span>✓/✗</span></div>`;
   for (const entry of log.slice(0, 20)) {
     const _outcome = entry.outcome || (entry.correct === true ? 'correct' : entry.correct === false ? 'wrong' : 'pending');
-    const icon = _outcome === 'correct' ? '✅' : (_outcome === 'wrong' ? '❌' : '⏳');
+    // v2.1: "flat" = ruch mieszczący się w szumie okna → nieoceniane, znak "–" zamiast ❌
+    const icon = _outcome === 'correct' ? '✅' : (_outcome === 'wrong' ? '❌' : (_outcome === 'flat' ? '–' : '⏳'));
     const _dir = (entry.direction || '').toLowerCase();
     const dirTxt = _dir === 'up' ? '↑' : (_dir === 'down' ? '↓' : '—');
     const _ac = entry.price_change_pct ?? entry.actual_change ?? null;
@@ -2063,6 +2081,9 @@ function renderPredictions() {
       <div class="pred-stat"><div class="v" style="color:var(--green)">${typeof conf==='number'?conf+'%':conf}</div><div class="k">${t('pred_confident')}</div></div>
       <div class="pred-stat"><div class="v" style="color:var(--gold)">${totalPred}</div><div class="k">${t('pred_total')}</div></div>
     </div>
+    ${!ready ? `<div style="margin-top:8px;padding:8px 10px;background:var(--bg-elev-2);border-left:3px solid var(--amber);border-radius:4px;font-size:10px;color:var(--text-dim);line-height:1.5">${t('pred_collecting').replace('{n}', resolvedN).replace('{min}', minN)}</div>` : ''}
+    ${stats.flat_count ? `<div style="margin-top:6px;font-size:9px;color:var(--text-muted)">${t('pred_flat_note').replace('{n}', stats.flat_count)}</div>` : ''}
+    ${skipped ? `<div style="margin-top:6px;font-size:9px;color:var(--text-muted)">${t('pred_skipped').replace('{n}', skipped)}</div>` : ''}
     ${log.length ? `<div style="margin-top:10px"><div style="font-size:10px;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px">${t('pred_log_title')}</div><div class="pred-log">${logHtml}</div></div>` : ''}
   </section>`;
 }
@@ -3001,11 +3022,13 @@ function render() {
         <div class="panel-head"><h3>${t('signal_breakdown')}</h3><span class="meta">OC · TA · News · Sent</span></div>
         <div class="chart-container"><canvas id="breakdown-chart"></canvas></div>
       </section>
-      <div id="orderflow-slot" style="grid-column: span 12; width: 100%;"></div>
-      <div id="journal-slot" style="grid-column: span 12; width: 100%;"></div>
+      <!-- USUNIETE 12.10.2026: Orderflow Book, Decision Journal, Trader Checklist.
+           Powod: wszystkie trzy trzymaly stan w localStorage i zapisywaly sie tylko
+           wtedy, gdy karta terminala byla otwarta - ich win rate byl probka z momentow,
+           w ktorych ktos patrzyl, a nie z rynku. paper_bot + paper_trades.db robia
+           to samo serwerowo i bez przerwy. Funkcje render* zostaja w pliku, ale maja
+           na wejsciu strazy na brak slotu, wiec po usunieciu tych divow nic nie renderuja. -->
 
-      <!-- TRADER CHECKLIST — daily discipline checklist with GO/NO-GO -->
-      <div id="checklist-slot" style="grid-column: span 12; width: 100%;"></div>
 
       <!-- AI CREW — multi-agent status dashboard -->
     </main>
@@ -3499,6 +3522,7 @@ function saveJournal(entries) {
   catch (e) { console.warn('journal save failed', e); }
 }
 function addJournalEntry(entry) {
+  return;   // 12.10.2026: Journal usunięty — nie zaśmiecamy localStorage wpisami, których nikt nie zobaczy.
   const entries = loadJournal();
   const id = `${entry.ts}_${entry.ticker}_${entry.type}`;
   // Dedup — jeśli ten sam type na tym samym tickerze w ostatnich 60s → skip
@@ -4204,7 +4228,8 @@ const NAV_ITEMS = [
   'sep',
   ['sec-calendar', '📅', 'nav_calendar'], ['sec-news', '📰', 'nav_news'], ['sec-market-news', '🗞', 'nav_mnews'], ['cycle-slot', '🧭', 'nav_cycle'], ['correlation-slot', '🔗', 'nav_corr'], ['predictions-slot', '🔮', 'nav_pred'],
   'sep',
-  ['performance-slot', '🔬', 'nav_perf'], ['pnl-history-slot', '💹', 'nav_pnl'], ['orderflow-slot', '📓', 'nav_orderflow'], ['journal-slot', '📝', 'nav_journal'], ['watchlist-slot', '👀', 'nav_watchlist'], ['checklist-slot', '✅', 'nav_checklist'],];
+  ['performance-slot', '🔬', 'nav_perf'], ['pnl-history-slot', '💹', 'nav_pnl'], ['watchlist-slot', '👀', 'nav_watchlist'],];
+// 12.10.2026: z menu wypadły orderflow-slot, journal-slot i checklist-slot — patrz komentarz przy usuniętych divach.
 // ── Sidebar toggle helpers ──
 function toggleSidebarPin() {
   const sb = document.getElementById('sidebar');
@@ -5078,7 +5103,9 @@ function renderMacroEtf(data) {
   const etf = { btc: data.etf?.btc || etfBrowser.btc, eth: data.etf?.eth || etfBrowser.eth };
   if (!etf.btc && !etf.eth) etfBrowser.ts = 0;   // wymuś ponowną próbę przy następnym cyklu
   const mc = data.macro_context || macroBrowser.ctx;
-  if (!etf.btc && !etf.eth && !mc) return `<section class="panel"><div class="panel-head"><h3>🏛 ${t('me_title')}</h3><span class="meta">${t('loading')}…</span></div><div style="padding:16px;text-align:center;color:var(--text-dim);font-size:11px;font-style:italic">⏳ ${t('me_no_data')} — Farside/Yahoo ${t('me_browser')} fallback…</div></section>`;
+  // 12.10.2026: było "⏳ loading…" w nieskończoność, przez co padnięte źródło wyglądało
+  // na zepsuty terminal. Teraz panel mówi wprost, że danych nie ma i skąd miały przyjść.
+  if (!etf.btc && !etf.eth && !mc) return `<section class="panel" style="opacity:.75"><div class="panel-head"><h3>🏛 ${t('me_title')}</h3><span class="meta" style="color:var(--amber)">${t('me_unavail_tag')}</span></div><div style="padding:16px;text-align:center;color:var(--text-dim);font-size:11px;line-height:1.6">${t('me_unavail_body')}</div></section>`;
   const M = v => `${v >= 0 ? '+' : '−'}$${Math.abs(v) >= 1000 ? (Math.abs(v) / 1000).toFixed(2) + 'B' : Math.abs(v).toFixed(0) + 'M'}`;
   const col = v => v > 0 ? 'var(--green)' : v < 0 ? 'var(--red)' : 'var(--text-dim)';
   const bars = series => { if (!series || !series.length) return ''; const s = series.slice(-30); const mx = Math.max(...s.map(x => Math.abs(x.total))) || 1; return `<div style="display:flex;align-items:flex-end;gap:2px;height:44px;margin:6px 0 2px">${s.map(x => { const h = Math.max(2, Math.abs(x.total) / mx * 40); return `<div title="${x.date}: ${M(x.total)}" style="flex:1;display:flex;flex-direction:column;justify-content:${x.total >= 0 ? 'flex-end' : 'flex-start'};height:44px"><div style="height:${h}px;background:${x.total >= 0 ? 'var(--green)' : 'var(--red)'};opacity:${x === s[s.length - 1] ? 1 : 0.65};border-radius:1px"></div></div>`; }).join('')}</div>`; };

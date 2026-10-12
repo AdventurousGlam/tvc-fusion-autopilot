@@ -199,12 +199,36 @@ def _parse_farside_table(text, days=60):
     import re as _re
     from datetime import datetime as _dt
     rows = []
+    _DATE_RE = _re.compile(r"^\d{2} \w{3} \d{4}$")
     if "<tr" in text:
         lines = []
         for tr in _re.findall(r"<tr[^>]*>(.*?)</tr>", text, flags=_re.S):
             lines.append([_re.sub(r"<[^>]+>", "", c).strip() for c in _re.findall(r"<td[^>]*>(.*?)</td>", tr, flags=_re.S)])
-    else:
+    elif any(ln.strip().startswith("|") for ln in text.splitlines()):
         lines = [[c.strip() for c in ln.strip().strip("|").split("|")] for ln in text.splitlines() if ln.strip().startswith("|")]
+    else:
+        # Format r.jina.ai (zweryfikowany 12.10.2026): wiersz tabeli rozbity na osobne
+        # linie — "12 Oct 2026\t", potem każda wartość w swojej linii przedzielona "\t",
+        # wiersz kończy pusta linia. Ostatnia wartość przed pustą linią to kolumna Total.
+        lines = []
+        raw = text.splitlines()
+        i = 0
+        while i < len(raw):
+            head = raw[i].strip()
+            if _DATE_RE.match(head.rstrip("\t").strip()):
+                cells = [head.rstrip("\t").strip()]
+                i += 1
+                while i < len(raw):
+                    line = raw[i]
+                    if line == "":          # PRAWDZIWA pusta linia kończy wiersz
+                        break
+                    tok = line.strip()
+                    if tok:                 # linie "\t" to separatory kolumn — pomijamy
+                        cells.append(tok)
+                    i += 1
+                if len(cells) >= 3:
+                    lines.append(cells)
+            i += 1
     for cells in lines:
         if len(cells) < 3:
             continue
@@ -248,27 +272,26 @@ def fetch_etf_flows():
     out = {"btc_1d": None, "eth_1d": None, "btc": None, "eth": None}
     for key, url in (("btc", "https://farside.co.uk/bitcoin-etf-flow-all-data/"),
                      ("eth", "https://farside.co.uk/ethereum-etf-flow-all-data/")):
-        # 1) Direct Farside
-        try:
-            series = _parse_farside_table(_get_text(url))
-            if not series:
-                raise ValueError("pusta tabela")
-            out[key] = _etf_from_series(series, "farside-direct")
-            out[f"{key}_1d"] = series[-1]["total"] * 1_000_000
-            print(f"[etf] {key.upper()} direct {series[-1]['date']}: {series[-1]['total']:+.1f}M")
-            continue
-        except Exception as e:
-            FETCH_ERRORS.append(f"etf.{key}.direct: {type(e).__name__}: {str(e)[:60]}")
-        # 2) Cloudflare Worker proxy (CF→CF, bypasses Cloudflare challenge)
-        try:
-            series = _parse_farside_table(_get_text(CF_WORKER.format(asset=key)))
-            if not series:
-                raise ValueError("pusta tabela")
-            out[key] = _etf_from_series(series, "cf-worker")
-            out[f"{key}_1d"] = series[-1]["total"] * 1_000_000
-            print(f"[etf] {key.upper()} cf-worker {series[-1]['date']}: {series[-1]['total']:+.1f}M")
-        except Exception as e:
-            FETCH_ERRORS.append(f"etf.{key}.cf-worker: {type(e).__name__}: {str(e)[:60]}")
+        # Kolejność prób. Jina jako PIERWSZA, bo Cloudflare Farside odrzuca IP runnerów
+        # GitHuba (403) — direct i CF worker są tu tylko jako zapas na wypadek,
+        # gdyby reader proxy padło. 12.10.2026: parser markdownu istniał od początku,
+        # ale fetch szedł prosto na farside.co.uk i zawsze wracał 403 (patrz FETCH_ERRORS).
+        attempts = (
+            ("jina", "https://r.jina.ai/" + url),
+            ("direct", url),
+            ("cf-worker", CF_WORKER.format(asset=key)),
+        )
+        for tag, src in attempts:
+            try:
+                series = _parse_farside_table(_get_text(src, timeout=30))
+                if not series:
+                    raise ValueError("pusta tabela")
+                out[key] = _etf_from_series(series, f"farside-{tag}")
+                out[f"{key}_1d"] = series[-1]["total"] * 1_000_000
+                print(f"[etf] {key.upper()} {tag} {series[-1]['date']}: {series[-1]['total']:+.1f}M")
+                break
+            except Exception as e:
+                FETCH_ERRORS.append(f"etf.{key}.{tag}: {type(e).__name__}: {str(e)[:60]}")
     if not out["btc"] and not out["eth"]:
         # 3) Gist fallback
         gist_id = os.environ.get("TVC_GIST_ID", "e88c461a964ed22d2cf14326c65b4438")
@@ -356,13 +379,27 @@ def fetch_macro_context():
     Interpretacja: corr(BTC,NQ) > 0.5 = crypto handluje jak beta na ryzyko (stopy rządzą);
     corr(BTC,DXY) < -0.4 = dolar rządzi. Zwraca None gdy Yahoo padnie — cykl idzie dalej.
     """
+    # BTC bierzemy z Binance, nie ze stooq/Yahoo. Powód (12.10.2026): stooq zwracał
+    # 0 wierszy dla btcusd, Yahoo odbijał 429 ze współdzielonych IP runnerów, a stary
+    # kod robił na tym `return None` — czyli jeden martwy symbol kasował CAŁY panel
+    # makro razem z NQ, SPX, DXY, US10Y i złotem, które działały.
+    btc = {}
     try:
-        btc = dict(_daily_series("BTC-USD"))
+        kl = fetch_klines("BTC", interval="1d", limit=140)
+        btc = {datetime.fromtimestamp(k[0] / 1000, tz=timezone.utc).strftime("%Y-%m-%d"): float(k[4]) for k in kl}
+        if len(btc) < 20:
+            raise ValueError(f"binance BTC: {len(btc)} świec")
     except Exception as e:
-        print(f"[macro] BTC-USD failed: {e}")
-        FETCH_ERRORS.append(f"macro.BTC-USD: {type(e).__name__}: {str(e)[:160]}")
-        return None
-    out = {"assets": {}, "as_of": max(btc.keys()) if btc else None}
+        print(f"[macro] BTC z Binance failed: {e} — próbuję stooq/Yahoo")
+        FETCH_ERRORS.append(f"macro.BTC.binance: {type(e).__name__}: {str(e)[:120]}")
+        try:
+            btc = dict(_daily_series("BTC-USD"))
+        except Exception as e2:
+            print(f"[macro] BTC-USD failed: {e2} — lecę dalej BEZ korelacji")
+            FETCH_ERRORS.append(f"macro.BTC-USD: {type(e2).__name__}: {str(e2)[:160]}")
+            btc = {}
+    out = {"assets": {}, "as_of": max(btc.keys()) if btc else None,
+           "corr_available": bool(btc)}
     for key, (sym, name) in MACRO_SYMBOLS.items():
         try:
             series = _daily_series(sym)
@@ -388,8 +425,14 @@ def fetch_macro_context():
             print(f"[macro] {key} failed: {e}")
             FETCH_ERRORS.append(f"macro.{key}: {type(e).__name__}: {str(e)[:160]}")
     a = out["assets"]
+    if not a:
+        print("[macro] żaden symbol się nie pobrał — zwracam None")
+        return None
     nq, dxy, y10 = a.get("NQ", {}).get("corr_30d"), a.get("DXY", {}).get("corr_30d"), a.get("US10Y", {}).get("corr_30d")
-    if nq is not None and nq > 0.5:
+    if not out["corr_available"]:
+        out["regime"] = "unknown"
+        out["regime_note"] = "Brak serii BTC — pokazuję zmiany rynków bez korelacji"
+    elif nq is not None and nq > 0.5:
         out["regime"] = "risk_beta"; out["regime_note"] = f"BTC handluje jak beta na ryzyko (corr NQ {nq:+.2f}) — makro i stopy rządzą kierunkiem"
     elif dxy is not None and dxy < -0.4:
         out["regime"] = "dollar_driven"; out["regime_note"] = f"Dolar rządzi (corr DXY {dxy:+.2f}) — patrz na DXY przed wejściem"
