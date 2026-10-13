@@ -281,9 +281,17 @@ jobs:
           # się wywalał, kolejka wyglądała na pustą, a te same propozycje postów
           # poszły na Telegram trzeci raz. Dowód: 08:07 czysty → 08:10 znaczniki
           # → 08:13 znaczniki podwójne → 08:18 regeneracja.
+          # UWAGA na `|| true` — bez niego ten blok wywalał cały krok.
+          # GitHub Actions uruchamia bash z `-eo pipefail`. `grep -l` kończy się
+          # kodem 1, gdy NIC nie znajdzie, czyli w normalnym przypadku. Ten kod
+          # propaguje z pętli while przez $(...) do przypisania i `set -e` ubija
+          # krok. Efekt 13.10 12:58–15:40 UTC: autopilot liczył wszystko poprawnie,
+          # a potem nie commitował — strażnik blokował commit dokładnie wtedy,
+          # gdy pliki były czyste. Lokalny bash nie ma `set -e`, więc test tego
+          # nie pokazał.
           CONFLICTED=$(git diff --cached --name-only | while read -r f; do
             [ -f "$f" ] && grep -lE '^(<<<<<<< |>>>>>>> |=======$)' "$f" 2>/dev/null
-          done)
+          done) || true
           if [ -n "$CONFLICTED" ]; then
             echo "!!! Znaczniki konfliktu w: $CONFLICTED — wycofuję je z commita."
             for f in $CONFLICTED; do git reset -q HEAD -- "$f"; git checkout -q -- "$f" || true; done
