@@ -1584,6 +1584,41 @@ const I18N = {
   its_entry_support:  { pl: '+ supportive signals — rozważ entry',             en: '+ supportive signals — consider entry' },
   its_entry_mixed:    { pl: 'ale sygnały mixed — czekaj na potwierdzenie',     en: 'but signals mixed — wait for confirmation' },
   its_skip:           { pl: 'Brak pozycji, brak sygnału — no action needed',   en: 'No position, no signal — no action needed' },
+  // ─── v2.2 (13.10.2026): kontrargument + warunki falsyfikacji ───
+  // Dwa bloki, które mają wymusić uczciwość werdyktu: co mówi druga strona
+  // i jaki konkretny poziom go unieważnia. Oba czysto opisowe — zero wpływu
+  // na score, zero wpływu na decyzje bota.
+  ct_title:           { pl: '⚖️ Co przemawia przeciw',                        en: '⚖️ The case against' },
+  ct_none:            { pl: 'Nie znaleziono sygnałów przeciwnych. To nie jest potwierdzenie — przy tak jednostronnym obrazie częściej brakuje danych niż naprawdę drugiej strony.', en: 'No opposing signals found. This is not confirmation — a one-sided read usually means missing data rather than a genuinely one-sided market.' },
+  ct_ob_vs:           { pl: 'Orderbook po przeciwnej stronie',                en: 'Orderbook leaning the other way' },
+  ct_spoof:           { pl: 'ścian zniknęło <5 s — książka jest malowana, nie realna', en: 'walls vanished in <5s — the book is painted, not real' },
+  ct_flush:           { pl: 'Flush Risk',                                     en: 'Flush Risk' },
+  ct_pump:            { pl: 'Pump Risk — ruch może być wymuszony, nie popytowy', en: 'Pump Risk — move may be forced, not demand-driven' },
+  ct_range:           { pl: 'Rynek w konsolidacji — kierunek jest przypadkowy', en: 'Market range-bound — direction is noise' },
+  ct_no_pos:          { pl: 'Brak otwartej pozycji — to jest obserwacja, nie ekspozycja', en: 'No open position — this is an observation, not exposure' },
+  ct_low_conf:        { pl: 'Confidence LOW — sam system nie ufa temu odczytowi', en: 'Confidence LOW — the system itself does not trust this read' },
+  ct_thin:            { pl: 'Mało sygnałów w odczycie — podstawa jest wąska', en: 'Few signals in this read — the basis is narrow' },
+  ct_no_sources:      { pl: 'Większość źródeł milczy — to nie znaczy „brak przeciwwskazań", tylko „nie wiemy". Nie traktuj tego werdyktu jak potwierdzonego.', en: 'Most sources are silent — this does not mean "nothing against", it means "we do not know". Do not treat this verdict as confirmed.' },
+  // falsyfikacja
+  iv_title:           { pl: '🚫 Co unieważnia ten obraz',                     en: '🚫 What would change this read' },
+  iv_title_watch:     { pl: '🎯 Co zrobiłoby z tego setup',                   en: '🎯 What would make this a setup' },
+  iv_none:            { pl: 'Za mało danych, żeby podać poziom falsyfikujący. Werdykt bez takiego poziomu traktuj jak opinię, nie jak sygnał.', en: 'Not enough data to state a falsifying level. Treat a verdict without one as an opinion, not a signal.' },
+  iv_close_below:     { pl: 'Zamknięcie 4h poniżej',                          en: '4h close below' },
+  iv_close_above:     { pl: 'Zamknięcie 4h powyżej',                          en: '4h close above' },
+  iv_sl_fusion:       { pl: 'SL Fusion',                                      en: 'Fusion SL' },
+  iv_entry:           { pl: 'wejście',                                        en: 'entry' },
+  iv_now:             { pl: 'teraz',                                          en: 'now' },
+  iv_flush_cross:     { pl: 'Flush Risk przekroczy 55/100',                   en: 'Flush Risk crosses 55/100' },
+  iv_flush_drop:      { pl: 'Flush Risk spadnie poniżej 30/100',              en: 'Flush Risk drops below 30/100' },
+  iv_cvd_to_perp:     { pl: 'CVD: przewaga przejdzie na perp (dziś prowadzi spot)', en: 'CVD: lead shifts to perp (spot leads today)' },
+  iv_cvd_to_spot:     { pl: 'CVD: spot przejmie przewagę od perp',            en: 'CVD: spot takes the lead from perp' },
+  iv_cvd_flip:        { pl: 'CVD odwróci się na 4h',                          en: 'CVD flips on 4h' },
+  iv_fusion_below:    { pl: 'Fusion score spadnie poniżej',                   en: 'Fusion score drops below' },
+  iv_fusion_above:    { pl: 'Fusion score wzrośnie powyżej 65',               en: 'Fusion score rises above 65' },
+  iv_imb_flip:        { pl: 'Imbalance orderbooka utrzyma się po drugiej stronie powyżej 50% przez 5 min', en: 'Orderbook imbalance holds past 50% on the other side for 5 min' },
+  iv_zone_break:      { pl: 'Cena przebije strefę',                           en: 'Price breaks the zone' },
+  iv_zone_reach:      { pl: 'Cena dojdzie do strefy kupna',                   en: 'Price reaches the buy zone' },
+  iv_smart_flip:      { pl: 'Smart money odwróci werdykt (teraz',             en: 'Smart money flips its read (now' },
   // ─── smVerdict() texts (flow into CC reasoning) ───
   sm_top_traders:     { pl: 'top traderzy',                                    en: 'top traders' },
   sm_neutral:         { pl: 'neutralni',                                       en: 'neutral' },
@@ -6759,6 +6794,155 @@ function interpretTokenState(ticker) {
   return { verdict, color, confidence, reasoning, actions, score };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// KONTRARGUMENT I FALSYFIKACJA (v2.2, 13.10.2026)
+//
+// Dlaczego osobne funkcje, a nie rozszerzenie interpretTokenState():
+// obowiązuje zamrożenie do 11.11 i interpretTokenState() nie może zostać
+// tknięte — każda zmiana tam przesuwa score, a score wchodzi do werdyktu,
+// który czyta Command Center. Te dwie funkcje tylko CZYTAJĄ te same obiekty
+// globalne i nie zwracają niczego, co wpływa na liczby. Po 11.11 warto je
+// scalić z główną pętlą, żeby nie utrzymywać dwóch kopii warunków.
+//
+// contraCase() — fakty mówiące PRZECIW aktualnemu werdyktowi.
+// invalidationLevels() — konkretne progi, po przekroczeniu których werdykt
+// przestaje obowiązywać. Zapisane PRZED wejściem, bo po wejściu nikt ich
+// uczciwie nie wymyśli.
+// ═══════════════════════════════════════════════════════════════════════════
+function contraCase(ticker, state) {
+  const out = [];
+  if (!state || state.verdict === 'NO_DATA') return out;
+  // kierunek, przeciw któremu szukamy dowodów
+  const bull = state.score >= 0;
+  const price = livePrices[ticker]?.price;
+  const walls = orderbookWalls[ticker];
+  const events = wallEvents[ticker] || [];
+  const alerts = setupAlerts[ticker] || [];
+  const predZones = window[`__predZones_${ticker}`] || { buyZones: [], sellZones: [] };
+
+  // orderbook przeciw
+  if (walls) {
+    const imb = walls.imbalance;
+    if (bull && imb < -0.25) out.push(`${t('ct_ob_vs')}: ${(imb * 100).toFixed(0)}%`);
+    if (!bull && imb > 0.25) out.push(`${t('ct_ob_vs')}: +${(imb * 100).toFixed(0)}%`);
+  }
+  // spoofing — psuje każdy odczyt, niezależnie od kierunku
+  const spoof = events.filter(e => e.type === 'gone' && e.lifespanMs && e.lifespanMs < 5000).length;
+  if (spoof > 5) out.push(`${spoof} ${t('ct_spoof')}`);
+
+  // strefy po przeciwnej stronie
+  if (price) {
+    const zSell = predZones.sellZones.find(z => price >= z.priceLow * 0.99 && price <= z.priceHigh * 1.005);
+    const zBuy = predZones.buyZones.find(z => price >= z.priceLow * 0.995 && price <= z.priceHigh * 1.01);
+    if (bull && zSell) out.push(`${t('its_sell_zone')} $${fmt(zSell.priceLow)}–${fmt(zSell.priceHigh)} (${zSell.touches}×)`);
+    if (!bull && zBuy) out.push(`${t('its_buy_zone')} $${fmt(zBuy.priceLow)}–${fmt(zBuy.priceHigh)} (${zBuy.touches}×)`);
+    const hz = getHeatmapZones(ticker);
+    const hSell = (hz.sellZones || []).find(z => Math.abs(z.pct) < 0.6);
+    const hBuy = (hz.buyZones || []).find(z => Math.abs(z.pct) < 0.6);
+    if (bull && hSell) out.push(`${t('its_heatmap_sell')} ($${(hSell.avgNotional / 1e6).toFixed(2)}M)`);
+    if (!bull && hBuy) out.push(`${t('its_heatmap_buy')} ($${(hBuy.avgNotional / 1e6).toFixed(2)}M)`);
+  }
+  // flush / pump
+  const fr = flushRisk[ticker];
+  if (fr && !fr.error) {
+    if (bull && fr.level !== 'low') out.push(`${t('ct_flush')} ${fr.score}/100 — ${(fr.parts || []).slice(0, 2).map(p => p.txt).join(' · ')}`);
+    if (fr.pump && fr.pump.level === 'high') out.push(`${t('ct_pump')} (${fr.pump.score}/100)`);
+  }
+  // smart money przeciw
+  const smv = smVerdict(ticker);
+  if (smv.votes.length) {
+    if (bull && smv.score <= -1) out.push(`🏦 ${smv.votes.filter(v => v.v < 0).map(v => v.txt).join(', ')}`);
+    if (!bull && smv.score >= 1) out.push(`🏦 ${smv.votes.filter(v => v.v > 0).map(v => v.txt).join(', ')}`);
+  }
+  // CVD przeciw
+  const cr = cvdRead(ticker, 4);
+  if (cr && cr.key !== 'neutral') {
+    if ((bull && cr.score < 0) || (!bull && cr.score > 0)) out.push(`⚖️ ${t('cvd_' + cr.key)}`);
+  }
+  // opcje — strach działa przeciw długiej stronie
+  const oread = optionsRead(optionsData[ticker] || optionsData.BTC);
+  const fear = oread && oread.flags.find(f => f.key === 'fear');
+  if (bull && fear) out.push(`🎭 ${fear.txt}`);
+
+  // Ile źródeł w ogóle odpowiedziało. Bez tego pusta lista kontrargumentów
+  // czytałaby się jak „nic nie przemawia przeciw", podczas gdy znaczy
+  // „nie mamy danych". To dwie różne rzeczy i mylenie ich jest groźniejsze
+  // niż brak bloku w ogóle.
+  const seen = [walls, flushRisk[ticker], cvdRead(ticker, 4), smVerdict(ticker).votes.length ? 1 : null,
+                optionsData[ticker] || optionsData.BTC].filter(Boolean).length;
+  if (seen <= 1) { out.length = 0; out.push(t('ct_no_sources')); return out; }
+
+  // strukturalne zastrzeżenia
+  if (alerts.find(a => (a.type === 'CONFLUENCE_BUY' || a.type === 'CONFLUENCE_SELL') && a.rangeBound)) out.push(t('ct_range'));
+  if (state.confidence === 'low') out.push(t('ct_low_conf'));
+  if ((state.reasoning || []).length < 4) out.push(t('ct_thin'));
+  const hasPos = (lastFusion?.state?.open_positions || []).some(p => p.ticker === ticker);
+  if (!hasPos && (state.verdict === 'ENTRY_SETUP')) out.push(t('ct_no_pos'));
+  return out;
+}
+
+function invalidationLevels(ticker, state) {
+  const out = [];
+  if (!state || state.verdict === 'NO_DATA') return out;
+  const dec = (lastFusion?.decisions || []).find(d => d.ticker === ticker);
+  if (!dec) return out;
+  const price = livePrices[ticker]?.price;
+  const bull = state.score >= 0;
+  const waiting = state.verdict === 'WATCH' || state.verdict === 'SKIP';
+  const openPos = (lastFusion?.state?.open_positions || []).find(p => p.ticker === ticker);
+
+  if (waiting) {
+    // dla obserwacji: co zrobiłoby z tego setup
+    if (dec.score != null && dec.score < 65) out.push(`${t('iv_fusion_above')} (${t('iv_now')} ${dec.score})`);
+    if (price) {
+      const hz = getHeatmapZones(ticker);
+      const hBuy = (hz.buyZones || [])[0];
+      if (hBuy) out.push(`${t('iv_zone_reach')} ${(hBuy.pct).toFixed(2)}% ($${fmt(price * (1 + hBuy.pct / 100))})`);
+    }
+    const frW = flushRisk[ticker];
+    if (frW && !frW.error && frW.score >= 30) out.push(`${t('iv_flush_drop')} (${t('iv_now')} ${frW.score})`);
+    out.push(t('iv_imb_flip'));
+    return out;
+  }
+
+  // poziom cenowy — najpierw SL Fusion, potem wejście pozycji
+  if (dec.sl) out.push(`${bull ? t('iv_close_below') : t('iv_close_above')} $${fmt(dec.sl)} (${t('iv_sl_fusion')})`);
+  if (openPos && openPos.entry_price) out.push(`${bull ? t('iv_close_below') : t('iv_close_above')} $${fmt(openPos.entry_price)} (${t('iv_entry')})`);
+
+  // Próg konwikcji, w którym aktualnie siedzi fusion. Przy werdykcie
+  // niedźwiedzim falsyfikatorem jest wzrost score, nie spadek — inaczej blok
+  // podawałby warunek, który werdykt tylko potwierdza.
+  if (dec.score != null) {
+    if (bull) {
+      const band = dec.score >= 75 ? 75 : dec.score >= 65 ? 65 : null;
+      if (band) out.push(`${t('iv_fusion_below')} ${band} (${t('iv_now')} ${dec.score})`);
+    } else if (dec.score < 65) {
+      out.push(`${t('iv_fusion_above')} (${t('iv_now')} ${dec.score})`);
+    }
+  }
+  // Flush Risk — przy werdykcie byczym falsyfikuje jego wzrost, przy niedźwiedzim
+  // spadek. Rosnąca kruchość rynku tylko potwierdza decyzję o cięciu pozycji.
+  const fr = flushRisk[ticker];
+  if (fr && !fr.error) {
+    if (bull && fr.score < 55) out.push(`${t('iv_flush_cross')} (${t('iv_now')} ${fr.score})`);
+    else if (!bull && fr.score >= 30) out.push(`${t('iv_flush_drop')} (${t('iv_now')} ${fr.score})`);
+  }
+
+  // CVD — kto prowadzi i co by to odwróciło
+  const cr = cvdRead(ticker, 4);
+  if (cr) {
+    if (cr.key === 'spot_led_up' || cr.key === 'flat_spot_accum') out.push(t('iv_cvd_to_perp'));
+    else if (cr.key === 'lev_pump' || cr.key === 'flat_lev_only') out.push(t('iv_cvd_to_spot'));
+    else if (cr.key !== 'neutral') out.push(t('iv_cvd_flip'));
+  }
+  // smart money
+  const smv = smVerdict(ticker);
+  if (smv.votes.length && Math.abs(smv.score) >= 2) out.push(`${t('iv_smart_flip')} ${smv.score > 0 ? 'BULLISH' : 'BEARISH'})`);
+
+  out.push(t('iv_imb_flip'));
+  return out;
+}
+
 // Render per-token Live Interpretation panel (in expanded token detail)
 function renderLiveInterpretation(ticker) {
   const slot = document.getElementById(`interp-slot-${ticker}`);
@@ -6770,6 +6954,28 @@ function renderLiveInterpretation(ticker) {
     WATCH: '👀 WATCH', SKIP: '⊘ SKIP', NO_DATA: '— NO DATA',
   };
   const confBadge = { high: '🟢 HIGH', medium: '🟡 MED', low: '🔴 LOW' }[state.confidence] || '⚪ ?';
+
+  // v2.2: kontrargument — zawsze widoczny, także gdy pusty (pusty jest informacją)
+  const contra = contraCase(ticker, state);
+  const contraBlock = state.verdict === 'NO_DATA' ? '' : `
+      <div style="margin:8px 0;padding:8px;background:rgba(255,255,255,0.025);border-left:2px solid var(--text-dim);border-radius:3px">
+        <div style="font-size:9.5px;color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">${t('ct_title')}</div>
+        ${contra.length
+          ? contra.map(c => `<div style="font-size:10.5px;color:var(--text);padding:2px 0">• ${c}</div>`).join('')
+          : `<div style="font-size:10.5px;color:var(--text-dim);padding:2px 0;font-style:italic">${t('ct_none')}</div>`}
+      </div>`;
+
+  // v2.2: warunki falsyfikacji — konkretne progi, nie oceny
+  const inval = invalidationLevels(ticker, state);
+  const waiting = state.verdict === 'WATCH' || state.verdict === 'SKIP';
+  const invalBlock = state.verdict === 'NO_DATA' ? '' : `
+      <div style="margin:8px 0;padding:8px;background:rgba(255,255,255,0.025);border-left:2px solid var(--gold);border-radius:3px">
+        <div style="font-size:9.5px;color:var(--gold);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">${waiting ? t('iv_title_watch') : t('iv_title')}</div>
+        ${inval.length
+          ? inval.map(c => `<div style="font-size:10.5px;color:var(--text);padding:2px 0;font-family:var(--mono)">• ${c}</div>`).join('')
+          : `<div style="font-size:10.5px;color:var(--text-dim);padding:2px 0;font-style:italic">${t('iv_none')}</div>`}
+      </div>`;
+
   slot.innerHTML = `
     <div style="padding:12px;background:linear-gradient(135deg,${state.color}22,${state.color}0A);border:2px solid ${state.color};border-radius:8px;margin-top:8px">
       <div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;flex-wrap:wrap;margin-bottom:8px">
@@ -6780,6 +6986,8 @@ function renderLiveInterpretation(ticker) {
         <div style="font-size:9.5px;color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">🎯 Actions</div>
         ${state.actions.map(a => `<div style="padding:4px 8px;background:rgba(255,255,255,0.03);border-left:2px solid ${state.color};border-radius:3px;margin-bottom:2px;font-size:11px;color:var(--text);font-weight:600">${a}</div>`).join('')}
       </div>
+      ${contraBlock}
+      ${invalBlock}
       <div>
         <div style="font-size:9.5px;color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">📊 Reasoning (${state.reasoning.length} signals)</div>
         ${state.reasoning.map(r => `<div style="font-size:10.5px;color:var(--text-muted);padding:2px 0">• ${r}</div>`).join('')}
