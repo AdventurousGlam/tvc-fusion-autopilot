@@ -323,12 +323,29 @@ jobs:
               git checkout --theirs -- crypto_picks.json 2>/dev/null || true
               git checkout --theirs -- layers_cache.json pump_radar.json pump_radar_alerts.json 2>/dev/null || true
               git checkout --theirs -- correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json tg_sent.json autopilot_health.json 2>/dev/null || true
-              git add -A
-              if git rebase --continue; then
-                echo "Konflikt rozwiązany automatycznie."
-              else
-                echo "Nie udało się rozwiązać konfliktu automatycznie — przerywam rebase, ponawiam od zera."
+              # v4.3.1 (13.10.2026) — DRUGI strażnik, w ścieżce rebase.
+              # Strażnik przy pierwszym commicie nie chroni tego miejsca: `git add -A`
+              # + `git rebase --continue` commituje to, co leży na dysku, a
+              # `git checkout --theirs` z `|| true` po cichu nic nie robi, gdy plik nie
+              # jest w stanie konfliktu rozumianym przez gita. Tak 13.10 o 17:10 i 17:13
+              # do repo trafił content_queue.json ze znacznikami w meta.last_run —
+              # alarm content_engine zadzwonił trzy razy, a kolejka stała.
+              STILL=$(git diff --name-only --diff-filter=U; \
+                      git ls-files -m | while read -r f; do \
+                        [ -f "$f" ] && grep -lE '^(<<<<<<< |>>>>>>> |=======$)' "$f" 2>/dev/null; \
+                      done) || true
+              if [ -n "$STILL" ]; then
+                echo "!!! Po auto-resolve DALEJ są znaczniki/konflikty w: $STILL"
+                echo "    Nie commituję tego. Przerywam rebase — następny cykl zacznie od czystego stanu."
                 git rebase --abort || true
+              else
+                git add -A
+                if git rebase --continue; then
+                  echo "Konflikt rozwiązany automatycznie, bez znaczników."
+                else
+                  echo "rebase --continue nie przeszedł — przerywam, ponawiam od zera."
+                  git rebase --abort || true
+                fi
               fi
             fi
             sleep $((RANDOM % 8 + 3))
