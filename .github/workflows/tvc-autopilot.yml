@@ -118,9 +118,55 @@ jobs:
       # v1.0 — Content Engine: generuje posty na X + LinkedIn + YouTube z danych bota.
       # Odpala się po paper_bot refresh, żeby mieć świeże dane o zamkniętych trade'ach.
       # Wynik: content_queue.json + opcjonalny Telegram digest do osobistego czatu.
-      - name: Content Engine (generuj posty z danych bota)
+      # v4.2 (13.10.2026) — STRAŻNIK UCZCIWOŚCI WYJŚĆ.
+      # test_no_peeking.py sprawdza, czy decyzja nie dotknęła danych z przyszłości
+      # i czy cena wyjścia w ogóle istniała. Tryb offline jest darmowy (bez sieci),
+      # więc leci w KAŻDYM cyklu. Tryb --online robi setki zapytań do Binance,
+      # więc raz dziennie — inaczej wpadamy w ten sam rate limit co przy heatmapie.
+      # continue-on-error: wykrycie ma krzyczeć, a nie zabijać zbierania danych.
+      - name: Strażnik — brak przecieku przyszłości
+        id: nopeek
+        continue-on-error: true
         working-directory: /home/runner/home-clone/Claude/TVCFusion
-        run: python3 content_engine.py || true
+        run: |
+          HOUR=$(date -u +%H); MIN=$(date -u +%M)
+          if [ "$HOUR" = "04" ] && [ "$MIN" -lt "15" ]; then
+            echo "=== pełny test (--online, raz dziennie) ==="
+            python3 test_no_peeking.py --online 2>&1 | tail -30
+          else
+            python3 test_no_peeking.py 2>&1 | tail -20
+          fi
+
+      - name: Alarm gdy strażnik wykrył przeciek
+        if: steps.nopeek.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          [ -z "$TELEGRAM_BOT_TOKEN" ] && exit 0
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "text=🚨 <b>test_no_peeking FAILED</b>%0AWykryto wyjście po cenie, której nie było, albo decyzję z danych z przyszłości.%0ANIE publikuj wyników, dopóki to nie zostanie wyjaśnione.%0ASzczegóły w logu Actions." \
+            > /dev/null || true
+
+      - name: Content Engine (generuj posty z danych bota)
+        id: cengine
+        continue-on-error: true
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
+        run: python3 content_engine.py
+
+      # v4.2: kod 2 = content_queue.json do naprawy (np. znaczniki konfliktu gita).
+      # 13.10 taka kolejka była cicho traktowana jak pusta i te same propozycje
+      # poszły na Telegram trzy razy. Teraz zamiast powtórki dostajesz alarm.
+      - name: Alarm gdy kolejka treści jest uszkodzona
+        if: steps.cengine.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          [ -z "$TELEGRAM_BOT_TOKEN" ] && exit 0
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "parse_mode=HTML" \
+            --data-urlencode "text=⚠️ <b>content_engine przerwany</b>%0Acontent_queue.json jest nieczytelny (prawdopodobnie znaczniki konfliktu gita).%0APropozycje postów NIE zostały wysłane — to celowe, żeby uniknąć powtórki.%0ANapraw plik w repo." \
+            > /dev/null || true
 
       # v1.0 — Weekly Recap: niedzielna kompilacja (X thread + LinkedIn newsletter + YT script).
       # Odpala się raz w tygodniu w niedzielę 18:00-18:14 UTC (20:00-20:14 CEST).
@@ -228,6 +274,23 @@ jobs:
           if git diff --cached --quiet; then
             echo "Brak zmian do commitu."
             exit 0
+          fi
+          # v4.2 (13.10.2026) — NIGDY nie commituj pliku ze znacznikami konfliktu.
+          # 13.10 auto-resolve rebase zostawił "<<<<<<< HEAD" w content_queue.json
+          # i zacommitował to przez `git add -A`. Przy następnym przebiegu json.loads
+          # się wywalał, kolejka wyglądała na pustą, a te same propozycje postów
+          # poszły na Telegram trzeci raz. Dowód: 08:07 czysty → 08:10 znaczniki
+          # → 08:13 znaczniki podwójne → 08:18 regeneracja.
+          CONFLICTED=$(git diff --cached --name-only | while read -r f; do
+            [ -f "$f" ] && grep -lE '^(<<<<<<< |>>>>>>> |=======$)' "$f" 2>/dev/null
+          done)
+          if [ -n "$CONFLICTED" ]; then
+            echo "!!! Znaczniki konfliktu w: $CONFLICTED — wycofuję je z commita."
+            for f in $CONFLICTED; do git reset -q HEAD -- "$f"; git checkout -q -- "$f" || true; done
+            if git diff --cached --quiet; then
+              echo "Po wycofaniu nie ma czego commitować."
+              exit 0
+            fi
           fi
           git commit -m "auto-update $(date -u +%Y-%m-%dT%H:%M:%SZ)"
           # Retry z rebase — chroni przed race condition gdy dwa runy nachodzą na siebie w czasie.

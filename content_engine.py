@@ -145,13 +145,37 @@ def _load_json(path):
         return {}
 
 
+class QueueCorrupted(Exception):
+    """Kolejka istnieje, ale nie da się jej odczytać — NIE wolno uznać jej za pustą."""
+
+
 def _load_queue():
-    if QUEUE_PATH.exists():
-        try:
-            return json.loads(QUEUE_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            return {"posts": [], "meta": {}}
-    return {"posts": [], "meta": {}}
+    """
+    Wczytaj kolejkę. Brak pliku = pusta kolejka (pierwszy start, to normalne).
+    Plik nieczytelny = błąd, nie pustka.
+
+    Powód (13.10.2026): plik dostawał znaczniki konfliktu gita (`<<<<<<< HEAD`)
+    z automatycznego rozwiązywania rebase w workflow. json.loads wywalał się,
+    stary `except` zwracał {"posts": []}, więc engine uznawał, że dziś nic nie
+    wygenerowano, tworzył wszystko od nowa i wysyłał na Telegram drugi raz.
+    Dowód: commity 08:07 (3823 B, czysty) → 08:10 (6831 B, znaczniki)
+    → 08:13 (9839 B, znaczniki podwójne) → 08:18 regeneracja i powtórka.
+    """
+    if not QUEUE_PATH.exists():
+        return {"posts": [], "meta": {}}
+    raw = QUEUE_PATH.read_text(encoding="utf-8")
+    if "<<<<<<<" in raw or ">>>>>>>" in raw:
+        raise QueueCorrupted(
+            f"{QUEUE_PATH.name} zawiera znaczniki konfliktu gita — "
+            f"przerywam, żeby nie wysłać propozycji drugi raz. Napraw plik ręcznie."
+        )
+    try:
+        q = json.loads(raw)
+    except Exception as e:
+        raise QueueCorrupted(f"{QUEUE_PATH.name} nie jest poprawnym JSON-em ({e}) — przerywam.")
+    if not isinstance(q, dict) or "posts" not in q:
+        raise QueueCorrupted(f"{QUEUE_PATH.name} ma nieoczekiwaną strukturę — przerywam.")
+    return q
 
 
 def _save_queue(q):
@@ -1974,7 +1998,13 @@ def main():
             log(f"ERROR: invalid JSON for --alert: {e}")
             sys.exit(1)
     else:
-        run()
+        try:
+            run()
+        except QueueCorrupted as e:
+            # Kod 2 = kolejka do naprawy. Workflow ma to wyłapać i krzyknąć na Telegram,
+            # zamiast cicho wysłać te same propozycje jeszcze raz.
+            log(f"PRZERWANE: {e}")
+            sys.exit(2)
 
 
 if __name__ == "__main__":
