@@ -348,6 +348,19 @@ def db_init():
     _migrate_add_column(conn, "positions", "entry_zone_high", "REAL")
     _migrate_add_column(conn, "positions", "pending_until", "TEXT")
     _migrate_add_column(conn, "positions", "rr", "REAL")
+    # v4.3 (13.10.2026) — koszty transakcyjne, R liczone od pierwotnego SL,
+    # częściowe TP1 zapisywane NA TYM SAMYM WIERSZU.
+    # Dlaczego na tym samym: osobny wiersz na zamkniętą połowę rozjeżdża każdy
+    # licznik w repo — w szczególności `SELECT COUNT(*) ... WHERE opened_at >= ?`,
+    # czyli dzienny limit wejść, bo kopia dziedziczy opened_at. Jedna transakcja
+    # ma zostać jednym wierszem; wtedy żadne z ~20 zapytań nie wymaga zmiany,
+    # a definicja z rejestru (pnl_usd > 0) znaczy dalej to samo.
+    _migrate_add_column(conn, "positions", "sl_initial", "REAL")
+    _migrate_add_column(conn, "positions", "tp1_frac", "REAL")
+    _migrate_add_column(conn, "positions", "tp1_exit_price", "REAL")
+    _migrate_add_column(conn, "positions", "tp1_pnl_usd", "REAL")
+    _migrate_add_column(conn, "positions", "tp1_at", "TEXT")
+    _migrate_add_column(conn, "positions", "pnl_gross_pct", "REAL")
     conn.commit()
     _migrate_sl_rescan_bug(conn)
     conn.close()
@@ -656,7 +669,10 @@ def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime
 def _notify_close(ticker, direction, entry, exit_price, pnl_pct, pnl_usd, reason):
     """Telegram: zamknięcie pozycji — osobisty + PRO (pełny) + FREE (tylko jeśli trade był ogłoszony na FREE)."""
     try:
-        exit_label = {"hit_tp1": "🎯 TP1 Hit", "hit_tp2": "🎯🎯 TP2 Hit", "hit_sl": "🛑 Stop Loss",
+        exit_label = {"hit_tp1": "🎯 TP1 Hit",
+                      "hit_tp1_partial": f"🎯 TP1 — zamknięte {TP1_CLOSE_FRAC:.0%}, SL na breakeven",
+                      "hit_breakeven": "🛡 Breakeven po TP1",
+                      "hit_tp2": "🎯🎯 TP2 Hit", "hit_sl": "🛑 Stop Loss",
                       "hit_trailing_sl": "📈 Trailing Stop", "flip_choch": "🔁 Flip Exit", "sl_rescan_bug": "🐛 SL re-scan",
                       "manual_close": "✋ Manual Close", "zombie_expired": "⏰ Max Hold Expired",
                       "short_killswitch": "⛔ Short Killswitch", "max_hold": "⏰ Max Hold Expired"}.get(reason, reason)
@@ -1380,6 +1396,12 @@ def cmd_open(args):
             print(f"[5m-confirm] {ticker} — exception: {e}, proceeding anyway")
 
         # v3.4 — SCALE-IN DECISION: jeśli soft gate zablokował, sprawdź czy kwalifikuje się
+        # v4.3 (13.10.2026): przeniesione TUTAJ z miejsca po pętli. soft_blocked ma już
+        # ostateczną wartość, a is_scale_in było używane niżej przy poszerzaniu SL o ATR
+        # (_rr_floor) ZANIM zostało przypisane. Przy pierwszym obrocie pętli dawało to
+        # UnboundLocalError; przy kolejnych działało na wartości z POPRZEDNIEGO tickera,
+        # czyli po cichu brało zły próg R:R. Znalezione przez verify.sh (pyflakes).
+        is_scale_in = soft_blocked
         if soft_blocked:
             scale_eligible, scale_reason = _check_scale_in_eligible(dec, direction, score)
             if not scale_eligible:
@@ -1426,14 +1448,30 @@ def cmd_open(args):
                 if lo <= score < hi:
                     size_pct = pct
                     break
-        # v3.4 — SCALE-IN SIZE REDUCTION
-        is_scale_in = soft_blocked  # if we got here with soft_blocked=True, it's a scale-in
+        # v3.4 — SCALE-IN SIZE REDUCTION (is_scale_in ustawione wyżej, przy decyzji scale-in)
         if is_scale_in:
             original_size = size_pct
             size_pct = round(size_pct * SCALE_IN_SIZE_FACTOR, 2)
             print(f"[size] {ticker} {direction.upper()} score={score} regime={regime} → {original_size}% × {SCALE_IN_SIZE_FACTOR} = {size_pct}% (scale-in)")
         else:
             print(f"[size] {ticker} {direction.upper()} score={score} regime={regime} → {size_pct}% of capital")
+        # v4.3: wielkość z RYZYKA, tier wg score zostaje jako GÓRNY limit.
+        # Dotąd pozycja ze stopem 1% i ze stopem 5% miały ten sam nominał, czyli
+        # pięciokrotnie różną stratę przy trafieniu stopa. Teraz obie tracą tyle
+        # samo — RISK_PCT kapitału. Bierzemy min(tier, z ryzyka), więc ta reguła
+        # może pozycję tylko zmniejszyć, nigdy powiększyć ponad tier.
+        try:
+            _sl_dec = float(dec.get("sl") or 0)
+            if _sl_dec > 0 and entry_price:
+                _sl_dist = abs(entry_price - _sl_dec) / entry_price * 100
+                if _sl_dist > 0:
+                    _risk_size = RISK_PCT / (_sl_dist + COST_PCT) * 100
+                    if _risk_size < size_pct:
+                        print(f"[size] {ticker} limit ryzyka: {size_pct}% → {_risk_size:.2f}% "
+                              f"(SL {_sl_dist:.2f}% + koszty {COST_PCT:.2f}%, ryzyko {RISK_PCT}% kapitału)")
+                        size_pct = round(_risk_size, 2)
+        except Exception as e:
+            print(f"[size] {ticker}: limit ryzyka pominięty ({e})")
         size_usd = PAPER_CAPITAL * (size_pct / 100)
 
         sources = dec.get("sources", {})
@@ -1461,9 +1499,12 @@ def cmd_open(args):
                 entry_price, size_pct, size_usd, sl_price, tp1_price, tp2_price,
                 status, exit_price, exit_date, pnl_pct, pnl_usd, hit_or_miss,
                 thesis, invalidation, risk_flag, onchain_data_thin,
-                opened_at, closed_at, context_tags, entry_zone_low, entry_zone_high, rr
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            row,
+                opened_at, closed_at, context_tags, entry_zone_low, entry_zone_high, rr,
+                sl_initial
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            # v4.3: sl_initial zapisywany przy otwarciu i NIGDY nie zmieniany — to
+            # mianownik dla R w trailingu. sl_price będzie się przesuwać, ten nie.
+            row + (dec.get("sl"),),
         )
         opened += 1
         opened_today += 1
@@ -1510,6 +1551,47 @@ TRAILING_TRIGGER = _params.get("TRAILING_TRIGGER", 4.0)
 TRAILING_DISTANCE = _params.get("TRAILING_DISTANCE", 3.0)
 BREAKEVEN_OFFSET = _params.get("BREAKEVEN_OFFSET", 1.002)
 
+# ── v4.3 (13.10.2026): koszty, R, częściowe TP1 ────────────────────────────
+# Do tej pory rachunek nie płacił za nic. Wejście i wyjście po cenie z wykresu,
+# zero prowizji, zero poślizgu. Rejestr sam to przyznawał w sekcji 5, ale
+# przyznanie się do zawyżania nie jest tym samym co przestanie zawyżać.
+# FEE_PCT i SLIPPAGE_PCT liczone są PO KAŻDEJ STRONIE, więc round-trip = 2×(fee+slip).
+FEE_PCT = _params.get("FEE_PCT", 0.05)            # % od nominału, taker, jedna strona
+SLIPPAGE_PCT = _params.get("SLIPPAGE_PCT", 0.02)  # % od nominału, jedna strona
+COST_PCT = 2 * (FEE_PCT + SLIPPAGE_PCT)           # koszt pełnego obrotu w %
+
+# R = odległość wejście→SL POCZĄTKOWY. Trailing w jednostkach R zamiast sztywnych
+# procentów: przy SL 1% i SL 4% „zysk +4%" znaczy coś zupełnie innego, a stary
+# TRAILING_TRIGGER=4.0 traktował oba tak samo.
+TRAILING_TRIGGER_R = _params.get("TRAILING_TRIGGER_R", 2.0)
+TRAILING_DISTANCE_R = _params.get("TRAILING_DISTANCE_R", 1.0)
+
+TP1_CLOSE_FRAC = _params.get("TP1_CLOSE_FRAC", 0.5)  # ile zamykamy na TP1
+RISK_PCT = _params.get("RISK_PCT", 0.5)              # % kapitału tracony przy SL
+
+
+def _net_pnl(direction, entry, exit_price, size_usd):
+    """PnL po kosztach. Zwraca (netto %, netto USD, brutto %).
+
+    Koszt jest stały procentowo od nominału, więc odejmuje się od zwrotu
+    procentowego, nie od kwoty — przy tej samej cenie wyjścia mniejsza pozycja
+    traci mniej dolarów, ale tyle samo procent.
+    """
+    entry = float(entry or 0)
+    if not entry:
+        return 0.0, 0.0, 0.0
+    gross = ((exit_price - entry) if direction == "long" else (entry - exit_price)) / entry * 100
+    net = gross - COST_PCT
+    return net, float(size_usd or 0) * net / 100, gross
+
+
+def _tp1_frac_of(row):
+    """Ile pozycji zostało już zamknięte na TP1 (0.0 gdy nic)."""
+    try:
+        return float(row["tp1_frac"] or 0)
+    except Exception:
+        return 0.0
+
 
 def _now_ms() -> int:
     return int(datetime.now(timezone.utc).timestamp() * 1000)
@@ -1524,48 +1606,55 @@ def _iso_to_ms(iso: str) -> int:
 
 def _update_trailing_sl(conn, row, current_price):
     """
-    Update SL na row jeśli warunki trailing spełnione.
+    v4.3: trailing liczony w jednostkach R, gdzie R = |wejście − SL początkowy|.
+
+    Dlaczego nie w procentach: stary próg TRAILING_TRIGGER = 4% traktował tak samo
+    pozycję ze stopem 1% (zysk 4% = 4R, dawno po celu) i ze stopem 4% (zysk 4% = 1R,
+    ledwo wyszła na zero po kosztach). Przy stopie liczonym z ATR te dwa przypadki
+    zdarzają się na przemian w tym samym tygodniu.
+
+    Breakeven NIE jest tu ustawiany — robi to częściowe zamknięcie na TP1
+    (patrz cmd_check). Ta funkcja tylko zacieśnia stopa, nigdy go nie luzuje.
+
+    Przyjmuje dict ALBO sqlite3.Row. Jedyne wywołanie produkcyjne podaje dict,
+    ale sqlite3.Row nie ma .get() i oparcie się na tym byłoby zależnością od
+    przypadku w innym miejscu pliku.
     Zwraca (new_sl, reason) jeśli zmienione, None w.p.p.
     """
+    def _f(key, default=0.0):
+        try:
+            v = row[key]
+        except (KeyError, IndexError):
+            return default
+        return float(v) if v is not None else default
+
     direction = (row["direction"] or "long").lower()
-    entry = float(row["entry_price"])
-    current_sl = float(row["sl_price"] or 0)
+    entry = _f("entry_price")
+    current_sl = _f("sl_price")
+    sl0 = _f("sl_initial") or current_sl      # stare pozycje nie mają sl_initial
+    if not entry or not sl0:
+        return None
 
+    R = abs(entry - sl0) / entry * 100
+    if R <= 0:
+        return None
+    profit_pct = ((current_price - entry) if direction == "long" else (entry - current_price)) / entry * 100
+    if profit_pct / R < TRAILING_TRIGGER_R:
+        return None
+
+    dist = TRAILING_DISTANCE_R * R / 100
     if direction == "long":
-        profit_pct = (current_price - entry) / entry * 100
+        new_sl = current_price * (1 - dist)
+        better = new_sl > current_sl
+    else:
+        new_sl = current_price * (1 + dist)
+        better = (current_sl == 0) or (new_sl < current_sl)
+    if not better:
+        return None
 
-        # Stage 1: Breakeven+ (po +3.0% profit) — v3.1: 1.5→3.0%, offset 0.1→0.3%
-        breakeven_sl = entry * BREAKEVEN_OFFSET  # entry + 0.3%
-        if profit_pct >= BREAKEVEN_TRIGGER and current_sl < breakeven_sl:
-            conn.execute(
-                "UPDATE positions SET sl_price = ?, sl_since = ? WHERE id = ?",
-                (breakeven_sl, _now_ms(), row["id"])
-            )
-            return (breakeven_sl, f"breakeven+ (profit {profit_pct:+.2f}%)")
-
-        # Stage 2: Trailing SL (po +3% profit)
-        if profit_pct >= TRAILING_TRIGGER:
-            trailing_sl = current_price * (1 - TRAILING_DISTANCE / 100)
-            if trailing_sl > current_sl:
-                conn.execute(
-                    "UPDATE positions SET sl_price = ?, sl_since = ? WHERE id = ?",
-                    (trailing_sl, _now_ms(), row["id"])
-                )
-                return (trailing_sl, f"trailing +{profit_pct:.1f}% profit, SL={trailing_sl:.4f}")
-
-    else:  # SHORT (rzadkie w regime TRENDING_UP)
-        profit_pct = (entry - current_price) / entry * 100
-        breakeven_sl = entry * (2 - BREAKEVEN_OFFSET)  # mirror: entry − 0.3%
-        if profit_pct >= BREAKEVEN_TRIGGER and (current_sl > breakeven_sl or current_sl == 0):
-            conn.execute("UPDATE positions SET sl_price = ?, sl_since = ? WHERE id = ?", (breakeven_sl, _now_ms(), row["id"]))
-            return (breakeven_sl, f"SHORT breakeven+ (profit {profit_pct:+.2f}%)")
-        if profit_pct >= TRAILING_TRIGGER:
-            trailing_sl = current_price * (1 + TRAILING_DISTANCE / 100)
-            if trailing_sl < current_sl or current_sl == 0:
-                conn.execute("UPDATE positions SET sl_price = ?, sl_since = ? WHERE id = ?", (trailing_sl, _now_ms(), row["id"]))
-                return (trailing_sl, f"SHORT trailing +{profit_pct:.1f}% profit")
-
-    return None
+    conn.execute("UPDATE positions SET sl_price = ?, sl_since = ? WHERE id = ?",
+                 (new_sl, _now_ms(), row["id"]))
+    return (new_sl, f"trailing +{profit_pct / R:.1f}R (R={R:.2f}%), SL={new_sl:.4f}")
 
 
 def _snapshot_equity(conn, open_rows):
@@ -1632,11 +1721,12 @@ def cmd_check(args):
             except Exception:
                 print(f"[zombie] {r['ticker']} — can't fetch price, skipping auto-close")
                 continue
-            if direction == "long":
-                pnl_pct = (exit_price - r["entry_price"]) / r["entry_price"] * 100
-            else:
-                pnl_pct = (r["entry_price"] - exit_price) / r["entry_price"] * 100
-            pnl_usd = r["size_usd"] * (pnl_pct / 100)
+            # v4.3: netto po kosztach; uwzględnia zrealizowane TP1, jeśli było
+            _f1 = _tp1_frac_of(r)
+            _, _rest, _ = _net_pnl(direction, r["entry_price"], exit_price,
+                                   float(r["size_usd"] or 0) * (1 - _f1))
+            pnl_usd = (float(r["tp1_pnl_usd"] or 0) if _f1 > 0 else 0.0) + _rest
+            pnl_pct = pnl_usd / float(r["size_usd"]) * 100 if r["size_usd"] else 0.0
             close_ts = now_utc.isoformat()
             conn.execute(
                 """UPDATE positions SET status='closed', exit_price=?, exit_date=?,
@@ -1671,8 +1761,12 @@ def cmd_check(args):
         except Exception:
             print(f"[short-kill] {r['ticker']} — can't fetch price, skipping")
             continue
-        pnl_pct = (r["entry_price"] - exit_price) / r["entry_price"] * 100
-        pnl_usd = r["size_usd"] * (pnl_pct / 100)
+        # v4.3: netto po kosztach; uwzględnia zrealizowane TP1, jeśli było
+        _f1 = _tp1_frac_of(r)
+        _, _rest, _ = _net_pnl("short", r["entry_price"], exit_price,
+                               float(r["size_usd"] or 0) * (1 - _f1))
+        pnl_usd = (float(r["tp1_pnl_usd"] or 0) if _f1 > 0 else 0.0) + _rest
+        pnl_pct = pnl_usd / float(r["size_usd"]) * 100 if r["size_usd"] else 0.0
         close_ts = now_utc.isoformat()
         conn.execute(
             """UPDATE positions SET status='closed', exit_price=?, exit_date=?,
@@ -1718,18 +1812,25 @@ def cmd_check(args):
         exit_ts = None
         hit_or_miss = None
 
+        # v4.3: ile pozycji już zamknięto na TP1 — jeśli >0, TP1 się nie powtarza
+        tp1_frac_done = _tp1_frac_of(r)
+
         for candle in ohlc:  # [ts, o, h, l, c, v]
             ts, _o, h, l, c, _v = candle
+            # v4.3: jeden wspólny warunek zamiast powtarzania `ts >= sl_since_ms`
+            # przy każdej gałęzi. Dotyczy teraz także TP — świeca sprzed ostatniej
+            # zmiany SL nie powinna zamykać pozycji w ŻADNĄ stronę.
+            if ts < sl_since_ms:
+                continue
             if direction == "long":
                 # v3.1: CLOSE-BASED SL — wymaga zamknięcia świecy poniżej SL, nie tylko
                 # wick (low). Wicki często dotykają SL i wracają (fałszywa presja).
-                # TP nadal check na high (konserwatywne: TP HIT = pewny zysk).
-                # Check TP FIRST — jeśli TP2 trafiony na tej świecy, SL jest nieistotny.
-                if tp2 and h >= tp2 and ts >= sl_since_ms:
-                    exit_price = tp2; exit_ts = ts; hit_or_miss = "hit_tp2"; break
-                if tp1 and h >= tp1 and ts >= sl_since_ms:
-                    exit_price = tp1; exit_ts = ts; hit_or_miss = "hit_tp1"; break
-                if sl and c <= sl and ts >= sl_since_ms:
+                # v4.3: SL sprawdzany PRZED TP. Gdy jedna świeca 5m dotyka obu poziomów,
+                # z samego OHLC nie da się ustalić kolejności. Dotąd przyznawaliśmy TP,
+                # czyli przy każdej niejednoznaczności zapisywaliśmy wygraną. To jedno
+                # z dwóch miejsc, w których rejestr był systematycznie zbyt optymistyczny
+                # (drugim był brak kosztów). Teraz przy niejednoznaczności idzie strata.
+                if sl and c <= sl:
                     # v4.2 (13.10.2026): wypełnienie po GORSZEJ z dwóch cen — poziomu SL
                     # albo zamknięcia świecy. Wyzwalaczem jest zamknięcie poniżej SL, więc
                     # gdy świeca przeskoczy przez stopa, realne wypełnienie byłoby po close,
@@ -1737,16 +1838,19 @@ def cmd_check(args):
                     # Wykryte przez test_no_peeking.py — exit_price bywał powyżej całego
                     # zakresu świecy, czyli po cenie, której nie było.
                     exit_price = min(sl, c); exit_ts = ts; hit_or_miss = "hit_sl"; break
-            else:  # SHORT
-                # v3.1: SHORT SL = candle CLOSE above SL (was: high >= sl).
-                # TP check first (same reasoning as LONG).
-                if tp2 and l <= tp2 and ts >= sl_since_ms:
+                if tp2 and h >= tp2:
                     exit_price = tp2; exit_ts = ts; hit_or_miss = "hit_tp2"; break
-                if tp1 and l <= tp1 and ts >= sl_since_ms:
+                if tp1 and h >= tp1 and tp1_frac_done <= 0:
                     exit_price = tp1; exit_ts = ts; hit_or_miss = "hit_tp1"; break
-                if sl and c >= sl and ts >= sl_since_ms:
+            else:  # SHORT
+                # v3.1: SHORT SL = candle CLOSE above SL. v4.3: SL przed TP, jak w LONG.
+                if sl and c >= sl:
                     # v4.2: symetrycznie do LONG — dla shorta gorsza cena to WYŻSZA.
                     exit_price = max(sl, c); exit_ts = ts; hit_or_miss = "hit_sl"; break
+                if tp2 and l <= tp2:
+                    exit_price = tp2; exit_ts = ts; hit_or_miss = "hit_tp2"; break
+                if tp1 and l <= tp1 and tp1_frac_done <= 0:
+                    exit_price = tp1; exit_ts = ts; hit_or_miss = "hit_tp1"; break
 
         if exit_price is None:
             # Position still open — check if trailing SL should update
@@ -1778,18 +1882,52 @@ def cmd_check(args):
                       f"last {last_price:.4f}  SL {r['sl_price']:.4f}")
                 continue
 
-        # PnL: LONG profits from price going up, SHORT profits from price going down
-        if direction == "long":
-            pnl_pct = (exit_price - r["entry_price"]) / r["entry_price"] * 100
-        else:
-            pnl_pct = (r["entry_price"] - exit_price) / r["entry_price"] * 100
-        pnl_usd = r["size_usd"] * (pnl_pct / 100)
         exit_dt = datetime.fromtimestamp(exit_ts / 1000, tz=timezone.utc).isoformat()
+        entry_px = float(r["entry_price"])
+        size_usd = float(r["size_usd"] or 0)
+
+        # ── v4.3: TP1 = CZĘŚCIOWE zamknięcie, zapisane na tym samym wierszu ────
+        # Pozycja zostaje otwarta z resztą nominału, a stop idzie na breakeven
+        # POKRYWAJĄCY KOSZTY (samo wejście to jeszcze strata o COST_PCT).
+        # Wiersz się nie rozdwaja, więc dzienny limit wejść, licznik pozycji
+        # i definicja wygranej z rejestru zostają nietknięte.
+        if hit_or_miss == "hit_tp1" and TP1_CLOSE_FRAC < 1 and tp1_frac_done <= 0:
+            part_usd = size_usd * TP1_CLOSE_FRAC
+            _part_pct, part_usd_pnl, _g = _net_pnl(direction, entry_px, exit_price, part_usd)
+            be = entry_px * (1 + COST_PCT / 100) if direction == "long" else entry_px * (1 - COST_PCT / 100)
+            cur_sl = float(r["sl_price"] or 0)
+            new_sl = max(cur_sl, be) if direction == "long" else (min(cur_sl, be) if cur_sl else be)
+            # sl_since przesunięte o jedną świecę 5m do przodu — nowy stop nie może
+            # trafić w świecę, na której dopiero co zrealizowaliśmy TP1 (sl_rescan_bug).
+            conn.execute(
+                """UPDATE positions SET tp1_frac=?, tp1_exit_price=?, tp1_pnl_usd=?, tp1_at=?,
+                   sl_price=?, sl_since=? WHERE id=?""",
+                (TP1_CLOSE_FRAC, exit_price, part_usd_pnl, exit_dt, new_sl,
+                 exit_ts + 5 * 60_000, r["id"]),
+            )
+            conn.commit()
+            print(f"[tp1] {r['ticker']} {direction.upper()} zamknięte {TP1_CLOSE_FRAC:.0%} @ {exit_price:.4f}  "
+                  f"(${part_usd_pnl:+.2f} netto)  reszta biegnie, SL → breakeven {new_sl:.4f}")
+            _notify_close(r["ticker"], direction, entry_px, exit_price,
+                          _part_pct, part_usd_pnl, "hit_tp1_partial")
+            continue
+
+        # ── rozliczenie końcowe ────────────────────────────────────────────────
+        # Gdy TP1 już poszło, zamykamy tylko resztę; wynik transakcji to suma obu
+        # części, a pnl_pct dalej znaczy „zwrot na PIERWOTNYM nominale", więc jest
+        # porównywalny z całą wcześniejszą historią.
+        rest_usd = size_usd * (1 - tp1_frac_done)
+        _rest_pct, rest_usd_pnl, gross_pct = _net_pnl(direction, entry_px, exit_price, rest_usd)
+        tp1_usd_pnl = float(r["tp1_pnl_usd"] or 0) if tp1_frac_done > 0 else 0.0
+        pnl_usd = tp1_usd_pnl + rest_usd_pnl
+        pnl_pct = (pnl_usd / size_usd * 100) if size_usd else 0.0
+        if hit_or_miss == "hit_sl" and tp1_frac_done > 0:
+            hit_or_miss = "hit_breakeven"   # stop po TP1 to nie jest ta sama rzecz co stop
 
         conn.execute(
             """UPDATE positions SET status='closed', exit_price=?, exit_date=?,
-               pnl_pct=?, pnl_usd=?, hit_or_miss=?, closed_at=? WHERE id=?""",
-            (exit_price, exit_dt, pnl_pct, pnl_usd, hit_or_miss, exit_dt, r["id"]),
+               pnl_pct=?, pnl_usd=?, hit_or_miss=?, closed_at=?, pnl_gross_pct=? WHERE id=?""",
+            (exit_price, exit_dt, pnl_pct, pnl_usd, hit_or_miss, exit_dt, gross_pct, r["id"]),
         )
         conn.commit()
         arrow = "↗" if direction == "long" else "↘"
@@ -2676,11 +2814,12 @@ def cmd_close(args):
     now_iso = datetime.now(timezone.utc).isoformat()
     for r in rows:
         direction = r['direction'] if 'direction' in r.keys() else 'long'
-        if direction == 'long':
-            pnl_pct = (exit_price - r['entry_price']) / r['entry_price'] * 100
-        else:
-            pnl_pct = (r['entry_price'] - exit_price) / r['entry_price'] * 100
-        pnl_usd = r['size_usd'] * (pnl_pct / 100)
+        # v4.3: netto po kosztach; uwzględnia zrealizowane TP1, jeśli było
+        _f1 = _tp1_frac_of(r)
+        _, _rest, _ = _net_pnl(direction, r['entry_price'], exit_price,
+                               float(r['size_usd'] or 0) * (1 - _f1))
+        pnl_usd = (float(r['tp1_pnl_usd'] or 0) if _f1 > 0 else 0.0) + _rest
+        pnl_pct = pnl_usd / float(r['size_usd']) * 100 if r['size_usd'] else 0.0
         conn.execute(
             """UPDATE positions SET status='closed', exit_price=?, exit_date=?,
                pnl_pct=?, pnl_usd=?, hit_or_miss=?, closed_at=? WHERE id=?""",
