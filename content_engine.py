@@ -1532,9 +1532,59 @@ def _tg_send_personal(text):
         log(f"telegram personal failed: {e}")
 
 
+TG_SENT_PATH = FUSION_DIR / "tg_sent.json"
+TG_DEDUPE_HOURS = 20
+
+
+def _tg_already_sent(key):
+    """
+    Druga warstwa ochrony przed wielokrotną wysyłką tej samej propozycji.
+
+    Powód (13.10.2026): content_queue.json jest JEDYNYM zabezpieczeniem, a tego dnia
+    zawiódł — wpisy dla 13.10 zostały wygenerowane od nowa o 00:03, 08:18 i 09:33
+    (widać po zmieniającym się polu `ts` przy tej samej dacie), więc Telegram dostał
+    ten sam zestaw trzy razy. Skrypty sygnałowe mają tg_sent.json od dawna,
+    content_engine nie odwoływał się do niego ani razu.
+
+    Klucz to data + typ + platforma, nie treść — regeneracja daje inny tekst,
+    a chodzi o to, żeby ten sam SLOT nie wyszedł dwa razy w ciągu doby.
+    """
+    try:
+        sent = json.loads(TG_SENT_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        sent = {}
+    if not isinstance(sent, dict):
+        sent = {}
+    now = _now()
+    prev = sent.get(key)
+    if prev:
+        try:
+            age_h = (now - datetime.fromisoformat(prev)).total_seconds() / 3600
+            if age_h < TG_DEDUPE_HOURS:
+                log(f"  skip telegram {key} — wysłane {age_h:.1f}h temu")
+                return True
+        except Exception:
+            pass
+    sent[key] = now.isoformat()
+    cutoff = (now - timedelta(days=3)).isoformat()
+    sent = {k: v for k, v in sent.items() if v >= cutoff}
+    try:
+        TG_SENT_PATH.write_text(json.dumps(sent, indent=1, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        log(f"  tg_sent zapis nieudany: {e}")
+    return False
+
+
 def _notify_new_posts(posts):
     """Send full post texts to personal Telegram — ready for copy-paste."""
     if not posts:
+        return
+
+    # v5.3: odfiltruj sloty, które dziś już poszły (patrz _tg_already_sent)
+    posts = [p for p in posts
+             if not _tg_already_sent(f"{_today()}|{p.get('type')}|{p.get('platform')}")]
+    if not posts:
+        log("Wszystkie propozycje już dziś wysłane — Telegram pominięty.")
         return
 
     summary = f"📝 <b>Content Engine v5.2 — {len(posts)} nowych postów</b>\n\n"
