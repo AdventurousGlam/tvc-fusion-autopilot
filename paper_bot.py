@@ -1730,7 +1730,13 @@ def cmd_check(args):
                 if tp1 and h >= tp1 and ts >= sl_since_ms:
                     exit_price = tp1; exit_ts = ts; hit_or_miss = "hit_tp1"; break
                 if sl and c <= sl and ts >= sl_since_ms:
-                    exit_price = sl; exit_ts = ts; hit_or_miss = "hit_sl"; break
+                    # v4.2 (13.10.2026): wypełnienie po GORSZEJ z dwóch cen — poziomu SL
+                    # albo zamknięcia świecy. Wyzwalaczem jest zamknięcie poniżej SL, więc
+                    # gdy świeca przeskoczy przez stopa, realne wypełnienie byłoby po close,
+                    # nie po poziomie. Zapisywanie samego `sl` zaniżało każdą taką stratę.
+                    # Wykryte przez test_no_peeking.py — exit_price bywał powyżej całego
+                    # zakresu świecy, czyli po cenie, której nie było.
+                    exit_price = min(sl, c); exit_ts = ts; hit_or_miss = "hit_sl"; break
             else:  # SHORT
                 # v3.1: SHORT SL = candle CLOSE above SL (was: high >= sl).
                 # TP check first (same reasoning as LONG).
@@ -1739,7 +1745,8 @@ def cmd_check(args):
                 if tp1 and l <= tp1 and ts >= sl_since_ms:
                     exit_price = tp1; exit_ts = ts; hit_or_miss = "hit_tp1"; break
                 if sl and c >= sl and ts >= sl_since_ms:
-                    exit_price = sl; exit_ts = ts; hit_or_miss = "hit_sl"; break
+                    # v4.2: symetrycznie do LONG — dla shorta gorsza cena to WYŻSZA.
+                    exit_price = max(sl, c); exit_ts = ts; hit_or_miss = "hit_sl"; break
 
         if exit_price is None:
             # Position still open — check if trailing SL should update
@@ -1754,10 +1761,14 @@ def cmd_check(args):
                 r = conn.execute("SELECT * FROM positions WHERE id = ?", (r["id"],)).fetchone()
                 sl = float(r["sl_price"] or 0)
                 # Re-check if the new trailing SL is already hit
+                # v4.2 (13.10.2026): ta sama poprawka co przy zwykłym SL — wypełnienie po
+                # gorszej z dwóch cen. Tu było najgroźniejsze: trailing SL podniesiony
+                # POWYŻEJ rynku natychmiast spełniał warunek i zamykał pozycję po cenie
+                # wyższej niż cokolwiek, czym handlowano. Stąd stop lossy z dodatnim PnL.
                 if direction == "long" and sl and last_price <= sl:
-                    exit_price = sl; exit_ts = ohlc[-1][0]; hit_or_miss = "hit_trailing_sl"
+                    exit_price = min(sl, last_price); exit_ts = ohlc[-1][0]; hit_or_miss = "hit_trailing_sl"
                 elif direction != "long" and sl and last_price >= sl:
-                    exit_price = sl; exit_ts = ohlc[-1][0]; hit_or_miss = "hit_trailing_sl"
+                    exit_price = max(sl, last_price); exit_ts = ohlc[-1][0]; hit_or_miss = "hit_trailing_sl"
                 else:
                     print(f"[check] {r['ticker']} ({direction}): still open  entry {r['entry_price']:.4f}  "
                           f"last {last_price:.4f}  trailing SL {sl:.4f}")
