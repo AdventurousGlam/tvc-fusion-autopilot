@@ -363,7 +363,50 @@ def db_init():
     _migrate_add_column(conn, "positions", "pnl_gross_pct", "REAL")
     conn.commit()
     _migrate_sl_rescan_bug(conn)
+    _migrate_restate_net(conn)
     conn.close()
+
+
+def _migrate_restate_net(conn):
+    """v4.3 (13.10.2026) — JEDNORAZOWE przeliczenie całej historii na PnL netto.
+
+    Do 13.10 każda zamknięta pozycja była liczona po czystej różnicy cen: zero
+    prowizji, zero poślizgu. Rejestr sam to przyznawał, ale przyznanie się do
+    zawyżania nie jest tym samym co przestanie zawyżać. Siedemnaście „wygranych"
+    miało zysk mniejszy niż koszt obrotu — nigdy nie były wygranymi.
+
+    Dlaczego jako migracja, a nie skrypt uruchamiany ręcznie: paper_trades.db
+    jest commitowana przez autopilota co ~5 min. Lokalne przeliczenie + push
+    przegrałoby wyścig — git nie scala binarnego SQLite, a workflow rozwiązuje
+    konflikt na korzyść danych z własnego przebiegu. Jako migracja wykona się
+    dokładnie raz, u tego kto pierwszy otworzy bazę, i nie ma czego ścigać.
+
+    Idempotentne: kluczem jest pnl_gross_pct IS NULL. Wiersze zamknięte już
+    przez kod v4.3 mają je wypełnione i są pomijane — one są netto od początku.
+    Oryginalna wartość brutto NIE ginie: ląduje w pnl_gross_pct.
+    """
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(positions)")]
+    if "pnl_gross_pct" not in cols:
+        return
+    rows = conn.execute(
+        """SELECT id, pnl_pct, size_usd FROM positions
+           WHERE status='closed' AND pnl_pct IS NOT NULL AND pnl_gross_pct IS NULL"""
+    ).fetchall()
+    if not rows:
+        return
+    d_usd = 0.0
+    for _id, gross, size in rows:
+        gross = float(gross)
+        size = float(size or 0)
+        net = gross - COST_PCT
+        new_usd = size * net / 100
+        d_usd += new_usd - (size * gross / 100)
+        conn.execute("UPDATE positions SET pnl_gross_pct=?, pnl_pct=?, pnl_usd=? WHERE id=?",
+                     (gross, net, new_usd, _id))
+    conn.commit()
+    print(f"[migrate] v4.3 — historia przeliczona na netto: {len(rows)} pozycji, "
+          f"koszt {COST_PCT:.2f}% na obrót, suma PnL zmieniona o {d_usd:+.2f} $. "
+          f"Wartości brutto zachowane w pnl_gross_pct.")
     print(f"[init] db ready at {DB_PATH}")
 
 

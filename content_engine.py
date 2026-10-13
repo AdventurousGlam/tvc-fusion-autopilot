@@ -25,7 +25,7 @@ WHY v5.1 (2026-10-05):
     - Thursday = "what the week taught the system" (no P&L table) while stats are off
     - reply brief: 4 X talking points + 3 LinkedIn comment angles, no stats
     - every Telegram batch ends with the DAILY ENGAGEMENT CHECKLIST (the actual lever)
-  Targets by 2026-11-11: LinkedIn >500 weekly impressions and >=10 comments on our posts;
+  Targets by 2026-11-12: LinkedIn >500 weekly impressions and >=10 comments on our posts;
   X >30 impressions/post average. If missed, change strategy again - do not add posts.
 
 WHY v5.0 (2026-10-02):
@@ -90,13 +90,13 @@ EVENING_X_SLOT = False # v5.0: disabled
 X_DAYS = {1, 3, 4, 6}  # v5.1: X only Tue/Thu/Fri/Sun (4 posts/week, recovery mode)
 X_TEXT_ONLY = True     # v5.1: no graphics on X - screenshots + cashtags = bot pattern
 TRADE_CLOSE_POSTS = False  # v5.1: no "trade closed +x%" posts anywhere
-# v5.3 (2026-10-13): moved 2026-11-02 -> 2026-11-11. The 30-day window restarted
+# v5.4 (2026-10-13): 2026-11-02 -> 2026-11-11 -> 2026-11-12 (v4.3 rule changes). The 30-day window restarted
 # on 2026-10-12, when the ETF flow fetch was fixed - ETF flows feed the On-Chain
 # sub-score for BTC and ETH, so that is a scoring-input change and the clock has
 # to start over. This date MUST stay equal to the publication date in
 # REJESTR_WYKLUCZEN.md section 6. If one moves, move the other in the same commit,
 # otherwise the engine starts posting numbers the register does not yet consider valid.
-STATS_PUBLIC_FROM = "2026-11-11"
+STATS_PUBLIC_FROM = "2026-11-12"
 SHOW_STATS = datetime.now(timezone.utc).strftime("%Y-%m-%d") >= STATS_PUBLIC_FROM
 
 DAILY_CHECKLIST = (
