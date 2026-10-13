@@ -21,6 +21,19 @@ set -uo pipefail
 cd "$(dirname "$0")"
 WHAT="${1:-all}"
 FAIL=0
+
+# Zależności: pyflakes i pyyaml. Na macOS `pip install` do systemowego Pythona
+# zwykle się nie uda (externally-managed-environment), więc instalujemy do
+# katalogu użytkownika. Brak którejkolwiek = sprawdzenie POMINIĘTE, a nie
+# „przeszło" — dlatego skrypt kończy się wtedy błędem, nie zielonym.
+_ensure() {  # $1 = moduł, $2 = nazwa paczki
+  python3 -c "import $1" 2>/dev/null && return 0
+  printf '   … brak %s, instaluję\n' "$2"
+  pip3 install --user --quiet "$2" 2>/dev/null \
+    || pip3 install --quiet --break-system-packages "$2" 2>/dev/null \
+    || python3 -m pip install --user --quiet "$2" 2>/dev/null
+  python3 -c "import $1" 2>/dev/null
+}
 step() { printf '\n\033[1m── %s ──\033[0m\n' "$1"; }
 ok()   { printf '   ✅ %s\n' "$1"; }
 bad()  { printf '   ❌ %s\n' "$1"; FAIL=1; }
@@ -34,11 +47,7 @@ if [ "$WHAT" = all ] || [ "$WHAT" = py ]; then
   done
 
   step "Python — nazwy i martwy kod (pyflakes)"
-  if ! python3 -m pyflakes --version >/dev/null 2>&1; then
-    printf '   … instaluję pyflakes\n'
-    pip install pyflakes --quiet --break-system-packages >/dev/null 2>&1 || true
-  fi
-  if python3 -m pyflakes --version >/dev/null 2>&1; then
+  if _ensure pyflakes pyflakes; then
     # Interesują nas tylko błędy, które wywalają program przy wykonaniu.
     # "imported but unused" i f-stringi bez pól to styl, nie awaria.
     OUT=$(python3 -m pyflakes $PYF 2>&1 | grep -E "undefined name|local variable .* referenced before|redefinition of unused" || true)
@@ -91,6 +100,9 @@ fi
 # ── 3. WORKFLOW: pułapka set -e w przypisaniach ──────────────────────────────
 if [ "$WHAT" = all ] || [ "$WHAT" = yml ]; then
   step "Workflow — składnia YAML"
+  if ! _ensure yaml pyyaml; then
+    bad "pyyaml niedostępny — sprawdzenia YAML POMINIĘTE, nie mów że zweryfikowane"
+  else
   python3 - <<'PY'
 import sys
 try:
@@ -136,7 +148,9 @@ print("   ✅ brak przypisań wrażliwych na set -e")
 PY
   [ $? -ne 0 ] && FAIL=1
 
+  fi
   step "Workflow — bloki run: uruchomione w bashu CI (-eo pipefail, dry-run)"
+  if python3 -c "import yaml" 2>/dev/null; then
   python3 - <<'PY'
 import yaml, subprocess, sys, tempfile, os
 try:
@@ -161,6 +175,9 @@ print("   ✅ wszystkie bloki run parsują się w bashu CI" if not bad else f"  
 sys.exit(1 if bad else 0)
 PY
   [ $? -ne 0 ] && FAIL=1
+  else
+    bad "pyyaml niedostępny — bloki run NIESPRAWDZONE"
+  fi
 fi
 
 printf '\n'
