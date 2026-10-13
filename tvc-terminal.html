@@ -6895,9 +6895,14 @@ function invalidationLevels(ticker, state) {
     // dla obserwacji: co zrobiłoby z tego setup
     if (dec.score != null && dec.score < 65) out.push(`${t('iv_fusion_above')} (${t('iv_now')} ${dec.score})`);
     if (price) {
+      // Strefa bliżej niż 0,15% to w praktyce bieżąca cena — warunek już spełniony,
+      // więc jako „co zrobiłoby z tego setup" nie niesie informacji. Bierzemy
+      // najbliższą strefę, która jest realnie oddalona.
       const hz = getHeatmapZones(ticker);
-      const hBuy = (hz.buyZones || [])[0];
-      if (hBuy) out.push(`${t('iv_zone_reach')} ${(hBuy.pct).toFixed(2)}% ($${fmt(price * (1 + hBuy.pct / 100))})`);
+      const hBuy = (hz.buyZones || [])
+        .filter(z => Math.abs(z.pct) >= 0.15)
+        .sort((a, b) => Math.abs(a.pct) - Math.abs(b.pct))[0];
+      if (hBuy) out.push(`${t('iv_zone_reach')} ${hBuy.pct.toFixed(2)}% ($${fmt(price * (1 + hBuy.pct / 100))})`);
     }
     const frW = flushRisk[ticker];
     if (frW && !frW.error && frW.score >= 30) out.push(`${t('iv_flush_drop')} (${t('iv_now')} ${frW.score})`);
