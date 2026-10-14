@@ -395,6 +395,25 @@ def _migrate_flag_out_of_range(conn):
         print(f"[migrate] v4.3.3 — oznaczono {cur.rowcount} pozycji jako wykluczone "
               f"(wyjście spoza zakresu, rejestr pkt 2b): {', '.join(f'#{i}' for i in ids)}")
 
+    # v4.3.4 (14.10.2026) — ERA PRZED 28.08, rejestr pkt 2a.
+    # Pierwsza wersja tej migracji oznaczyła tylko klasę „wyjście spoza zakresu"
+    # i pominęła tę. Audyt tygodniowy dalej padał na #1, #4 i #5 — i miał rację,
+    # bo w bazie nie było śladu, że to pozycje wykluczone.
+    # Dowód, że to nie są prawdziwe transakcje (sprawdzone na świecach Binance):
+    #   #1 SOL  wyjście 80      przy zakresie 75,20–76,22   (luka 4,73%)
+    #   #4 SOL  wyjście 88      przy zakresie 91,35–91,76   (luka 3,81%)
+    #   #5 BTC  wyjście 77 000  przy zakresie 77 488–77 812 (luka 0,63%)
+    # Ceny wejścia pochodziły z fusionu robionego ręcznie i bywały sprzed kilku
+    # dni. Kod wyjść opartych o świece wszedł dopiero 28.08 (commit b92888d0c).
+    cur2 = conn.execute(
+        "UPDATE positions SET excluded = 1 "
+        "WHERE status = 'closed' AND date < '2026-08-28' AND COALESCE(excluded, 0) = 0"
+    )
+    if cur2.rowcount:
+        conn.commit()
+        print(f"[migrate] v4.3.4 — oznaczono {cur2.rowcount} pozycji z ery przed 28.08 "
+              f"jako wykluczone (rejestr pkt 2a)")
+
 
 def _migrate_restate_net(conn):
     """v4.3 (13.10.2026) — JEDNORAZOWE przeliczenie całej historii na PnL netto.
