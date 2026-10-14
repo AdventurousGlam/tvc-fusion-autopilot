@@ -75,6 +75,12 @@ BINANCE = {
 }
 
 failures: list[str] = []
+# v1.2 (14.10.2026): pozycje z flagą excluded=1 w bazie są znane, opisane
+# w REJESTR_WYKLUCZEN.md i mają udokumentowaną przyczynę. Dalej je sprawdzamy
+# i WYPISUJEMY, ale nie liczą się jako nowy defekt — inaczej audyt tygodniowy
+# świeciłby na czerwono co tydzień z tego samego powodu, a alarm, który dzwoni
+# zawsze, przestaje cokolwiek znaczyć.
+known: list[str] = []
 warnings: list[str] = []
 
 
@@ -274,12 +280,27 @@ def main():
             TOL = 0.0015
             if not (lo * (1 - TOL) <= px <= hi * (1 + TOL)):
                 gap = (lo - px) / px * 100 if px < lo else (px - hi) / px * 100
-                fail(f"#{r['id']} {r['ticker']} {r['hit_or_miss']}: poziom {px} nigdy nie "
-                     f"dotknięty (zakres {lo}–{hi}, luka {gap:.2f}%)")
+                opis = (f"#{r['id']} {r['ticker']} {r['hit_or_miss']}: poziom {px} nigdy nie "
+                        f"dotknięty (zakres {lo}–{hi}, luka {gap:.2f}%)")
+                try:
+                    wykluczona = bool(r["excluded"])
+                except (KeyError, IndexError):
+                    wykluczona = False
+                if wykluczona:
+                    known.append(opis)
+                    print(f"  (znane, wykluczone) {opis}")
+                else:
+                    fail(opis)
         print("  gotowe\n")
 
     # ── Podsumowanie ─────────────────────────────────────────────────────
     print("─" * 60)
+    if known:
+        print(f"Znane i wykluczone (nie wpływają na wynik testu): {len(known)}.")
+        for k in known:
+            print(f"  · {k}")
+        print("  Opis i przyczyna: REJESTR_WYKLUCZEN.md pkt 2b.")
+        print("─" * 60)
     if failures:
         print(f"PRZECIEK PRZYSZŁOŚCI: {len(failures)} problemów.")
         print("Wyniki konta modelowego są niewiarygodne, dopóki to nie zostanie naprawione.")

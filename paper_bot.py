@@ -364,7 +364,36 @@ def db_init():
     conn.commit()
     _migrate_sl_rescan_bug(conn)
     _migrate_restate_net(conn)
+    _migrate_flag_out_of_range(conn)
     conn.close()
+
+
+def _migrate_flag_out_of_range(conn):
+    """v4.3.3 (14.10.2026) — oznacz w BAZIE cztery pozycje z wyjściem spoza zakresu.
+
+    REJESTR_WYKLUCZEN.md pkt 2b opisuje je jako wykluczone od 13.10, ale kolumna
+    `excluded` w bazie dalej miała 0. Przez to tygodniowy audyt wywalał się na
+    nich co tydzień — alarm, który dzwoni zawsze, przestaje cokolwiek znaczyć.
+
+    To NIE jest ukrywanie. Pozycje zostają w bazie, są opisane w rejestrze
+    z przyczyną i z wielkością luki, a test dalej je sprawdza i wypisuje —
+    tylko nie traktuje ich jako nowego defektu.
+
+    Przyczyna była znaleziona i naprawiona 13.10 (v4.2): `exit_price = sl` przy
+    wyzwalaczu `close <= sl`. Nowe pozycje nie mogą już tak powstać.
+    """
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(positions)")]
+    if "excluded" not in cols:
+        return
+    ids = (14, 64, 65, 68)
+    cur = conn.execute(
+        f"UPDATE positions SET excluded = 1 "
+        f"WHERE id IN {ids} AND COALESCE(excluded, 0) = 0"
+    )
+    if cur.rowcount:
+        conn.commit()
+        print(f"[migrate] v4.3.3 — oznaczono {cur.rowcount} pozycji jako wykluczone "
+              f"(wyjście spoza zakresu, rejestr pkt 2b): {', '.join(f'#{i}' for i in ids)}")
 
 
 def _migrate_restate_net(conn):
