@@ -1,0 +1,36 @@
+# Pliki zapisywane JEDNOCZEŚNIE przez autopilota (co ~5 min) i przez człowieka.
+#
+# `-merge` wyłącza scalanie tekstowe. Przy konflikcie git zostawia do wyboru
+# CAŁĄ wersję jedną albo drugą i NIE WSTAWIA znaczników <<<<<<< ======= >>>>>>>.
+#
+# Dlaczego to jest właściwe rozwiązanie, a nie kolejny strażnik:
+# 13.10.2026 do repo dwa razy trafił content_queue.json ze znacznikami konfliktu
+# w środku JSON-a. Za pierwszym razem silnik treści wysłał te same propozycje
+# postów trzy razy. Za drugim odmówił wysyłki i zadzwonił alarm. Oba razy
+# przyczyną było to, że git próbował scalić linijka po linijce plik, którego
+# nie wolno scalać linijka po linijce — bo to nie jest kod pisany przez dwie
+# osoby, tylko stan generowany na nowo przy każdym przebiegu.
+#
+# Po tej zmianie znaczniki konfliktu w tych plikach przestają być możliwe.
+# Nie dlatego, że ktoś je wyłapie — dlatego, że nie powstaną.
+
+content_queue.json      -merge
+tg_sent.json            -merge
+autopilot_health.json   -merge
+crypto_picks.json       -merge
+layers_cache.json       -merge
+om_cache.json           -merge
+pump_radar.json         -merge
+pump_radar_alerts.json  -merge
+correlation_data.json   -merge
+market_predictions.json -merge
+weekly_recap.json       -merge
+fusion_*.json           -merge
+
+# SQLite — binarny, scalanie tekstowe nie ma sensu z definicji
+paper_trades.db         -merge -diff binary
+
+# Terminal: ~10 tys. linii, jedyny autor to ten projekt. Scalanie wersji
+# wygenerowanych osobno daje wynik, którego nikt nie przejrzy.
+tvc-terminal.html       -merge
+fusion-widget.html      -merge

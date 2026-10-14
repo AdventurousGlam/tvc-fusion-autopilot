@@ -46,6 +46,27 @@ from pathlib import Path
 DB_PATH = Path(__file__).resolve().parent / "paper_trades.db"
 ONLINE = "--online" in sys.argv
 
+# v1.1 (14.10.2026) — okno dni dla trybu online.
+# Tryb --online robi zapytanie o świece dla KAŻDEJ zamkniętej pozycji. Przy 101
+# pozycjach przebieg autopilota urósł z ~3 min do 6 min 48 s i nałożył się na
+# następny cykl (cron co 5 min). Dwa przebiegi zaczęły walczyć o push, pętla
+# ponawiania się wyczerpała i 14.10 o 04:11 oraz 04:20 UTC poszedł alarm
+# awarii infrastruktury.
+# Codziennie wystarczy sprawdzać świeże zamknięcia — defekt wykrywa się w dniu
+# powstania, a nie po sześciu tygodniach, i o to w tym teście chodzi.
+# Pełne skanowanie historii: `--online --days 0` (ręcznie, nie w autopilocie).
+def _arg_int(flag, default):
+    if flag in sys.argv:
+        i = sys.argv.index(flag)
+        if i + 1 < len(sys.argv):
+            try:
+                return int(sys.argv[i + 1])
+            except ValueError:
+                pass
+    return default
+
+DAYS = _arg_int("--days", 7)   # 0 = bez ograniczenia
+
 BINANCE = {
     "BTC": "BTCUSDT", "ETH": "ETHUSDT", "SOL": "SOLUSDT", "XRP": "XRPUSDT",
     "SUI": "SUIUSDT", "DOGE": "DOGEUSDT", "ADA": "ADAUSDT", "AVAX": "AVAXUSDT",
@@ -114,8 +135,17 @@ def main():
     rows = conn.execute(
         "SELECT * FROM positions WHERE status='closed' ORDER BY id"
     ).fetchall()
-    print(f"Sprawdzam {len(rows)} zamkniętych pozycji "
-          f"({'online + offline' if ONLINE else 'tylko offline'}).\n")
+    total = len(rows)
+    # Okno dotyczy TYLKO trybu online — sprawdzenia offline są darmowe, więc
+    # lecą na całej historii zawsze.
+    if ONLINE and DAYS > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=DAYS)).isoformat()
+        rows = [r for r in rows if (r["closed_at"] or "") >= cutoff]
+    okno = f", okno {DAYS} dni" if (ONLINE and DAYS > 0) else ""
+    print(f"Sprawdzam {len(rows)} z {total} zamkniętych pozycji "
+          f"({'online + offline' if ONLINE else 'tylko offline'}{okno}).\n")
+    if ONLINE and DAYS > 0 and len(rows) < total:
+        print(f"    (pominięto {total - len(rows)} starszych — pełne skanowanie: --online --days 0)\n")
 
     # ── 1. Kolejność wejścia ──────────────────────────────────────────────
     print("[1] Migawka fusion starsza niż otwarcie pozycji")

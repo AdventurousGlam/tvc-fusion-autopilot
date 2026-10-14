@@ -1,0 +1,84 @@
+# Tygodniowy pełny audyt rejestru — niedziela 05:10 UTC.
+#
+# Dlaczego OSOBNY workflow, a nie krok w tvc-autopilot.yml:
+# pełne skanowanie 101 pozycji po świecach Binance trwa kilka minut. Wstawione
+# do głównego cyklu (cron co 5 min) wydłużyło przebieg do 6 min 48 s, przebiegi
+# zaczęły się nakładać, pętla ponawiania pusha się wyczerpała i 14.10.2026
+# o 04:11 i 04:20 UTC poszedł alarm awarii infrastruktury.
+#
+# Ten workflow NICZEGO NIE COMMITUJE — tylko czyta bazę i sprawdza. Nie ma więc
+# jak wejść w wyścig o push z autopilotem. Osobna grupa `concurrency` sprawia,
+# że nie blokuje się też sam ze sobą.
+name: TVC — audyt tygodniowy
+
+on:
+  schedule:
+    # niedziela 05:10 UTC. GitHub potrafi opóźnić harmonogram o kilkanaście
+    # minut przy obciążeniu — dla audytu raz w tygodniu to bez znaczenia.
+    - cron: "10 5 * * 0"
+  workflow_dispatch: {}
+
+concurrency:
+  group: tvc-audyt
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  audyt:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Pełne skanowanie rejestru (--online --days 0, cała historia)
+        id: audyt
+        continue-on-error: true
+        run: |
+          echo "=== pełny audyt: wszystkie zamknięte pozycje, weryfikacja po świecach ==="
+          python3 test_no_peeking.py --online --days 0 2>&1 | tee /tmp/audyt.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Telegram — wynik audytu
+        if: always()
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "Brak sekretów Telegram — pomijam."; exit 0
+          fi
+          # tail bez `|| true` zwraca !=0 tylko gdy plik nie istnieje; zabezpieczamy
+          OGON=$(tail -25 /tmp/audyt.log 2>/dev/null) || OGON="(brak logu)"
+          if [ "${{ steps.audyt.outcome }}" = "success" ]; then
+            NAGLOWEK="✅ Audyt tygodniowy — rejestr czysty"
+          else
+            NAGLOWEK="🚨 AUDYT TYGODNIOWY — WYKRYTO PROBLEM"
+          fi
+          TEKST="${NAGLOWEK}
+          Run #${{ github.run_number }}
+          Log: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+          ${OGON}"
+          # `|| echo` jest tu konieczne: bez niego nieudane powiadomienie (chwilowa
+          # awaria sieci, limit API Telegrama) wywraca cały krok i audyt wygląda
+          # na nieudany, mimo że sprawdził wszystko poprawnie. Wynik audytu
+          # decyduje się w następnym kroku, nie tutaj.
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode "text=${TEKST}" >/dev/null \
+            && echo "Wysłano podsumowanie na Telegram." \
+            || echo "Nie udało się wysłać na Telegram — audyt i tak jest w logu."
+
+      - name: Zakończ błędem, jeśli audyt wykrył problem
+        if: steps.audyt.outcome == 'failure'
+        run: |
+          echo "Audyt wykrył problem — patrz log powyżej."
+          exit 1

@@ -131,8 +131,13 @@ jobs:
         run: |
           HOUR=$(date -u +%H); MIN=$(date -u +%M)
           if [ "$HOUR" = "04" ] && [ "$MIN" -lt "15" ]; then
-            echo "=== pełny test (--online, raz dziennie) ==="
-            python3 test_no_peeking.py --online 2>&1 | tail -30
+            # v4.3.2 (14.10.2026): --days 7 zamiast całej historii.
+            # Bez tego przebieg rósł do ~7 min (zapytanie o świece na każdą ze
+            # 101 pozycji) i nakładał się na następny cykl crona, co 14.10
+            # wywaliło pusha i dało alarm infrastruktury o 04:11 i 04:20 UTC.
+            # Pełne skanowanie historii robimy ręcznie: --online --days 0.
+            echo "=== test online, okno 7 dni (raz dziennie) ==="
+            timeout 150 python3 test_no_peeking.py --online --days 7 2>&1 | tail -30
           else
             python3 test_no_peeking.py 2>&1 | tail -20
           fi

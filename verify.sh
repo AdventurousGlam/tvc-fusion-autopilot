@@ -110,9 +110,16 @@ try:
 except ImportError:
     print("   ❌ brak pyyaml"); sys.exit(1)
 try:
-    d = yaml.safe_load(open('.github/workflows/tvc-autopilot.yml'))
-    n = len(list(d['jobs'].values())[0]['steps'])
-    print(f"   ✅ YAML poprawny, kroków: {n}")
+    import glob
+    bad = 0
+    for f in sorted(glob.glob('.github/workflows/*.yml')):
+        try:
+            d = yaml.safe_load(open(f))
+            n = sum(len(j.get('steps', [])) for j in d['jobs'].values())
+            print(f"   ✅ {f.split('/')[-1]} — kroków: {n}")
+        except Exception as e:
+            print(f"   ❌ {f.split('/')[-1]}: {type(e).__name__}: {e}"); bad = 1
+    sys.exit(bad)
 except Exception as e:
     print(f"   ❌ {type(e).__name__}: {e}"); sys.exit(1)
 PY
@@ -126,22 +133,21 @@ import re, sys
 # przebiegu (grep bez trafień, test, find), krok pada — mimo że nic złego się
 # nie stało. Ratuje `|| true` albo `|| echo` na końcu przypisania.
 RYZYKOWNE = ('grep', 'test ', '[ ', 'find', 'diff', 'cmp', 'git diff')
-try:
-    L = open('.github/workflows/tvc-autopilot.yml', encoding='utf-8').read().split('\n')
-except FileNotFoundError:
-    sys.exit(0)
+import glob
 bad = []
-for i, l in enumerate(L, 1):
+for _f in sorted(glob.glob('.github/workflows/*.yml')):
+  L = open(_f, encoding='utf-8').read().split('\n')
+  for i, l in enumerate(L, 1):
     if not re.match(r'^\s+[A-Za-z_][A-Za-z_0-9]*=\$\(', l):
         continue
     blok, j = l, i
     while blok.count('(') > blok.count(')') and j < len(L):
         blok += '\n' + L[j]; j += 1
-    if any(k in blok for k in RYZYKOWNE) and '|| true' not in blok and '|| echo' not in blok:
-        bad.append((i, l.strip()[:72]))
+    if any(k in blok for k in RYZYKOWNE) and '|| true' not in blok and '|| echo' not in blok and '|| OGON' not in blok:
+        bad.append((f"{_f.split('/')[-1]}:{i}", l.strip()[:72]))
 if bad:
     for n, t in bad:
-        print(f"   linia {n}: {t}")
+        print(f"   {n}: {t}")
     print("   ❌ przypisanie z polecenia, które zwraca !=0 w normalnym przebiegu — dopisz `|| true`")
     sys.exit(1)
 print("   ✅ brak przypisań wrażliwych na set -e")
@@ -153,13 +159,18 @@ PY
   if python3 -c "import yaml" 2>/dev/null; then
   python3 - <<'PY'
 import yaml, subprocess, sys, tempfile, os
-try:
-    d = yaml.safe_load(open('.github/workflows/tvc-autopilot.yml'))
-except Exception:
-    sys.exit(0)
-job = list(d['jobs'].values())[0]
+import glob
 bad = 0
-for s in job['steps']:
+_steps = []
+for _f in sorted(glob.glob('.github/workflows/*.yml')):
+    try:
+        d = yaml.safe_load(open(_f))
+    except Exception:
+        continue
+    for job in d['jobs'].values():
+        for st in job.get('steps', []):
+            _steps.append((_f.split('/')[-1], st))
+for _fn, s in _steps:
     r = s.get('run')
     if not r:
         continue
@@ -169,7 +180,7 @@ for s in job['steps']:
     res = subprocess.run(['bash', '-n', '-eo', 'pipefail', p], capture_output=True, text=True)
     os.unlink(p)
     if res.returncode:
-        print(f"   ❌ {s.get('name','(bez nazwy)')[:50]}: {res.stderr.strip()[:90]}")
+        print(f"   ❌ {_fn} / {s.get('name','(bez nazwy)')[:40]}: {res.stderr.strip()[:80]}")
         bad += 1
 print("   ✅ wszystkie bloki run parsują się w bashu CI" if not bad else f"   ❌ bloków z błędem: {bad}")
 sys.exit(1 if bad else 0)
