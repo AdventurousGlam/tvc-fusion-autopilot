@@ -57,6 +57,7 @@ Writes: content_queue.json + sends to personal Telegram for copy-paste
 
 from __future__ import annotations
 import json
+import html as _html
 import re
 import os
 import sqlite3
@@ -1551,13 +1552,32 @@ def _tg_send_personal(text):
             ctx = ssl.create_default_context(cafile=certifi.where())
         except ImportError:
             pass
-        data = up.urlencode({
-            "chat_id": chat, "text": text, "parse_mode": "HTML",
-            "disable_web_page_preview": "true",
-        }).encode()
-        req = ur.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data)
-        with ur.urlopen(req, timeout=10, context=ctx) as r:
-            log(f"telegram personal: {r.status}")
+        # v3: 429 → czekamy retry_after i ponawiamy; 400 „can't parse entities” →
+        # ponawiamy jako czysty tekst (bez parse_mode), żeby post nie przepadł.
+        import time as _time
+        import urllib.error as _ue
+        payload = {"chat_id": chat, "text": text, "parse_mode": "HTML",
+                   "disable_web_page_preview": "true"}
+        for attempt in range(3):
+            try:
+                req = ur.Request(f"https://api.telegram.org/bot{token}/sendMessage",
+                                 data=up.urlencode(payload).encode())
+                with ur.urlopen(req, timeout=10, context=ctx) as r:
+                    log(f"telegram personal: {r.status}")
+                return
+            except _ue.HTTPError as he:
+                body = he.read().decode(errors="replace")[:300]
+                if he.code == 429 and attempt < 2:
+                    try:
+                        wait = int(json.loads(body).get("parameters", {}).get("retry_after", 5))
+                    except Exception:
+                        wait = 5
+                    _time.sleep(min(max(wait, 1), 30)); continue
+                if he.code == 400 and "parse" in body.lower() and "parse_mode" in payload:
+                    payload.pop("parse_mode")
+                    payload["text"] = _html.unescape(re.sub(r"<[^>]+>", "", text))
+                    continue
+                log(f"telegram personal failed: HTTP {he.code} {body}"); return
     except Exception as e:
         log(f"telegram personal failed: {e}")
 
@@ -1632,21 +1652,23 @@ def _notify_new_posts(posts):
 
         header = f"━━━ <b>[{platform}] {ptype}</b>"
         if ticker:
-            header += f" — {ticker}"
+            header += f" — {_html.escape(str(ticker), quote=False)}"
         header += f" ({i}/{len(posts)}) ━━━"
 
-        text = p["text"].replace("<", "&lt;").replace(">", "&gt;")
+        # v3 (14.10.2026): pełne escapowanie (także &) — treść pochodzi z newsów/LLM.
+        # Przycinamy PRZED escapowaniem, żeby nie uciąć encji ani tagu w połowie.
+        text = _html.escape((p.get("text") or "")[:3500], quote=False)
 
         graphic = p.get("graphic", "")
         graphic_line = ""
         if graphic:
             graphic_clean = graphic.replace("📸 GRAPHIC: ", "").strip()
-            graphic_line = f"\n\n📸 <b>Grafika:</b>\n{graphic_clean}"
+            graphic_line = f"\n\n📸 <b>Grafika:</b>\n{_html.escape(graphic_clean[:400], quote=False)}"
 
         full_msg = f"{header}\n\n{text}{graphic_line}"
 
-        if len(full_msg) > 4000:
-            full_msg = full_msg[:3990] + "\n\n[...truncated]"
+        if len(full_msg) > 4090:   # bezpiecznik; tekst przycięty już przed escapowaniem
+            full_msg = f"{header}\n\n{text[:3800]}\n\n[...truncated]"
 
         _tg_send_personal(full_msg)
 

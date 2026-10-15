@@ -11,6 +11,7 @@
 <meta name="format-detection" content="telephone=no">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23F5B841'/%3E%3Ctext x='50' y='68' text-anchor='middle' font-family='sans-serif' font-weight='900' font-size='42' fill='%231a1200'%3ETVC%3C/text%3E%3C/svg%3E">
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23F5B841'/%3E%3Ctext x='50' y='68' text-anchor='middle' font-family='sans-serif' font-weight='900' font-size='42' fill='%231a1200'%3ETVC%3C/text%3E%3C/svg%3E">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src https://api.allorigins.win https://api.alternative.me https://api.binance.com https://api.blockchain.info https://api.blocknative.com https://api.bybit.com https://api.coingecko.com https://api.github.com https://api.hyperliquid.xyz https://api.llama.fi https://api.mainnet-beta.solana.com https://api.xrpscan.com https://corsproxy.org https://data-api.binance.vision https://etf-proxy.nerdygets.workers.dev https://eth.llamarpc.com https://ethereum-rpc.publicnode.com https://fapi.binance.com https://fullnode.mainnet.sui.io https://gist.githubusercontent.com https://mempool.space https://publicreporting.cftc.gov https://query1.finance.yahoo.com https://r.jina.ai https://rpc.ankr.com https://solana-rpc.publicnode.com https://stablecoins.llama.fi https://stats-data.hyperliquid.xyz https://sui-rpc.publicnode.com https://sui.llamarpc.com https://www.deribit.com https://xrplcluster.com https://www.coindesk.com https://cointelegraph.com https://decrypt.co https://farside.co.uk wss://fstream.binance.com wss://stream.binance.com; base-uri 'none'; form-action 'none'; object-src 'none'">
 <title>TVC Fusion Terminal</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
 <!-- TVC Brand font — Fraunces (matches tradingventureclub.com serif italic style) -->
@@ -849,7 +850,14 @@
   </div>
 </div>
 <script>
+// ─── Bezpieczeństwo (v0.3): wszystko z zewnątrz escapujemy zanim trafi do innerHTML ───
+function escHtml(v) { return String(v ?? '').replace(/[&<>"'`]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','`':'&#96;'}[c])); }
+function safeUrl(u) { try { const x = new URL(String(u), location.href); return (x.protocol === 'https:' || x.protocol === 'http:') ? x.href : '#'; } catch (e) { return '#'; } }
+
 (function() {
+  // ⚠️ UWAGA (v3): ta bramka hasła jest WYŁĄCZNIE KOSMETYCZNA. Hash jest w źródle,
+  // sesja leży w localStorage i można ją podrobić z konsoli. Nie chroni żadnych danych —
+  // wszystko, co terminal pobiera (gist), jest publiczne. Danych PRO nie trzymaj w publicznym gist.
   // SHA-256 hash of "tvcterminal2026" (change this — see instructions above)
   const PASSWORD_HASH = '625f83a7648df24cf985e3bb453176993c1d1b8e890372ffe4fe90c75e8498fc';
   const SESSION_KEY = 'tvc_auth';
@@ -1756,9 +1764,14 @@ function setLang(lang) {
 /* ============================================================
    CONFIG
    ============================================================ */
-const FUSION_JSON_URL = window.FUSION_JSON_URL
-  || new URLSearchParams(window.location.search).get('url')
-  || 'https://gist.githubusercontent.com/AdventurousGlam/e88c461a964ed22d2cf14326c65b4438/raw/fusion_latest.json';
+const FUSION_DEFAULT_URL = 'https://gist.githubusercontent.com/AdventurousGlam/e88c461a964ed22d2cf14326c65b4438/raw/fusion_latest.json';
+const FUSION_JSON_URL = (() => {
+  const cand = window.FUSION_JSON_URL || new URLSearchParams(window.location.search).get('url');
+  // tylko własny Gist: link z ?url= nie może podsunąć cudzych danych (i wstrzykniętego kodu)
+  if (cand && /^https:\/\/gist\.githubusercontent\.com\/AdventurousGlam\//.test(cand)) return cand;
+  if (cand) console.warn('[security] zignorowano obcy ?url=', cand);
+  return FUSION_DEFAULT_URL;
+})();
 
 const FUSION_REFRESH_MS = 5 * 60 * 1000;
 const PRICE_REFRESH_MS = 60 * 1000;
@@ -1877,7 +1890,7 @@ async function fetchWatchlistPrices() {
   );
   for (const r of results) {
     const v = r.status === 'fulfilled' ? r.value : null;
-    if (v && v.ok) livePrices[v.ticker] = { price: v.price, change24h: v.change24h };
+    if (v && v.ok) livePrices[v.ticker] = { price: v.price, change24h: v.change24h, ts: Date.now() };
   }
   updatePriceCells();
   renderWatchlistPanel();
@@ -2331,7 +2344,7 @@ async function fetchPrices() {
     const data = await resp.json();
     for (const [ticker, symbol] of Object.entries(BINANCE_SYMBOLS)) {
       const item = data.find(d => d.symbol === symbol);
-      if (item) livePrices[ticker] = { price: parseFloat(item.lastPrice), change24h: parseFloat(item.priceChangePercent) };
+      if (item) livePrices[ticker] = { price: parseFloat(item.lastPrice), change24h: parseFloat(item.priceChangePercent), ts: Date.now() };
     }
     updatePriceCells();
   } catch (e) {
@@ -2349,7 +2362,7 @@ function _fillPricesFromWS(tickers) {
     if (!ob || !ob.mid) continue;
     const existing = livePrices[ticker];
     // Always update price from WS mid; keep change24h if we had it, else 0
-    livePrices[ticker] = { price: ob.mid, change24h: existing?.change24h ?? 0 };
+    livePrices[ticker] = { price: ob.mid, change24h: existing?.change24h ?? 0, ts: Date.now() };
     filled++;
   }
   if (filled > 0) {
@@ -3272,7 +3285,7 @@ function openOrderbookStream(ticker) {
         // ─── WS→livePrices bridge (fallback when REST is banned) ───
         if (Date.now() < _priceBackoffUntil) {
           const existing = livePrices[ticker];
-          livePrices[ticker] = { price: mid, change24h: existing?.change24h ?? 0 };
+          livePrices[ticker] = { price: mid, change24h: existing?.change24h ?? 0, ts: now };
           // Throttle UI updates to max 2/sec (not every 100ms WS tick)
           if (!_wsPriceUpdateScheduled) {
             _wsPriceUpdateScheduled = true;
@@ -5649,7 +5662,7 @@ function renderCryptoPicks(cp) {
       </div>
       ${p.risk_flag ? `<div style="font-size:10px;color:var(--amber)">⚠ ${p.risk_flag}</div>` : ''}
       ${p.safety && !(p.safety.flags || []).length ? `<div style="font-size:10px;color:var(--green)">🔒 ${t('picks_contract_ok')} · ${p.safety.chain}${p.safety.holders ? ' · ' + Number(p.safety.holders).toLocaleString() + ' ' + t('picks_holders') : ''}${p.safety.top10_pct != null ? ' · top-10 ' + Number(p.safety.top10_pct).toFixed(0) + '%' : ''}</div>` : ''}
-      ${p.source_url ? `<a href="${p.source_url}" target="_blank" rel="noopener" style="font-size:9.5px;color:var(--blue);text-decoration:none">${t('picks_source')} ↗</a>` : ''}
+      ${p.source_url ? `<a href="${escHtml(safeUrl(p.source_url))}" target="_blank" rel="noopener noreferrer" style="font-size:9.5px;color:var(--blue);text-decoration:none">${t('picks_source')} ↗</a>` : ''}
     </div>`; };
 
   return `
@@ -6966,7 +6979,7 @@ function renderLiveInterpretation(ticker) {
       <div style="margin:8px 0;padding:8px;background:rgba(255,255,255,0.025);border-left:2px solid var(--text-dim);border-radius:3px">
         <div style="font-size:9.5px;color:var(--text-muted);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">${t('ct_title')}</div>
         ${contra.length
-          ? contra.map(c => `<div style="font-size:10.5px;color:var(--text);padding:2px 0">• ${c}</div>`).join('')
+          ? contra.map(c => `<div style="font-size:10.5px;color:var(--text);padding:2px 0">• ${escHtml(c)}</div>`).join('')
           : `<div style="font-size:10.5px;color:var(--text-dim);padding:2px 0;font-style:italic">${t('ct_none')}</div>`}
       </div>`;
 
@@ -6977,7 +6990,7 @@ function renderLiveInterpretation(ticker) {
       <div style="margin:8px 0;padding:8px;background:rgba(255,255,255,0.025);border-left:2px solid var(--gold);border-radius:3px">
         <div style="font-size:9.5px;color:var(--gold);font-weight:700;text-transform:uppercase;letter-spacing:0.06em;margin-bottom:4px">${waiting ? t('iv_title_watch') : t('iv_title')}</div>
         ${inval.length
-          ? inval.map(c => `<div style="font-size:10.5px;color:var(--text);padding:2px 0;font-family:var(--mono)">• ${c}</div>`).join('')
+          ? inval.map(c => `<div style="font-size:10.5px;color:var(--text);padding:2px 0;font-family:var(--mono)">• ${escHtml(c)}</div>`).join('')
           : `<div style="font-size:10.5px;color:var(--text-dim);padding:2px 0;font-style:italic">${t('iv_none')}</div>`}
       </div>`;
 
@@ -8404,7 +8417,7 @@ async function fetchRssViaJina(feedUrl, source, color) {
       const cats = [...item.querySelectorAll('category')].map(c => c.textContent).join(' ');
       if (!title) continue;
       const ts = pubDate ? new Date(pubDate).getTime() : 0;
-      items.push({ title, url: link || '#', source, color, published_on: Math.floor(ts / 1000), ts, categories: cats });
+      items.push({ title: escHtml(title), url: safeUrl(link || '#'), source: escHtml(source), color, published_on: Math.floor(ts / 1000), ts, categories: escHtml(cats) });
     }
     // Atom format fallback
     if (items.length === 0) {
@@ -8415,7 +8428,7 @@ async function fetchRssViaJina(feedUrl, source, color) {
         const pub = entry.querySelector('published, updated')?.textContent?.trim();
         if (!title) continue;
         const ts = pub ? new Date(pub).getTime() : 0;
-        items.push({ title, url: link || '#', source, color, published_on: Math.floor(ts / 1000), ts, categories: '' });
+        items.push({ title: escHtml(title), url: safeUrl(link || '#'), source: escHtml(source), color, published_on: Math.floor(ts / 1000), ts, categories: '' });
       }
     }
     return items;
@@ -8431,7 +8444,7 @@ function parseNewsFromMarkdown(txt, source, color) {
     const title = m[1].trim();
     // Skip navigation/boilerplate links
     if (title.length < 15 || /subscribe|sign.up|newsletter|cookie|privacy/i.test(title)) continue;
-    items.push({ title, url: m[2], source, color, published_on: Math.floor(Date.now() / 1000), ts: Date.now(), categories: '' });
+    items.push({ title: escHtml(title), url: safeUrl(m[2]), source: escHtml(source), color, published_on: Math.floor(Date.now() / 1000), ts: Date.now(), categories: '' });
   }
   return items.slice(0, 15);
 }
@@ -8500,7 +8513,7 @@ function renderMarketNews(items) {
                       : source.includes('Decrypt') ? '#A78BFA'
                       : source.includes('Reddit') ? '#F87171'
                       : '#7d8bab';
-    return `<a href="${n.url}" target="_blank" rel="noopener" style="display:block;padding:8px 10px;margin-bottom:5px;background:var(--bg-elev-2);border-radius:5px;border-left:2px solid ${sourceColor};text-decoration:none;transition:background .12s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='var(--bg-elev-2)'">
+    return `<a href="${escHtml(safeUrl(n.url))}" target="_blank" rel="noopener noreferrer" style="display:block;padding:8px 10px;margin-bottom:5px;background:var(--bg-elev-2);border-radius:5px;border-left:2px solid ${sourceColor};text-decoration:none;transition:background .12s" onmouseover="this.style.background='var(--bg-hover)'" onmouseout="this.style.background='var(--bg-elev-2)'">
       <div style="font-size:11px;color:var(--text);line-height:1.35;margin-bottom:4px">${title}</div>
       <div style="display:flex;justify-content:space-between;align-items:center;font-size:9.5px">
         <span style="color:${sourceColor};font-weight:700">${source}</span>
@@ -8519,9 +8532,9 @@ function renderNewsItems(items, ticker) {
     const ageStr = ageMs < 3600000 ? `${Math.floor(ageMs/60000)}m ago`
                 : ageMs < 86400000 ? `${Math.floor(ageMs/3600000)}h ago`
                 : `${Math.floor(ageMs/86400000)}d ago`;
-    const title = (n.title || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const source = (n.source_info?.name || n.source || 'Unknown').replace(/</g, '&lt;');
-    return `<a class="news-item" href="${n.url}" target="_blank" rel="noopener">
+    const title = escHtml(n.title || '');
+    const source = escHtml(n.source_info?.name || n.source || 'Unknown');
+    return `<a class="news-item" href="${escHtml(safeUrl(n.url))}" target="_blank" rel="noopener noreferrer">
       <div class="news-title">${title}</div>
       <div class="news-meta"><span class="news-source">${source}</span><span class="news-time">· ${ageStr}</span></div>
     </a>`;

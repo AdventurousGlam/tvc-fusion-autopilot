@@ -15,6 +15,7 @@ concurrency:
 
 permissions:
   contents: write   # pozwala workflow'owi commitować i pushować z powrotem do repo
+  actions: read     # odczyt historii przebiegów — wyciszanie powtarzanego alarmu infra
 
 jobs:
   run:
@@ -324,6 +325,12 @@ jobs:
             else
               echo "Konflikt w rebase — auto-resolve na korzyść danych z tego przebiegu..."
               git checkout --theirs -- fusion_*.json 2>/dev/null || true
+              # v3 (14.10.2026): konflikt na bazie = ktoś INNY (np. ręczny `close` z laptopa)
+              # zapisał bazę w tym samym czasie. Nadpisanie po cichu gubi jego zamknięcia —
+              # zostawiamy dotychczasowe zachowanie, ale robimy z tego widoczne ostrzeżenie.
+              if git diff --name-only --diff-filter=U | grep -qx paper_trades.db; then
+                echo "::warning title=paper_trades.db nadpisana::Konflikt bazy w rebase — zapisy innego writera (np. ręczny close) mogły zostać utracone. Ręczne komendy uruchamiaj przez workflow_dispatch tego workflow."
+              fi
               git checkout --theirs -- paper_trades.db 2>/dev/null || true
               git checkout --theirs -- crypto_picks.json 2>/dev/null || true
               git checkout --theirs -- layers_cache.json pump_radar.json pump_radar_alerts.json 2>/dev/null || true
@@ -379,14 +386,38 @@ jobs:
       # continue-on-error NIE obejmuje. Tu alert ma iść od razu.
       - name: Alert Telegram przy awarii infrastruktury
         if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # 15.10.2026: alarm leciał przy KAŻDYM nieudanym przebiegu, a cron chodzi
+          # co 5 minut — jedna awaria trwająca godzinę dawała 12 identycznych
+          # wiadomości na Telegramie. Teraz: pierwsza porażka alarmuje od razu,
+          # potem przypomnienie co ~godzinę (co 12. porażka z rzędu). Awaria nigdy
+          # nie przechodzi niezauważona, ale nie zasypuje skrzynki.
           if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
             echo "Brak sekretów Telegram — pomijam alert."; exit 0
+          fi
+          RUNS=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+                   -H "Accept: application/vnd.github+json" \
+                   "https://api.github.com/repos/${{ github.repository }}/actions/workflows/tvc-autopilot.yml/runs?branch=main&status=completed&per_page=20" || true)
+          # Ile zakończonych przebiegów z rzędu (od najnowszego) padło.
+          # Ten przebieg trwa, więc na liście zakończonych go nie ma → +1.
+          # Błąd API albo nie-JSON = 1, czyli alarmujemy (lepiej raz za dużo niż cisza).
+          STREAK=$(printf '%s' "$RUNS" | python3 -c "import json,sys,itertools;r=json.load(sys.stdin).get('workflow_runs') or [];print(1+sum(1 for _ in itertools.takewhile(lambda x:x.get('conclusion')=='failure',r)))" 2>/dev/null || echo 1)
+          echo "Porażki z rzędu: $STREAK"
+          if [ "$STREAK" -ne 1 ] && [ $(( STREAK % 12 )) -ne 0 ]; then
+            echo "Alarm już wysłany przy pierwszej porażce — wyciszam (przypomnienie co 12.)."
+            exit 0
+          fi
+          if [ "$STREAK" -eq 1 ]; then
+            OGON="(checkout / Python / pip / push — nie skrypt)"
+          else
+            OGON="⏳ Trwa już $STREAK cykli z rzędu — autopilot nie działa od ok. $(( STREAK * 5 / 60 )) h"
           fi
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
             --data-urlencode "parse_mode=HTML" \
             --data-urlencode "text=⚠️ <b>TVC Autopilot — awaria infrastruktury</b>
-          (checkout / Python / pip / push — nie skrypt)
+          ${OGON}
           Run #${{ github.run_number }} · $(date -u +%H:%M) UTC
           Log: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >/dev/null || true

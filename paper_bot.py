@@ -1814,15 +1814,15 @@ def cmd_check(args):
                 continue
             # v4.3: netto po kosztach; uwzględnia zrealizowane TP1, jeśli było
             _f1 = _tp1_frac_of(r)
-            _, _rest, _ = _net_pnl(direction, r["entry_price"], exit_price,
+            _, _rest, _gross = _net_pnl(direction, r["entry_price"], exit_price,
                                    float(r["size_usd"] or 0) * (1 - _f1))
             pnl_usd = (float(r["tp1_pnl_usd"] or 0) if _f1 > 0 else 0.0) + _rest
             pnl_pct = pnl_usd / float(r["size_usd"]) * 100 if r["size_usd"] else 0.0
             close_ts = now_utc.isoformat()
             conn.execute(
                 """UPDATE positions SET status='closed', exit_price=?, exit_date=?,
-                   pnl_pct=?, pnl_usd=?, hit_or_miss=?, closed_at=? WHERE id=?""",
-                (exit_price, close_ts, pnl_pct, pnl_usd, "max_hold", close_ts, r["id"]),
+                   pnl_pct=?, pnl_usd=?, hit_or_miss=?, closed_at=?, pnl_gross_pct=? WHERE id=?""",
+                (exit_price, close_ts, pnl_pct, pnl_usd, "max_hold", close_ts, _gross, r["id"]),
             )
             conn.commit()
             print(f"[zombie] {r['ticker']} ({direction}) auto-closed after {age_days:.0f} days  "
@@ -1854,15 +1854,15 @@ def cmd_check(args):
             continue
         # v4.3: netto po kosztach; uwzględnia zrealizowane TP1, jeśli było
         _f1 = _tp1_frac_of(r)
-        _, _rest, _ = _net_pnl("short", r["entry_price"], exit_price,
+        _, _rest, _gross = _net_pnl("short", r["entry_price"], exit_price,
                                float(r["size_usd"] or 0) * (1 - _f1))
         pnl_usd = (float(r["tp1_pnl_usd"] or 0) if _f1 > 0 else 0.0) + _rest
         pnl_pct = pnl_usd / float(r["size_usd"]) * 100 if r["size_usd"] else 0.0
         close_ts = now_utc.isoformat()
         conn.execute(
             """UPDATE positions SET status='closed', exit_price=?, exit_date=?,
-               pnl_pct=?, pnl_usd=?, hit_or_miss=?, closed_at=? WHERE id=?""",
-            (exit_price, close_ts, pnl_pct, pnl_usd, "short_killswitch", close_ts, r["id"]),
+               pnl_pct=?, pnl_usd=?, hit_or_miss=?, closed_at=?, pnl_gross_pct=? WHERE id=?""",
+            (exit_price, close_ts, pnl_pct, pnl_usd, "short_killswitch", close_ts, _gross, r["id"]),
         )
         conn.commit()
         print(f"[short-kill] {r['ticker']} SHORT force-closed (regime={r_regime}, blocked)  "
@@ -2907,14 +2907,14 @@ def cmd_close(args):
         direction = r['direction'] if 'direction' in r.keys() else 'long'
         # v4.3: netto po kosztach; uwzględnia zrealizowane TP1, jeśli było
         _f1 = _tp1_frac_of(r)
-        _, _rest, _ = _net_pnl(direction, r['entry_price'], exit_price,
+        _, _rest, _gross = _net_pnl(direction, r['entry_price'], exit_price,
                                float(r['size_usd'] or 0) * (1 - _f1))
         pnl_usd = (float(r['tp1_pnl_usd'] or 0) if _f1 > 0 else 0.0) + _rest
         pnl_pct = pnl_usd / float(r['size_usd']) * 100 if r['size_usd'] else 0.0
         conn.execute(
             """UPDATE positions SET status='closed', exit_price=?, exit_date=?,
-               pnl_pct=?, pnl_usd=?, hit_or_miss=?, closed_at=? WHERE id=?""",
-            (exit_price, now_iso, pnl_pct, pnl_usd, 'manual_close', now_iso, r['id'])
+               pnl_pct=?, pnl_usd=?, hit_or_miss=?, closed_at=?, pnl_gross_pct=? WHERE id=?""",
+            (exit_price, now_iso, pnl_pct, pnl_usd, 'manual_close', now_iso, _gross, r['id'])
         )
         conn.commit()
         arrow = "↗" if direction == "long" else "↘"
