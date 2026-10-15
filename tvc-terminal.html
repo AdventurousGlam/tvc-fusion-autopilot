@@ -11,7 +11,7 @@
 <meta name="format-detection" content="telephone=no">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23F5B841'/%3E%3Ctext x='50' y='68' text-anchor='middle' font-family='sans-serif' font-weight='900' font-size='42' fill='%231a1200'%3ETVC%3C/text%3E%3C/svg%3E">
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23F5B841'/%3E%3Ctext x='50' y='68' text-anchor='middle' font-family='sans-serif' font-weight='900' font-size='42' fill='%231a1200'%3ETVC%3C/text%3E%3C/svg%3E">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src https://api.allorigins.win https://api.alternative.me https://api.binance.com https://api.blockchain.info https://api.blocknative.com https://api.bybit.com https://api.coingecko.com https://api.github.com https://api.hyperliquid.xyz https://api.llama.fi https://api.xrpscan.com https://corsproxy.org https://data-api.binance.vision https://etf-proxy.nerdygets.workers.dev https://eth.llamarpc.com https://ethereum-rpc.publicnode.com https://fapi.binance.com https://fullnode.mainnet.sui.io https://gist.githubusercontent.com https://mempool.space https://publicreporting.cftc.gov https://query1.finance.yahoo.com https://r.jina.ai https://rpc.ankr.com https://solana-rpc.publicnode.com https://stablecoins.llama.fi https://stats-data.hyperliquid.xyz https://sui-rpc.publicnode.com https://sui.llamarpc.com https://www.deribit.com https://xrplcluster.com https://www.coindesk.com https://cointelegraph.com https://decrypt.co https://farside.co.uk wss://fstream.binance.com wss://stream.binance.com wss://stream.binance.com:9443; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src https://api.allorigins.win https://api.alternative.me https://api.binance.com https://api.blockchain.info https://api.blocknative.com https://api.bybit.com https://api.coingecko.com https://api.github.com https://api.hyperliquid.xyz https://api.llama.fi https://api.xrpscan.com https://corsproxy.org https://data-api.binance.vision https://etf-proxy.nerdygets.workers.dev https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://rpc-mainnet.suiscan.xyz https://ethereum-rpc.publicnode.com https://fapi.binance.com https://gist.githubusercontent.com https://mempool.space https://publicreporting.cftc.gov https://query1.finance.yahoo.com https://r.jina.ai https://solana-rpc.publicnode.com https://stablecoins.llama.fi https://stats-data.hyperliquid.xyz https://sui-rpc.publicnode.com https://www.deribit.com https://xrplcluster.com https://www.coindesk.com https://cointelegraph.com https://decrypt.co https://farside.co.uk wss://fstream.binance.com wss://stream.binance.com wss://stream.binance.com:9443; base-uri 'none'; form-action 'none'; object-src 'none'">
 <title>TVC Fusion Terminal</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
 <!-- TVC Brand font — Fraunces (matches tradingventureclub.com serif italic style) -->
@@ -7795,25 +7795,39 @@ function renderLiveWhales(whalesByToken) {
 //          fullnode.mainnet.sui.io (SUI). All CORS-enabled, no keys.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// 15.10.2026 — lista oparta na POMIARZE, nie na zaufaniu do dokumentacji.
+// Kazdy adres sprawdzony z przegladarki (POST + JSON-RPC, odpowiedz zweryfikowana,
+// czyli przeszly tez CORS). Wyniki:
+//   ethereum-rpc.publicnode.com  ✅ 200, wynik OK
+//   eth.drpc.org                 ✅ 200, 273 ms  — najszybszy zapas
+//   1rpc.io/eth                  ✅ 200, 596 ms
+//   rpc.flashbots.net            ✅ 200, 766 ms
+// Odrzucone: eth.llamarpc.com (Failed to fetch), rpc.ankr.com/eth (JSON-RPC
+// "Unauthorized" — wymaga klucza), cloudflare-eth.com ("Cannot fulfill request"),
+// eth.merkle.io (Failed to fetch).
 const WHALE_ETH_RPCS = [
   'https://ethereum-rpc.publicnode.com',
-  'https://eth.llamarpc.com',
-  'https://rpc.ankr.com/eth',
+  'https://eth.drpc.org',
+  'https://1rpc.io/eth',
+  'https://rpc.flashbots.net',
 ];
-// 15.10.2026: zostaje jeden endpoint. Sprawdzone na zywej stronie:
-//   api.mainnet-beta.solana.com → 403 "Access forbidden" (Solana Labs zablokowalo
-//     publiczny RPC dla przegladarek)
-//   rpc.ankr.com/solana        → 403 "API key is not allowed" (darmowy plan wymaga klucza)
-// Oba byly wolane 12 razy na ~10 minut i zawsze padaly, bo publicnode zwracal
-// blad JSON-RPC (patrz nizej) i petla szla dalej. To byl szum w konsoli,
-// nie dzialajacy fallback.
+// 15.10.2026 — SOL ma tylko JEDEN dzialajacy publiczny endpoint i to nie jest
+// przeoczenie. Sprawdzone z przegladarki: api.mainnet-beta.solana.com 403
+// "Access forbidden", rpc.ankr.com/solana 403 (wymaga klucza), rpcpool 403,
+// public-rpc / extrnode / hellomoon / jito / 1rpc / drpc — Failed to fetch
+// albo "chain is not available on free plan". Jesli ten jeden padnie, panel
+// wielorybow SOL przestanie dzialac — i to jest znany, swiadomy kompromis.
 const SOL_RPCS = [
   'https://solana-rpc.publicnode.com',
 ];
+// 15.10.2026 — sprawdzone z przegladarki:
+//   sui-rpc.publicnode.com   ✅ 200, wynik OK
+//   rpc-mainnet.suiscan.xyz  ✅ 200, 399 ms  — zapas
+// Odrzucone: sui.llamarpc.com, fullnode.mainnet.sui.io:443, blastapi
+// (wszystkie Failed to fetch).
 const SUI_RPCS = [
   'https://sui-rpc.publicnode.com',
-  'https://sui.llamarpc.com',
-  'https://fullnode.mainnet.sui.io:443',
+  'https://rpc-mainnet.suiscan.xyz',
 ];
 
 async function rpcPost(url, payload, timeoutMs=8000) {

@@ -3786,16 +3786,32 @@ function renderLiveWhales(whalesByToken) {
 //          fullnode.mainnet.sui.io (SUI). All CORS-enabled, no keys.
 // ═══════════════════════════════════════════════════════════════════════════
 
+// 15.10.2026 — lista oparta na POMIARZE, nie na zaufaniu do dokumentacji.
+// Kazdy adres sprawdzony z przegladarki (POST + JSON-RPC, odpowiedz zweryfikowana,
+// czyli przeszly tez CORS). Wyniki:
+//   ethereum-rpc.publicnode.com  ✅ 200, wynik OK
+//   eth.drpc.org                 ✅ 200, 273 ms  — najszybszy zapas
+//   1rpc.io/eth                  ✅ 200, 596 ms
+//   rpc.flashbots.net            ✅ 200, 766 ms
+// Odrzucone: eth.llamarpc.com (Failed to fetch), rpc.ankr.com/eth (JSON-RPC
+// "Unauthorized" — wymaga klucza), cloudflare-eth.com ("Cannot fulfill request"),
+// eth.merkle.io (Failed to fetch).
 const WHALE_ETH_RPCS = [
   'https://ethereum-rpc.publicnode.com',
-  'https://eth.llamarpc.com',
-  'https://rpc.ankr.com/eth',
+  'https://eth.drpc.org',
+  'https://1rpc.io/eth',
+  'https://rpc.flashbots.net',
 ];
 // 15.10.2026: bylo api.mainnet-beta.solana.com — Solana Labs zablokowalo ten
 // publiczny RPC dla przegladarek (403 "Access forbidden"), wiec panel wielorybow
 // SOL w widgecie nie dzialal w ogole. publicnode odpowiada 200.
 const SOL_RPC = 'https://solana-rpc.publicnode.com';
-const SUI_RPC = 'https://fullnode.mainnet.sui.io:443';
+// 15.10.2026 — sprawdzone z przegladarki:
+//   sui-rpc.publicnode.com   ✅ 200, wynik OK
+//   rpc-mainnet.suiscan.xyz  ✅ 200, 399 ms  — zapas
+// Odrzucone: sui.llamarpc.com, fullnode.mainnet.sui.io:443, blastapi
+// (wszystkie Failed to fetch).
+const SUI_RPC = 'https://sui-rpc.publicnode.com';
 
 async function rpcPost(url, payload, timeoutMs=8000) {
   // Use Promise.race instead of AbortController to avoid DataCloneError
