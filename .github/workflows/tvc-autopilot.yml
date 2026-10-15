@@ -362,7 +362,28 @@ jobs:
             fi
             sleep $((RANDOM % 8 + 3))
           done
-          echo "Push nie powiódł się po 5 próbach."
+          # 15.10.2026 — PRZEGRANY WYŚCIG O PUSH TO NIE AWARIA.
+          # Run #13468 (12:55 UTC) padł tu, bo Gosia wypychała swój commit dokładnie
+          # w trakcie cyklu. Wszystkie skrypty policzyły się poprawnie, nic nie
+          # zginęło — za 5 minut następny cykl liczy od nowa i wypycha wszystko.
+          # Mimo to leciał alarm "awaria infrastruktury", czyli dokładnie ten rodzaj
+          # komunikatu, który uczy ignorować alarmy.
+          #
+          # Rozróżnienie jest proste i nie wymaga pamiętania stanu między cyklami:
+          # sprawdzamy, czy zdalna gałąź SIĘ RUSZYŁA. Jeśli tak — ktoś inny pisał
+          # w tym samym czasie, to kolizja i kończymy sukcesem z ostrzeżeniem.
+          # Jeśli remote stoi w miejscu, a push i tak nie przechodzi, to jest realny
+          # problem (wygasły token, ochrona gałęzi, brak uprawnień) i wtedy alarm
+          # ma prawo zadzwonić.
+          git fetch -q origin main || true
+          BEHIND=$(git rev-list --count HEAD..origin/main 2>/dev/null || echo 0)
+          if [ "${BEHIND:-0}" -gt 0 ]; then
+            echo "::warning title=Push odłożony do następnego cyklu::Kolizja zapisu — w trakcie tego cyklu ktoś wypchnął ${BEHIND} commit(ów). Dane z tego przebiegu zostaną przeliczone i zapisane za ~5 minut. To nie jest awaria."
+            echo "Przegrany wyścig o push (remote do przodu o ${BEHIND}). Kończę sukcesem."
+            exit 0
+          fi
+          echo "Push nie przeszedł 5 razy, a zdalna gałąź się NIE ruszyła."
+          echo "To nie kolizja — to realny problem z zapisem do repo."
           exit 1
 
       # v0.4 — alert dopiero przy 3 krytycznych awariach Z RZĘDU (~15 min bez świeżych
@@ -409,10 +430,19 @@ jobs:
             echo "Alarm już wysłany przy pierwszej porażce — wyciszam (przypomnienie co 12.)."
             exit 0
           fi
+          # 15.10.2026: komunikat zgadywał "(checkout / Python / pip / push)".
+          # Teraz pyta API, KTÓRY krok naprawdę padł — bo alarm bez nazwy kroku
+          # zmusza do wchodzenia w logi, a to jest ten rodzaj tarcia, przez który
+          # przestaje się czytać alarmy.
+          KROK=$(curl -s -H "Authorization: Bearer $GH_TOKEN" \
+                   -H "Accept: application/vnd.github+json" \
+                   "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/jobs" \
+                 | python3 -c "import json,sys;r=json.load(sys.stdin).get('jobs') or [];print(next((s['name'] for j in r for s in j.get('steps',[]) if s.get('conclusion')=='failure'),'nieznany krok'))" 2>/dev/null || echo "nieznany krok")
           if [ "$STREAK" -eq 1 ]; then
-            OGON="(checkout / Python / pip / push — nie skrypt)"
+            OGON="Padł krok: ${KROK}"
           else
-            OGON="⏳ Trwa już $STREAK cykli z rzędu — autopilot nie działa od ok. $(( STREAK * 5 / 60 )) h"
+            OGON="Padł krok: ${KROK}
+          ⏳ Trwa już $STREAK cykli z rzędu — autopilot nie działa od ok. $(( STREAK * 5 / 60 )) h"
           fi
           curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
             --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
