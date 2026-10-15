@@ -11,7 +11,7 @@
 <meta name="format-detection" content="telephone=no">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23F5B841'/%3E%3Ctext x='50' y='68' text-anchor='middle' font-family='sans-serif' font-weight='900' font-size='42' fill='%231a1200'%3ETVC%3C/text%3E%3C/svg%3E">
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23F5B841'/%3E%3Ctext x='50' y='68' text-anchor='middle' font-family='sans-serif' font-weight='900' font-size='42' fill='%231a1200'%3ETVC%3C/text%3E%3C/svg%3E">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src https://api.allorigins.win https://api.alternative.me https://api.binance.com https://api.blockchain.info https://api.blocknative.com https://api.bybit.com https://api.coingecko.com https://api.github.com https://api.hyperliquid.xyz https://api.llama.fi https://api.mainnet-beta.solana.com https://api.xrpscan.com https://corsproxy.org https://data-api.binance.vision https://etf-proxy.nerdygets.workers.dev https://eth.llamarpc.com https://ethereum-rpc.publicnode.com https://fapi.binance.com https://fullnode.mainnet.sui.io https://gist.githubusercontent.com https://mempool.space https://publicreporting.cftc.gov https://query1.finance.yahoo.com https://r.jina.ai https://rpc.ankr.com https://solana-rpc.publicnode.com https://stablecoins.llama.fi https://stats-data.hyperliquid.xyz https://sui-rpc.publicnode.com https://sui.llamarpc.com https://www.deribit.com https://xrplcluster.com https://www.coindesk.com https://cointelegraph.com https://decrypt.co https://farside.co.uk wss://fstream.binance.com wss://stream.binance.com; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src https://api.allorigins.win https://api.alternative.me https://api.binance.com https://api.blockchain.info https://api.blocknative.com https://api.bybit.com https://api.coingecko.com https://api.github.com https://api.hyperliquid.xyz https://api.llama.fi https://api.mainnet-beta.solana.com https://api.xrpscan.com https://corsproxy.org https://data-api.binance.vision https://etf-proxy.nerdygets.workers.dev https://eth.llamarpc.com https://ethereum-rpc.publicnode.com https://fapi.binance.com https://fullnode.mainnet.sui.io https://gist.githubusercontent.com https://mempool.space https://publicreporting.cftc.gov https://query1.finance.yahoo.com https://r.jina.ai https://rpc.ankr.com https://solana-rpc.publicnode.com https://stablecoins.llama.fi https://stats-data.hyperliquid.xyz https://sui-rpc.publicnode.com https://sui.llamarpc.com https://www.deribit.com https://xrplcluster.com https://www.coindesk.com https://cointelegraph.com https://decrypt.co https://farside.co.uk wss://fstream.binance.com wss://stream.binance.com wss://stream.binance.com:9443; base-uri 'none'; form-action 'none'; object-src 'none'">
 <title>TVC Fusion Terminal</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
 <!-- TVC Brand font — Fraunces (matches tradingventureclub.com serif italic style) -->
@@ -5291,7 +5291,7 @@ async function renderRsiMultiPanel() {
   const slot = document.getElementById('rsi-multi-slot');
   if (!slot) return;
   const lang = window._lang || 'pl';
-  const T = k => (i18n[k] || {})[lang] || (i18n[k] || {}).en || k;
+  const T = k => (I18N[k] || {})[lang] || (I18N[k] || {}).en || k;
   slot.innerHTML = `<div class="panel"><h2>${T('rsi_title')}</h2><p class="panel-sub" style="margin-bottom:12px">${T('rsi_sub')}</p><div style="text-align:center;padding:30px 0;color:#888">${T('rsi_loading')}</div></div>`;
 
   const tickers = typeof SM_TICKERS !== 'undefined' ? SM_TICKERS : ['BTC','ETH','SOL','XRP','SUI'];
@@ -5385,7 +5385,7 @@ async function renderVpvrPanel() {
   const slot = document.getElementById('vpvr-slot');
   if (!slot) return;
   const lang = window._lang || 'pl';
-  const T = k => (i18n[k] || {})[lang] || (i18n[k] || {}).en || k;
+  const T = k => (I18N[k] || {})[lang] || (I18N[k] || {}).en || k;
   slot.innerHTML = `<div class="panel"><h2>${T('vpvr_title')}</h2><p class="panel-sub" style="margin-bottom:12px">${T('vpvr_sub')}</p><div style="text-align:center;padding:30px 0;color:#888">${T('vpvr_loading')}</div></div>`;
 
   const tickers = typeof SM_TICKERS !== 'undefined' ? SM_TICKERS : ['BTC','ETH','SOL','XRP','SUI'];

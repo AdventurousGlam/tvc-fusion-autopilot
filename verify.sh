@@ -95,6 +95,68 @@ print("   ✅ wszystkie klucze zdefiniowane" if not miss else "   ❌ brak w I18
 sys.exit(1 if miss else 0)
 PY
   [ $? -ne 0 ] && FAIL=1
+
+  step "HTML — CSP a adresy, z ktorych terminal naprawde korzysta"
+  python3 - <<'PY2'
+import os, re, sys
+# 15.10.2026: do CSP trafil `wss://stream.binance.com`, a kod laczy sie z
+# `wss://stream.binance.com:9443`. W CSP zrodlo BEZ portu dopasowuje tylko port
+# domyslny (443), wiec przeszly WSZYSTKIE strumienie orderbooka — na zywej
+# stronie, bo `node --check` widzi skladnie, a nie polityke przegladarki.
+f = 'tvc-terminal.html'
+if not os.path.exists(f):
+    sys.exit(0)
+h = open(f, encoding='utf-8', errors='replace').read()
+m = re.search(r'Content-Security-Policy"\s+content="([^"]+)', h)
+if not m:
+    print("   ⚠️  brak CSP w pliku — pomijam"); sys.exit(0)
+csp = m.group(1)
+cs = re.search(r'connect-src([^;]*)', csp)
+allowed = set(cs.group(1).split()) if cs else set()
+
+def covered(origin):
+    if origin in allowed:
+        return True
+    scheme, host = origin.split('://', 1)
+    # zrodlo bez portu w CSP == tylko port domyslny schematu
+    if ':' in host:
+        bare, port = host.rsplit(':', 1)
+        default = {'https': '443', 'wss': '443', 'http': '80', 'ws': '80'}.get(scheme)
+        if port == default and f"{scheme}://{bare}" in allowed:
+            return True
+        return f"{scheme}://{bare}:*" in allowed
+    return False
+
+used = set()
+# wss:// zawsze idzie przez connect-src — bierzemy wszystkie
+used |= set(re.findall(r'wss://[A-Za-z0-9.\-]+(?::\d+)?', h))
+# https:// tylko tam, gdzie w tej samej linii jest fetch() albo new WebSocket()
+for line in h.split('\n'):
+    if 'fetch(' in line or 'new WebSocket(' in line or 'EventSource(' in line:
+        used |= set(re.findall(r'https://[A-Za-z0-9.\-]+(?::\d+)?', line))
+used = {u for u in used if u not in ('https://cdn.jsdelivr.net',)}
+
+missing = sorted(u for u in used if not covered(u))
+if missing:
+    for u in missing:
+        print(f"   {u}  — kod sie laczy, CSP NIE dopuszcza")
+    print("   ❌ CSP zablokuje te polaczenia w przegladarce (uwaga na porty!)")
+    sys.exit(1)
+print(f"   ✅ wszystkie {len(used)} adresow z fetch/WebSocket dopuszczone w connect-src")
+PY2
+  [ $? -ne 0 ] && FAIL=1
+
+  # PRÓBOWAŁAM to sprawdzić statycznie (i18n vs I18N) i NIE DA SIĘ bez parsera JS:
+  # wyrażenia regularne nie odróżniają kodu od tekstu w stringach i komentarzach,
+  # więc wersja po nazwach dawała 11 fałszywych alarmów, a po `NAZWA[` — 15.
+  # Check, który krzyczy bez powodu, uczy go ignorować, więc go tu nie ma.
+  #
+  # ZAMIAST TEGO, OBOWIĄZKOWO PO KAŻDYM WGRANIU TERMINALA NA FTP:
+  #   otworzyć https://tradingventureclub.com/terminal/ i przeczytać konsolę.
+  # Tylko to wyłapuje ReferenceError wewnątrz funkcji renderujących i naruszenia
+  # CSP. 15.10.2026 właśnie tak znalazły się dwa błędy na żywej stronie:
+  # `i18n is not defined` w dwóch panelach i CSP blokujące wszystkie strumienie
+  # orderbooka (port 9443 vs domyślny 443).
 fi
 
 # ── 3. WORKFLOW: pułapka set -e w przypisaniach ──────────────────────────────
