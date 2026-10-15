@@ -365,6 +365,7 @@ def db_init():
     _migrate_sl_rescan_bug(conn)
     _migrate_restate_net(conn)
     _migrate_flag_out_of_range(conn)
+    _migrate_flag_flip_choch(conn)
     conn.close()
 
 
@@ -414,6 +415,41 @@ def _migrate_flag_out_of_range(conn):
         print(f"[migrate] v4.3.4 — oznaczono {cur2.rowcount} pozycji z ery przed 28.08 "
               f"jako wykluczone (rejestr pkt 2a)")
 
+
+
+def _migrate_flag_flip_choch(conn):
+    """v4.3.6 (15.10.2026) — oznacz w BAZIE 32 pozycje zamknięte wycofaną regułą.
+
+    REJESTR_WYKLUCZEN.md pkt 2 wyklucza klasę `flip_choch`: regułę wyjścia na
+    odwróceniu struktury, wycofaną w v0.5 dnia 9.09 (commit ace0b98). Te pozycje
+    zostały zamknięte mechanizmem, którego w bocie już nie ma.
+
+    Problem, który to naprawia: informacja o wykluczeniu istniała WYŁĄCZNIE
+    w pliku .md. Kolumna `excluded` miała 0, więc żaden skrypt nie był w stanie
+    odtworzyć liczb z rejestru. 15.10 wyszło to bokiem — eksport wyników na
+    stronę filtrował tylko po `excluded` i dałby inne liczby niż rejestr.
+    Po tej migracji rejestr jest odtwarzalny z kodu: 46 pozycji, 13/33, −0,94 $.
+
+    To NIE poprawia wyniku „na korzyść". Klasa ma 1 wygraną na 32 i −11,17 $,
+    więc jej usunięcie wynik PODNOSI — i dokładnie dlatego kryterium musi być
+    oparte na defekcie, nie na rezultacie. Rejestr opisuje też klasę, której
+    usunięcie wynik pogarsza (era przed 28.08, +40,69 $). Oba kierunki wynikają
+    z tej samej zasady: liczy się to, czy pozycję wygenerowała reguła, która
+    nadal obowiązuje.
+
+    Pozycje zostają w bazie. Audyt dalej je sprawdza i wypisuje osobno.
+    """
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(positions)")]
+    if "excluded" not in cols:
+        return
+    cur = conn.execute(
+        "UPDATE positions SET excluded = 1 "
+        "WHERE hit_or_miss = 'flip_choch' AND COALESCE(excluded, 0) = 0"
+    )
+    if cur.rowcount:
+        conn.commit()
+        print(f"[migrate] v4.3.6 — oznaczono {cur.rowcount} pozycji `flip_choch` "
+              f"jako wykluczone (rejestr pkt 2, reguła wycofana 9.09).")
 
 def _migrate_restate_net(conn):
     """v4.3 (13.10.2026) — JEDNORAZOWE przeliczenie całej historii na PnL netto.
