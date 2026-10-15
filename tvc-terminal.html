@@ -1268,7 +1268,7 @@ const I18N = {
   cal_past_events_pl: { pl: 'minionych',                                en: 'past events' },
   // ─── ORDERFLOW PAPER BOOK ───
   of_title:           { pl: '📓 Księga Orderflow vs 🧠 TA',              en: '📓 Orderflow Book vs 🧠 TA' },
-  of_desc:            { pl: 'Druga księga papierowa otwierana <strong>automatycznie</strong> z Decision Journal: STRONG confluence (🔥 heatmapa, nie range) → long/short. Wyjścia identyczne jak paper_bot (SL pod strefą, TP 1.5R/3R, breakeven +1.5%, trailing od +3%), sizing long 3% / short 0.5%. Działa tylko gdy terminal jest otwarty.', en: 'Second paper book opened <strong>automatically</strong> from Decision Journal: STRONG confluence (🔥 heatmap, not range) → long/short. Exits identical to paper_bot (SL below zone, TP 1.5R/3R, breakeven +1.5%, trailing from +3%), sizing long 3% / short 0.5%. Runs only while the terminal is open.' },
+  of_desc:            { pl: 'Druga księga papierowa otwierana <strong>automatycznie</strong> z Decision Journal: STRONG confluence (🔥 heatmapa, nie range) → long/short. <strong>Reguły własne terminala, inne niż paper_bot:</strong> SL pod strefą, TP 1.5R/3R, breakeven +1.5%, trailing od +3%, sizing long 3% / short 0.5%, wejście po cenie środkowej. <strong>Wynik nie uwzględnia opłat ani poślizgu</strong> (paper_bot odejmuje 0,14% na obrót), więc w porównaniu „Orderflow vs TA" ta księga jest systematycznie zawyżona. Działa tylko gdy terminal jest otwarty.', en: 'Second paper book opened <strong>automatically</strong> from Decision Journal: STRONG confluence (🔥 heatmap, not range) → long/short. <strong>Terminal\'s own rules, different from paper_bot:</strong> SL below zone, TP 1.5R/3R, breakeven +1.5%, trailing from +3%, sizing long 3% / short 0.5%, entry at mid price. <strong>Results exclude fees and slippage</strong> (paper_bot subtracts 0.14% per round trip), so in the "Orderflow vs TA" comparison this book is systematically overstated. Runs only while the terminal is open.' },
   of_auto_on:         { pl: 'auto-trading aktywny',                     en: 'auto-trading on' },
   of_auto_off:        { pl: 'auto-trading wstrzymany',                  en: 'auto-trading paused' },
   of_pause:           { pl: '⏸ Wstrzymaj',                              en: '⏸ Pause' },
@@ -1297,6 +1297,10 @@ const I18N = {
   of_token_set:       { pl: 'Token Gist',                                en: 'Gist token' },
   of_token_change:    { pl: 'Zmień token',                               en: 'Change token' },
   of_token_prompt:    { pl: 'GitHub token z uprawnieniem "gist" (zapisany TYLKO w tej przeglądarce, nigdy w kodzie). Pusty = usuń:', en: 'GitHub token with "gist" scope (stored ONLY in this browser, never in code). Empty = remove:' },
+  of_token_bad:       { pl: 'To nie wygląda na token GitHub (oczekiwany prefiks github_pat_ lub ghp_). Nic nie zapisałam.',
+                        en: 'That does not look like a GitHub token (expected prefix github_pat_ or ghp_). Nothing was saved.' },
+  of_token_remember:  { pl: 'Zapamiętać token na tym urządzeniu? OK = zostaje na stałe. Anuluj = tylko do zamknięcia karty (bezpieczniej).',
+                        en: 'Remember this token on this device? OK = stored permanently. Cancel = until you close the tab (safer).' },
   // ─── SMART MONEY ───
   sm_title:           { pl: '🏦 Smart Money · instytucje i wieloryby', en: '🏦 Smart Money · institutions & whales' },
   sm_desc:            { pl: 'Kto i w którą stronę jest ustawiony. <strong>Top traderzy</strong> = top 20% kont Binance Futures wg salda (ratio pozycji long/short). <strong>Tłum</strong> = wszystkie konta. <strong>HL wieloryby</strong> = realne otwarte pozycje 30 największych kierunkowych walletów Hyperliquid ($5–400M, bez market makerów). <strong>CME COT</strong> = tygodniowe pozycje funduszy. Tylko informacyjnie — nie zmienia sygnałów.', en: 'Who is positioned which way. <strong>Top traders</strong> = top 20% Binance Futures accounts by margin balance (long/short position ratio). <strong>Crowd</strong> = all accounts. <strong>HL whales</strong> = real open positions of the 30 largest directional Hyperliquid wallets ($5–400M, market makers excluded). <strong>CME COT</strong> = weekly fund positioning. Informational only — does not alter signals.' },
@@ -3911,12 +3915,28 @@ function ofFusionClosed() {
 const OF_GIST_ID = 'e88c461a964ed22d2cf14326c65b4438';
 const OF_GIST_FILE = 'orderflow_book.json';
 let _ofSyncTimer = null, _ofLastSync = 0, _ofSyncStatus = '';
-function ofGistToken() { try { return localStorage.getItem('tvc_gist_token') || ''; } catch (e) { return ''; } }
+// v3.2 (15.10.2026): token jest sprawdzany pod katem formatu PRZED zapisem i moze
+// zostac tylko do zamkniecia karty (sessionStorage). Wczesniej dowolny ciag znakow
+// ladowal w localStorage na stale — literowka konczyla sie cicho nieudanym sync-iem,
+// a token zostawal na urzadzeniu bez potrzeby. Zalecany token fine-grained
+// z jednym uprawnieniem: Gists read & write.
+function ofGistToken() {
+  try { return sessionStorage.getItem('tvc_gist_token') || localStorage.getItem('tvc_gist_token') || ''; }
+  catch (e) { return ''; }
+}
 function ofSetGistToken() {
   const tok = prompt(t('of_token_prompt'), ofGistToken() ? '••••••••' : '');
   if (tok === null) return;
-  if (tok === '') { try { localStorage.removeItem('tvc_gist_token'); } catch (e) {} }
-  else if (!tok.startsWith('•')) { try { localStorage.setItem('tvc_gist_token', tok.trim()); } catch (e) {} ofScheduleGistSync(0); }
+  const clear = () => { try { localStorage.removeItem('tvc_gist_token'); sessionStorage.removeItem('tvc_gist_token'); } catch (e) {} };
+  if (tok === '') { clear(); }
+  else if (!tok.startsWith('•')) {
+    const t2 = tok.trim();
+    if (!/^(github_pat_|ghp_)[A-Za-z0-9_]{20,}$/.test(t2)) { alert(t('of_token_bad')); return; }
+    const remember = confirm(t('of_token_remember'));
+    clear();
+    try { (remember ? localStorage : sessionStorage).setItem('tvc_gist_token', t2); } catch (e) {}
+    ofScheduleGistSync(0);
+  }
   renderOrderflowPanel();
 }
 function ofScheduleGistSync(delay = 4000) {
