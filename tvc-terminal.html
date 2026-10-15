@@ -11,7 +11,7 @@
 <meta name="format-detection" content="telephone=no">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23F5B841'/%3E%3Ctext x='50' y='68' text-anchor='middle' font-family='sans-serif' font-weight='900' font-size='42' fill='%231a1200'%3ETVC%3C/text%3E%3C/svg%3E">
 <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23F5B841'/%3E%3Ctext x='50' y='68' text-anchor='middle' font-family='sans-serif' font-weight='900' font-size='42' fill='%231a1200'%3ETVC%3C/text%3E%3C/svg%3E">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src https://api.allorigins.win https://api.alternative.me https://api.binance.com https://api.blockchain.info https://api.blocknative.com https://api.bybit.com https://api.coingecko.com https://api.github.com https://api.hyperliquid.xyz https://api.llama.fi https://api.mainnet-beta.solana.com https://api.xrpscan.com https://corsproxy.org https://data-api.binance.vision https://etf-proxy.nerdygets.workers.dev https://eth.llamarpc.com https://ethereum-rpc.publicnode.com https://fapi.binance.com https://fullnode.mainnet.sui.io https://gist.githubusercontent.com https://mempool.space https://publicreporting.cftc.gov https://query1.finance.yahoo.com https://r.jina.ai https://rpc.ankr.com https://solana-rpc.publicnode.com https://stablecoins.llama.fi https://stats-data.hyperliquid.xyz https://sui-rpc.publicnode.com https://sui.llamarpc.com https://www.deribit.com https://xrplcluster.com https://www.coindesk.com https://cointelegraph.com https://decrypt.co https://farside.co.uk wss://fstream.binance.com wss://stream.binance.com wss://stream.binance.com:9443; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src https://api.allorigins.win https://api.alternative.me https://api.binance.com https://api.blockchain.info https://api.blocknative.com https://api.bybit.com https://api.coingecko.com https://api.github.com https://api.hyperliquid.xyz https://api.llama.fi https://api.xrpscan.com https://corsproxy.org https://data-api.binance.vision https://etf-proxy.nerdygets.workers.dev https://eth.llamarpc.com https://ethereum-rpc.publicnode.com https://fapi.binance.com https://fullnode.mainnet.sui.io https://gist.githubusercontent.com https://mempool.space https://publicreporting.cftc.gov https://query1.finance.yahoo.com https://r.jina.ai https://rpc.ankr.com https://solana-rpc.publicnode.com https://stablecoins.llama.fi https://stats-data.hyperliquid.xyz https://sui-rpc.publicnode.com https://sui.llamarpc.com https://www.deribit.com https://xrplcluster.com https://www.coindesk.com https://cointelegraph.com https://decrypt.co https://farside.co.uk wss://fstream.binance.com wss://stream.binance.com wss://stream.binance.com:9443; base-uri 'none'; form-action 'none'; object-src 'none'">
 <title>TVC Fusion Terminal</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
 <!-- TVC Brand font — Fraunces (matches tradingventureclub.com serif italic style) -->
@@ -7800,10 +7800,15 @@ const WHALE_ETH_RPCS = [
   'https://eth.llamarpc.com',
   'https://rpc.ankr.com/eth',
 ];
+// 15.10.2026: zostaje jeden endpoint. Sprawdzone na zywej stronie:
+//   api.mainnet-beta.solana.com → 403 "Access forbidden" (Solana Labs zablokowalo
+//     publiczny RPC dla przegladarek)
+//   rpc.ankr.com/solana        → 403 "API key is not allowed" (darmowy plan wymaga klucza)
+// Oba byly wolane 12 razy na ~10 minut i zawsze padaly, bo publicnode zwracal
+// blad JSON-RPC (patrz nizej) i petla szla dalej. To byl szum w konsoli,
+// nie dzialajacy fallback.
 const SOL_RPCS = [
   'https://solana-rpc.publicnode.com',
-  'https://api.mainnet-beta.solana.com',
-  'https://rpc.ankr.com/solana',
 ];
 const SUI_RPCS = [
   'https://sui-rpc.publicnode.com',
@@ -8218,7 +8223,12 @@ async function fetchSOLWhales(solUsd) {
       try {
         const block = await solRpc({
           jsonrpc: '2.0', id: 1, method: 'getBlock',
-          params: [slot - off, { encoding: 'json', maxSupportedTransactionVersion: 0, transactionDetails: 'accounts', rewards: false }]
+          // maxSupportedTransactionVersion MUSI byc >= 1. Przy 0 Solana zwraca
+          // -32015 "Transaction version (1) is not supported", bo w blokach sa
+          // dzis transakcje v1 — i wtedy caly blok przepada, a panel wielorybow
+          // SOL jest pusty. Sprawdzone 15.10.2026 na zywym bloku: przy 0 blad,
+          // przy 1 wraca 1158 transakcji.
+          params: [slot - off, { encoding: 'json', maxSupportedTransactionVersion: 1, transactionDetails: 'accounts', rewards: false }]
         });
         if (!block) continue;
         const blockTime = (block.blockTime || 0) * 1000;
@@ -8886,7 +8896,7 @@ function renderTokenDetailShell(ticker) {
 
     <div class="td-controls">
       <div class="tf-group">
-        ${['5m','15m','1h','4h','1D','7D','30D'].map(tfKey => `<button class="tf-btn ${(window[`__tf_${ticker}`] || '7D') === tfKey ? 'active' : ''}" onclick="changeTimeframe('${ticker}', '${tfKey}')">${TF_MAP[tfKey].label}</button>`).join('')}
+        ${['5m','15m','1h','4h','1D','7D','30D'].map(tfKey => `<button class="tf-btn ${(window[`__tf_${ticker}`] || '7D') === tfKey ? 'active' : ''}" data-tf="${tfKey}" onclick="changeTimeframe('${ticker}', '${tfKey}')">${TF_MAP[tfKey].label}</button>`).join('')}
       </div>
       <div class="toggles-group">
         <button class="toggle-btn sr ${overlays.sr ? 'active' : ''}" onclick="toggleOverlay('sr', '${ticker}')">S/R</button>
@@ -9109,7 +9119,11 @@ async function changeTimeframe(ticker, tf) {
   // Discard saved zoom when timeframe changes (different data = different scale)
   if (prevTf !== tf) { delete userZoom[ticker]; saveZoom(); }
   document.querySelectorAll(`#td-${ticker} .tf-btn`).forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
+  // 15.10.2026: było `event.target` — czyli niejawna globalna `window.event`.
+  // Działa tylko wtedy, gdy funkcję wywołał onclick, i jest wycofywana ze
+  // standardu. Wybieramy przycisk po `data-tf`, więc działa też przy wywołaniu
+  // z kodu, a w JS nie ma już ani jednej nazwy spoza deklaracji.
+  document.querySelector(`#td-${ticker} .tf-btn[data-tf="${tf}"]`)?.classList.add('active');
   const wrap = document.getElementById(`chart-wrap-${ticker}`);
   wrap?.classList.add('loading'); wrap?.classList.remove('error'); wrap?.removeAttribute('data-error');
   const ohlc = await fetchOhlc(ticker, tf);

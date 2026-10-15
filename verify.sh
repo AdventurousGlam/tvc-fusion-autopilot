@@ -146,17 +146,23 @@ print(f"   ✅ wszystkie {len(used)} adresow z fetch/WebSocket dopuszczone w con
 PY2
   [ $? -ne 0 ] && FAIL=1
 
-  # PRÓBOWAŁAM to sprawdzić statycznie (i18n vs I18N) i NIE DA SIĘ bez parsera JS:
-  # wyrażenia regularne nie odróżniają kodu od tekstu w stringach i komentarzach,
-  # więc wersja po nazwach dawała 11 fałszywych alarmów, a po `NAZWA[` — 15.
-  # Check, który krzyczy bez powodu, uczy go ignorować, więc go tu nie ma.
-  #
-  # ZAMIAST TEGO, OBOWIĄZKOWO PO KAŻDYM WGRANIU TERMINALA NA FTP:
-  #   otworzyć https://tradingventureclub.com/terminal/ i przeczytać konsolę.
-  # Tylko to wyłapuje ReferenceError wewnątrz funkcji renderujących i naruszenia
-  # CSP. 15.10.2026 właśnie tak znalazły się dwa błędy na żywej stronie:
-  # `i18n is not defined` w dwóch panelach i CSP blokujące wszystkie strumienie
-  # orderbooka (port 9443 vs domyślny 443).
+  step "HTML — nazwy nieistniejace w zasiegu (acorn, odpowiednik no-undef)"
+  # 15.10.2026: na zywej stronie wyszlo `i18n is not defined` w dwoch panelach
+  # (obiekt nazywa sie `I18N`). `node --check` tego nie widzi, bo skladnia jest
+  # poprawna — blad wychodzi przy wykonaniu funkcji renderujacej.
+  # Dwie proby zlapania tego wyrazeniami regularnymi daly 11 i 15 falszywych
+  # alarmow; regex nie odroznia kodu od tekstu w stringach i komentarzach.
+  # Acorn parsuje JS na drzewo i daje zero falszywych trafien.
+  if [ ! -d node_modules/acorn-globals ]; then
+    printf '   … brak acorn-globals, instaluję\n'
+    npm install --silent --no-audit --no-fund acorn acorn-globals >/dev/null 2>&1 || true
+  fi
+  if [ -d node_modules/acorn-globals ]; then
+    node check_js_globals.js tvc-terminal.html fusion-widget.html || FAIL=1
+  else
+    bad "acorn-globals niedostępny — sprawdzenie nazw w JS POMINIĘTE, nie mów że zweryfikowane"
+  fi
+
 fi
 
 # ── 3. WORKFLOW: pułapka set -e w przypisaniach ──────────────────────────────

@@ -3782,7 +3782,7 @@ function renderLiveWhales(whalesByToken) {
 // ═══════════════════════════════════════════════════════════════════════════
 // LIVE WHALE DETECTION (browser-side, real-time, all major chains)
 // Sources: mempool.space (BTC), ethereum-rpc.publicnode.com (ETH+ERC20),
-//          xrplcluster.com (XRP), api.mainnet-beta.solana.com (SOL),
+//          xrplcluster.com (XRP), solana-rpc.publicnode.com (SOL),
 //          fullnode.mainnet.sui.io (SUI). All CORS-enabled, no keys.
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -3791,7 +3791,10 @@ const WHALE_ETH_RPCS = [
   'https://eth.llamarpc.com',
   'https://rpc.ankr.com/eth',
 ];
-const SOL_RPC = 'https://api.mainnet-beta.solana.com';
+// 15.10.2026: bylo api.mainnet-beta.solana.com — Solana Labs zablokowalo ten
+// publiczny RPC dla przegladarek (403 "Access forbidden"), wiec panel wielorybow
+// SOL w widgecie nie dzialal w ogole. publicnode odpowiada 200.
+const SOL_RPC = 'https://solana-rpc.publicnode.com';
 const SUI_RPC = 'https://fullnode.mainnet.sui.io:443';
 
 async function rpcPost(url, payload, timeoutMs=8000) {
@@ -4184,7 +4187,7 @@ async function fetchSOLWhales(solUsd) {
       try {
         const blockRes = await rpcPost(SOL_RPC, {
           jsonrpc: '2.0', id: 1, method: 'getBlock',
-          params: [slot - off, { encoding: 'json', maxSupportedTransactionVersion: 0, transactionDetails: 'accounts', rewards: false }]
+          params: [slot - off, { encoding: 'json', maxSupportedTransactionVersion: 1, transactionDetails: 'accounts', rewards: false }]
         });
         const block = blockRes?.result;
         if (!block) continue;
@@ -4763,7 +4766,7 @@ function renderTokenDetailShell(ticker) {
 
     <div class="td-controls">
       <div class="tf-group">
-        ${['5m','15m','1h','4h','1D','7D','30D'].map(tfKey => `<button class="tf-btn ${(window[`__tf_${ticker}`] || '7D') === tfKey ? 'active' : ''}" onclick="changeTimeframe('${ticker}', '${tfKey}')">${TF_MAP[tfKey].label}</button>`).join('')}
+        ${['5m','15m','1h','4h','1D','7D','30D'].map(tfKey => `<button class="tf-btn ${(window[`__tf_${ticker}`] || '7D') === tfKey ? 'active' : ''}" data-tf="${tfKey}" onclick="changeTimeframe('${ticker}', '${tfKey}')">${TF_MAP[tfKey].label}</button>`).join('')}
       </div>
       <div class="toggles-group">
         <button class="toggle-btn sr ${overlays.sr ? 'active' : ''}" onclick="toggleOverlay('sr', '${ticker}')">S/R</button>
@@ -4938,7 +4941,9 @@ async function changeTimeframe(ticker, tf) {
   // Discard saved zoom when timeframe changes (different data = different scale)
   if (prevTf !== tf) { delete userZoom[ticker]; saveZoom(); }
   document.querySelectorAll(`#td-${ticker} .tf-btn`).forEach(b => b.classList.remove('active'));
-  event.target.classList.add('active');
+  // 15.10.2026: było `event.target` (niejawna globalna `window.event`) — patrz
+  // ten sam komentarz w tvc-terminal.html.
+  document.querySelector(`#td-${ticker} .tf-btn[data-tf="${tf}"]`)?.classList.add('active');
   const wrap = document.getElementById(`chart-wrap-${ticker}`);
   wrap?.classList.add('loading'); wrap?.classList.remove('error'); wrap?.removeAttribute('data-error');
   const ohlc = await fetchOhlc(ticker, tf);
