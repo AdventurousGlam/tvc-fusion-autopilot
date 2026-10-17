@@ -44,6 +44,14 @@ MIN_MCAP_USD = 20_000_000
 NEW_LISTING_DAYS = 30
 NEW_LISTING_MIN_TURNOVER = 20_000_000
 QUALITY_MCAP = 500_000_000      # mean reversion tylko na dużych/średnich
+
+# Kategorie wstrzymane. Derivatives od 17.10.2026: 34 picki rozliczone,
+# mediana −11,4% wobec BTC, 12/34 lepszych od rynku. Teza pod tą kategorią
+# ("ujemny funding = shorty płacą = zbliża się squeeze") nie broni się w żadnym
+# cięciu danych — picki z ujemnym fundingiem dawały −10,7%, z lekko dodatnim
+# −3,0%. To nie jest kwestia progu ani wagi, tylko samego założenia.
+# Kod score_derivatives() zostaje — przywrócenie to usunięcie wpisu z tego zbioru.
+KATEGORIE_WSTRZYMANE = {"Derivatives"}
 MAX_PER_CATEGORY = 2
 TOP_N = 5
 RADAR_N = 3
@@ -633,6 +641,8 @@ def generate(force=False, telegram=False):
         for cat, fn in (("Momentum", lambda: score_momentum(r, a)), ("Derivatives", lambda: score_derivatives(r, a)),
                         ("Squeeze setup", lambda: score_squeeze(r, a)),
                         ("New listing", lambda: score_new_listing(r, a)), ("Mean reversion", lambda: score_mean_reversion(r, a, mc))):
+            if cat in KATEGORIE_WSTRZYMANE:
+                continue
             s = fn()
             if s:
                 scored.append((s, cat, r, a, mc))

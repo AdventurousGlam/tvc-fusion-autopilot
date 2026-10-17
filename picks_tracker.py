@@ -287,6 +287,13 @@ def zachowaj_z_picka(p, data):
         "invalidation": p.get("invalidation"),
         "score": p.get("score"),
         "rsi14": p.get("rsi14"),
+        # Potrzebne do raportu progów i do analiz, których jeszcze nie znamy.
+        # Kosztuje trzy liczby na pick, a bez nich trzeba znowu kopać w gicie.
+        "mcap_usd": p.get("mcap_usd"),
+        "turnover_24h_usd": p.get("turnover_24h_usd"),
+        "funding_pct_8h": p.get("funding_pct_8h"),
+        "change_24h_pct": p.get("change_24h_pct"),
+        "change_7d_pct": p.get("change_7d_pct"),
         "risk_flag": (p.get("risk_flag") or "")[:160] or None,
         "screener": "v2" if data >= WERSJA_SCREENERA else "v1",
     }
@@ -354,12 +361,54 @@ def dopisz_dzisiejsze(arch):
 
 # ── statystyka ───────────────────────────────────────────────────────────────
 
+# Progi kapitalizacji do przetestowania — raport pokazuje, co by było, gdyby
+# screener odcinał w każdym z tych miejsc. NIC nie zmienia w doborze picków.
+#
+# Po co osobny raport zamiast od razu progu w auto_picks.py: na 43 dniach
+# próg 2 mld wyglądał najlepiej (+3,7% wobec BTC), ale 12/21 trafień nie różni
+# się od rzutu monetą (p = 0,33), a w drugiej połowie okresu efekt zniknął
+# (+6,3% wrzesień, −4,9% październik). Zanim wytniemy 4 na 5 picków, chcemy
+# zobaczyć te same progi na danych, których nie oglądaliśmy przy wyborze.
+PROGI_MCAP = [0, 500_000_000, 1_000_000_000, 2_000_000_000]
+
+
 def mediana(xs):
     xs = sorted(x for x in xs if x is not None)
     if not xs:
         return None
     n = len(xs)
     return round(xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2, 2)
+
+
+def raport_progow(arch, od_daty=None):
+    """
+    Co by było, gdyby screener odcinał przy danej kapitalizacji.
+
+    od_daty pozwala policzyć to samo na danych świeższych niż te, na których
+    próg był wybierany — bo próg dobrany i oceniony na tej samej próbce
+    zawsze wygląda dobrze.
+    """
+    out = {}
+    for prog in PROGI_MCAP:
+        g = [e for e in arch.values()
+             if (e.get("mcap_usd") or 0) >= prog
+             and (e.get("wynik") or {}).get("alpha_7d_pct") is not None
+             and (od_daty is None or e["date"] >= od_daty)]
+        if not g:
+            out[str(prog)] = {"n": 0}
+            continue
+        alfy = [e["wynik"]["alpha_7d_pct"] for e in g]
+        zwroty = [e["wynik"]["return_7d_pct"] for e in g
+                  if e["wynik"].get("return_7d_pct") is not None]
+        lepsze = sum(1 for x in alfy if x > 0)
+        out[str(prog)] = {
+            "n": len(g),
+            "median_alpha_7d_pct": mediana(alfy),
+            "median_return_7d_pct": mediana(zwroty),
+            "share_beat_btc_pct": round(lepsze / len(alfy) * 100, 1),
+            "beat_btc": lepsze,
+        }
+    return out
 
 
 def podsumuj(arch):
@@ -500,6 +549,11 @@ def main():
                  "od wejścia — bliższe były dotykane w dniu zerowym i zawyżały wynik. "
                  "Gdy cel i invalidation padną w tej samej świecy, liczone jako invalidated."),
         "summary": podsumuj(arch),
+        # Co by było, gdyby odcinać przy kolejnych progach kapitalizacji.
+        # "od_17_10" liczy to samo tylko na pickach z dnia decyzji wzwyż —
+        # czyli na danych, których nie oglądaliśmy, dobierając próg.
+        "progi_mcap": raport_progow(arch),
+        "progi_mcap_od_17_10": raport_progow(arch, od_daty="2026-10-17"),
         "entries": arch,
     }
     if dry:
@@ -516,6 +570,22 @@ def main():
                   f"vs BTC={s['median_alpha_7d_pct']}%  "
                   f"lepsze od BTC={s['share_beat_btc_7d_pct']}%  "
                   f"hit={s['hit_rate_pct']}% (z {s['hit_sample']})")
+    print("\n  progi kapitalizacji — co by było, gdyby odcinać:")
+    for prog, r in sorted(out["progi_mcap"].items(), key=lambda x: int(x[0])):
+        if not r.get("n"):
+            continue
+        etykieta = "bez progu" if prog == "0" else f"≥ {int(prog)/1e6:.0f} mln"
+        print(f"      {etykieta:>12s}  n={r['n']:3d}  vs BTC={r['median_alpha_7d_pct']:+6.2f}%  "
+              f"lepsze od BTC {r['beat_btc']}/{r['n']} ({r['share_beat_btc_pct']}%)")
+    swieze = {k: v for k, v in out["progi_mcap_od_17_10"].items() if v.get("n")}
+    if swieze:
+        print("\n  to samo, ale tylko na pickach od 17.10 (dane spoza doboru progu):")
+        for prog, r in sorted(swieze.items(), key=lambda x: int(x[0])):
+            etykieta = "bez progu" if prog == "0" else f"≥ {int(prog)/1e6:.0f} mln"
+            print(f"      {etykieta:>12s}  n={r['n']:3d}  vs BTC={r['median_alpha_7d_pct']:+6.2f}%  "
+                  f"lepsze od BTC {r['beat_btc']}/{r['n']}")
+    else:
+        print("\n  (brak jeszcze rozliczonych picków od 17.10 — wróć za tydzień)")
     return 0
 
 
