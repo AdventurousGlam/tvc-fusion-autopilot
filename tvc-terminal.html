@@ -215,6 +215,25 @@
   .panel-head .meta { font-size: 10px; color: var(--text-dim); font-weight: 600; font-family: var(--mono); }
   .panel-head .meta strong { color: var(--gold); }
 
+  /* Wiersz rozwijany per token — RSI Multi-TF i Volume Profile.
+     Oba panele renderowały wcześniej wszystko naraz (5 tokenów × pełna
+     zawartość), przez co trzeba było długo przewijać. Teraz widać jedną
+     linię na token, szczegóły po kliknięciu. */
+  .tok-acc { border-top: 1px solid var(--border); }
+  .tok-acc:first-child { border-top: none; }
+  .tok-acc > summary {
+    list-style: none; cursor: pointer; display: grid; align-items: center;
+    gap: 8px; padding: 7px 6px; font-size: 11px; transition: background .12s;
+  }
+  .tok-acc > summary::-webkit-details-marker { display: none; }
+  .tok-acc > summary:hover { background: var(--bg-hover); }
+  .tok-acc > summary .tk { font-weight: 700; font-family: var(--mono); letter-spacing: 0.03em; }
+  .tok-acc > summary .caret { color: var(--text-dim); font-size: 9px; transition: transform .15s; }
+  .tok-acc[open] > summary .caret { transform: rotate(90deg); }
+  .tok-acc[open] > summary { background: var(--bg-elev-2); }
+  .tok-acc .acc-body { padding: 8px 6px 14px; }
+  .panel-foot { margin-top: 8px; font-size: 10px; color: var(--text-dim); line-height: 1.5; }
+
   .p-12 { grid-column: span 12; }
   .p-8 { grid-column: span 8; }
   .p-6 { grid-column: span 6; }
@@ -1484,7 +1503,9 @@ const I18N = {
   nav_checklist:      { pl: 'Checklista',         en: 'Checklist' },
   nav_rsi_mtf:        { pl: 'RSI Multi-TF',       en: 'RSI Multi-TF' },
   nav_vpvr:           { pl: 'Volume Profile',     en: 'Volume Profile' },
-  rsi_title:          { pl: '📊 RSI Multi-Timeframe — 1h · 4h · Daily', en: '📊 RSI Multi-Timeframe — 1h · 4h · Daily' },
+  rsi_title:          { pl: 'RSI Multi-TF', en: 'RSI Multi-TF' },
+  rsi_meta:           { pl: '1h · 4h · 1D', en: '1h · 4h · 1D' },
+  rsi_foot:           { pl: 'RSI(14) Wilder · wyprzedany ≤30 · wykupiony ≥70 · konfluencja = ≥2 TF w tej samej strefie', en: 'RSI(14) Wilder · oversold ≤30 · overbought ≥70 · confluence = ≥2 TF in the same zone' },
   rsi_sub:            { pl: 'RSI(14) na trzech ramach czasowych jednocześnie. Oversold na wielu TF = silny sygnał odbicia. Overbought na wielu TF = ryzyko korekty.', en: 'RSI(14) across three timeframes simultaneously. Multi-TF oversold = strong bounce signal. Multi-TF overbought = correction risk.' },
   rsi_oversold:       { pl: 'Wyprzedany', en: 'Oversold' },
   rsi_overbought:     { pl: 'Wykupiony', en: 'Overbought' },
@@ -1494,7 +1515,33 @@ const I18N = {
   rsi_no_confluence:  { pl: 'Brak konfluencji', en: 'No confluence' },
   rsi_multi_oversold: { pl: '🟢 Multi-TF Oversold — rozważ LONG', en: '🟢 Multi-TF Oversold — consider LONG' },
   rsi_multi_overbought: { pl: '🔴 Multi-TF Overbought — ostrożność', en: '🔴 Multi-TF Overbought — caution' },
-  vpvr_title:         { pl: '📊 Volume Profile (VPVR) — rozkład wolumenu po cenach', en: '📊 Volume Profile (VPVR) — volume distribution by price' },
+  vpvr_title:         { pl: 'Volume Profile', en: 'Volume Profile' },
+  vpvr_meta:          { pl: 'VPVR · 100D · 30 przedziałów', en: 'VPVR · 100D · 30 buckets' },
+  vpvr_foot:          { pl: 'POC = największy wolumen · HVN = silne S/R · LVN = cena przechodzi szybko · VA = 70% wolumenu', en: 'POC = highest volume · HVN = strong S/R · LVN = price passes fast · VA = 70% of volume' },
+  vpvr_in_va:         { pl: 'w Value Area', en: 'in Value Area' },
+  vpvr_above_va:      { pl: 'powyżej VA', en: 'above VA' },
+  vpvr_below_va:      { pl: 'poniżej VA', en: 'below VA' },
+  vpvr_no_data:       { pl: 'brak danych', en: 'no data' },
+  /* SKUTECZNOŚĆ PICKÓW — co wyszło z tego, co screener wybrał */
+  ps_title:           { pl: 'Skuteczność picków', en: 'Picks Scorecard' },
+  ps_meta:            { pl: 'rozliczenie po 7 dniach', en: 'settled after 7 days' },
+  ps_cat:             { pl: 'Kategoria', en: 'Category' },
+  ps_n:               { pl: 'Picków', en: 'Picks' },
+  ps_resolved:        { pl: 'Rozstrz.', en: 'Settled' },
+  ps_hit:             { pl: 'Trafienia', en: 'Hit rate' },
+  ps_med7:            { pl: 'Mediana 7d', en: 'Median 7d' },
+  ps_med1:            { pl: 'Mediana 24h', en: 'Median 24h' },
+  ps_all:             { pl: 'RAZEM', en: 'TOTAL' },
+  ps_v1:              { pl: 'Screener v1 (do 6.10)', en: 'Screener v1 (through Oct 6)' },
+  ps_v2:              { pl: 'Screener v2 (od 7.10, filtr RSI)', en: 'Screener v2 (from Oct 7, RSI filter)' },
+  ps_recent:          { pl: 'Ostatnie rozstrzygnięte', en: 'Recently settled' },
+  ps_out_target:      { pl: 'cel', en: 'target' },
+  ps_out_inval:       { pl: 'inwalidacja', en: 'invalidated' },
+  ps_out_up:          { pl: '7d na plusie', en: '7d up' },
+  ps_out_down:        { pl: '7d na minusie', en: '7d down' },
+  ps_small:           { pl: 'próbka za mała', en: 'sample too small' },
+  ps_none:            { pl: 'Brak rozliczonych picków — tracker zbiera dane.', en: 'No settled picks yet — tracker is collecting.' },
+  ps_foot:            { pl: 'Trafienie = cena dotknęła oporu z tezy albo po 7 dniach jest nad wejściem. Gdy cel i inwalidacja padną w tej samej świecy dziennej, liczone jako inwalidacja. Zwrot liczony od ceny z momentu picka, bez założeń o wyjściu.', en: 'Hit = price reached the thesis resistance, or sits above entry after 7 days. When target and invalidation fall in the same daily candle it counts as invalidated. Returns measured from the pick price, with no exit assumption.' },
   vpvr_sub:           { pl: 'High Volume Nodes = silne S/R. Low Volume Nodes = cena przechodzi szybko. POC = najsilniejszy poziom.', en: 'High Volume Nodes = strong S/R. Low Volume Nodes = price passes fast. POC = strongest level.' },
   vpvr_poc:           { pl: 'POC (Point of Control)', en: 'POC (Point of Control)' },
   vpvr_hvn:           { pl: 'HVN — silne S/R', en: 'HVN — strong S/R' },
@@ -2981,6 +3028,7 @@ function render() {
       ${data.pump_radar ? `<div id="pump-radar-slot" class="hide-eod" style="grid-column: span 12; width: 100%;">${renderPumpRadar(data.pump_radar)}</div>` : ''}
       <!-- CRYPTO PICKS — poranny shortlist (auto_picks.py) -->
       ${data.crypto_picks ? `<div id="crypto-picks-slot" class="hide-eod" style="grid-column: span 12; width: 100%;">${renderCryptoPicks(data.crypto_picks)}</div>` : ''}
+      ${data.crypto_picks_history ? `<div id="picks-score-slot" class="hide-eod" style="grid-column: span 12; width: 100%;">${renderPicksScorecard(data.crypto_picks_history)}</div>` : ''}
 
       <!-- ═══ C · KTO KUPUJE — przepływy i pozycjonowanie ═══ -->
       <div class="section-header " style="grid-column: span 12; display:flex;align-items:center;gap:10px;margin:10px 0 4px;padding:6px 10px;background:linear-gradient(90deg,rgba(34,211,238,0.15),transparent);border-left:4px solid var(--cyan);border-radius:4px">
@@ -3060,8 +3108,20 @@ function render() {
       <!-- CORRELATION MAP — Pearson correlation heatmap (gist data) -->
       <div id="correlation-slot" class="hide-trading" style="grid-column: span 12; width: 100%;"></div>
 
-      <!-- MARKET PREDICTIONS — Polymarket-based daily predictions (gist data) -->
+      <!-- PREDYKCJE RYNKU — WYŁĄCZONE 16.10.2026.
+           Powód: polymarket_predictions.py bierze najpierw rynki 5-minutowe
+           ("btc-updown-5m-..."), a pytanie "czy BTC będzie wyżej za 5 minut"
+           nie ma treści informacyjnej — rynek wycenia je na 50/50. Stąd
+           80 rynków "flat" i skuteczność 42% przy punkcie odniesienia 50%,
+           czyli poniżej rzutu monetą na próbce 72 rozstrzygnięć.
+           Filtr z 12.10 (NEUTRAL/50-50 nie dostaje karty) działa poprawnie —
+           odfiltrowuje prawie wszystko, bo prawie wszystko jest bez przewagi.
+           Panel wraca, gdy będzie karmiony rynkami dziennymi i będzie miał
+           czym się wykazać. Funkcja renderPredictions() i klucze i18n zostają
+           nietknięte — przywrócenie to odkomentowanie tej linii i wywołania.
       <div id="predictions-slot" class="hide-trading" style="grid-column: span 12; width: 100%;"></div>
+      -->
+      <!-- /PREDYKCJE -->
 
       <!-- ═══ E · WYNIKI I NAUKA — co działa, P&L, dziennik ═══ -->
       <div class="section-header " style="grid-column: span 12; display:flex;align-items:center;gap:10px;margin:10px 0 4px;padding:6px 10px;background:linear-gradient(90deg,rgba(167,139,250,0.15),transparent);border-left:4px solid var(--purple);border-radius:4px">
@@ -3114,7 +3174,7 @@ function render() {
   // ── New panels: Checklist, Correlation Map, Predictions, AI Crew ──
   renderChecklist();
   renderCorrelationMap();
-  renderPredictions();
+  /* renderPredictions();  — wyłączone 16.10.2026, patrz komentarz przy predictions-slot */
 }
 
 function renderDecision(d) {
@@ -4290,7 +4350,7 @@ const NAV_ITEMS = [
   // [id, ikona, klucz i18n] — kolejność = kolejność sekcji: A DECYZJE / B PALIWO I RYZYKO / C KTO KUPUJE / D KONTEKST / E WYNIKI
   ['command-center-slot', '⚡', 'nav_cc'], ['sec-fusion', '🧠', 'nav_fusion'], ['sec-positions', '📈', 'nav_positions'], ['portfolio-health-slot', '🌐', 'nav_portfolio'],
   'sep',
-  ['flush-risk-slot', '🌊', 'nav_flush'], ['rsi-multi-slot', '📊', 'nav_rsi_mtf'], ['vpvr-slot', '📊', 'nav_vpvr'], ['pump-radar-slot', '🚀', 'nav_radar'], ['crypto-picks-slot', '🎯', 'nav_picks'],
+  ['flush-risk-slot', '🌊', 'nav_flush'], ['rsi-multi-slot', '📊', 'nav_rsi_mtf'], ['vpvr-slot', '📊', 'nav_vpvr'], ['pump-radar-slot', '🚀', 'nav_radar'], ['crypto-picks-slot', '🎯', 'nav_picks'], ['picks-score-slot', '🏅', 'ps_title'],
   'sep',
   ['smart-money-slot', '🏦', 'nav_smart'], ['cvd-slot', '⚖️', 'nav_cvd'], ['options-slot', '🎭', 'nav_options'], ['macro-etf-slot', '🏛', 'nav_etf'], ['sec-whales', '🐋', 'nav_whales'],
   'sep',
@@ -5292,10 +5352,11 @@ async function renderRsiMultiPanel() {
   if (!slot) return;
   const lang = window._lang || 'pl';
   const T = k => (I18N[k] || {})[lang] || (I18N[k] || {}).en || k;
-  slot.innerHTML = `<div class="panel"><h2>${T('rsi_title')}</h2><p class="panel-sub" style="margin-bottom:12px">${T('rsi_sub')}</p><div style="text-align:center;padding:30px 0;color:#888">${T('rsi_loading')}</div></div>`;
+  const head = `<div class="panel-head"><h3>${T('rsi_title')}</h3><span class="meta">${T('rsi_meta')}</span></div>`;
+  slot.innerHTML = `<section class="panel">${head}<div style="text-align:center;padding:24px 0;color:var(--text-dim);font-size:11px">${T('rsi_loading')}</div></section>`;
 
   const tickers = typeof SM_TICKERS !== 'undefined' ? SM_TICKERS : ['BTC','ETH','SOL','XRP','SUI'];
-  const intervals = [{tf:'1h',label:'1h'},{tf:'4h',label:'4h'},{tf:'1D',label:'Daily'}];
+  const intervals = [{tf:'1h',label:'1h'},{tf:'4h',label:'4h'},{tf:'1D',label:'1D'}];
   const results = {}; // { BTC: { '1h': 45.2, '4h': 61.3, '1D': 55.0 }, ... }
 
   await Promise.all(tickers.map(async ticker => {
@@ -5323,59 +5384,68 @@ async function renderRsiMultiPanel() {
 
   let confHtml = '';
   if (confluences.length > 0) {
-    confHtml = `<div style="margin-bottom:12px">`;
+    confHtml = `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">`;
     for (const c of confluences) {
-      if (c.type === 'oversold') confHtml += `<span style="display:inline-block;padding:4px 10px;border-radius:6px;background:rgba(34,197,94,0.15);color:#22c55e;font-weight:600;margin:2px 4px">🟢 ${c.ticker} — ${T('rsi_multi_oversold')}</span>`;
-      else confHtml += `<span style="display:inline-block;padding:4px 10px;border-radius:6px;background:rgba(239,68,68,0.15);color:#ef4444;font-weight:600;margin:2px 4px">🔴 ${c.ticker} — ${T('rsi_multi_overbought')}</span>`;
+      if (c.type === 'oversold') confHtml += `<span style="padding:3px 8px;border-radius:4px;background:rgba(34,197,94,0.15);color:#22c55e;font-weight:700;font-size:10px">${c.ticker} — ${T('rsi_multi_oversold')}</span>`;
+      else confHtml += `<span style="padding:3px 8px;border-radius:4px;background:rgba(239,68,68,0.15);color:#ef4444;font-weight:700;font-size:10px">${c.ticker} — ${T('rsi_multi_overbought')}</span>`;
     }
     confHtml += `</div>`;
   }
 
-  // Build table
+  // Jeden wiersz na token, szczegóły po kliknięciu.
+  const KOLUMNY = 'grid-template-columns: 46px repeat(3, 1fr) auto 10px';
   let rows = '';
   for (const tk of tickers) {
-    rows += `<tr>`;
-    rows += `<td style="font-weight:700;padding:8px 12px">${tk}</td>`;
+    const vals = intervals.map(iv => results[tk][iv.tf]).filter(v => v != null);
+    const oversold  = vals.length >= 2 && vals.every(v => v <= 35);
+    const overbought = vals.length >= 2 && vals.every(v => v >= 65);
+
+    // Skrót: liczba RSI na każdym TF, pokolorowana
+    const skrot = intervals.map(iv => {
+      const v = results[tk][iv.tf];
+      return `<span style="text-align:center;font-family:var(--mono);font-weight:700;color:${rsiColor(v)}">${v != null ? v.toFixed(1) : '—'}</span>`;
+    }).join('');
+
+    const badge = oversold
+      ? `<span style="color:#22c55e;font-weight:700;font-size:10px">${T('rsi_confluence')}</span>`
+      : overbought
+      ? `<span style="color:#ef4444;font-weight:700;font-size:10px">${T('rsi_confluence')}</span>`
+      : `<span style="color:var(--text-dim);font-size:10px">${T('rsi_no_confluence')}</span>`;
+
+    // Szczegóły: pasek i etykieta dla każdego TF
+    let body = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">`;
     for (const iv of intervals) {
-      const val = results[tk][iv.tf];
-      const color = rsiColor(val);
-      const label = rsiLabel(val, lang);
-      const display = val != null ? val.toFixed(1) : '—';
-      // Mini gauge bar
-      const pct = val != null ? Math.min(100, Math.max(0, val)) : 50;
-      rows += `<td style="padding:8px 12px;text-align:center">
-        <div style="font-size:1.2em;font-weight:700;color:${color}">${display}</div>
-        <div style="width:100%;height:4px;background:#333;border-radius:2px;margin:4px 0">
+      const v = results[tk][iv.tf];
+      const color = rsiColor(v);
+      const pct = v != null ? Math.min(100, Math.max(0, v)) : 0;
+      body += `<div>
+        <div style="font-size:9px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:700">${iv.label}</div>
+        <div style="font-size:16px;font-weight:700;color:${color};font-family:var(--mono)">${v != null ? v.toFixed(1) : '—'}</div>
+        <div style="height:4px;background:var(--bg-elev-2);border-radius:2px;margin:4px 0">
           <div style="width:${pct}%;height:4px;background:${color};border-radius:2px"></div>
         </div>
-        <div style="font-size:0.75em;color:${color}">${label}</div>
-      </td>`;
+        <div style="font-size:10px;color:${color}">${rsiLabel(v, lang)}</div>
+      </div>`;
     }
-    // Confluence badge
-    const vals = intervals.map(iv => results[tk][iv.tf]).filter(v => v != null);
-    const avg = vals.length > 0 ? vals.reduce((a,b) => a+b, 0) / vals.length : null;
-    let badge = '';
-    if (vals.length >= 2 && vals.every(v => v <= 35)) badge = `<span style="color:#22c55e;font-weight:700">🟢 ${T('rsi_confluence')}</span>`;
-    else if (vals.length >= 2 && vals.every(v => v >= 65)) badge = `<span style="color:#ef4444;font-weight:700">🔴 ${T('rsi_confluence')}</span>`;
-    else badge = `<span style="color:#666;font-size:0.8em">${T('rsi_no_confluence')}</span>`;
-    rows += `<td style="padding:8px 12px;text-align:center">${badge}</td>`;
-    rows += `</tr>`;
+    body += `</div>`;
+
+    rows += `<details class="tok-acc">
+      <summary style="${KOLUMNY}">
+        <span class="tk">${tk}</span>${skrot}${badge}<span class="caret">▶</span>
+      </summary>
+      <div class="acc-body">${body}</div>
+    </details>`;
   }
 
-  slot.innerHTML = `<div class="panel"><h2>${T('rsi_title')}</h2><p class="panel-sub" style="margin-bottom:12px">${T('rsi_sub')}</p>
+  slot.innerHTML = `<section class="panel">
+    ${head}
     ${confHtml}
-    <div style="overflow-x:auto">
-    <table style="width:100%;border-collapse:collapse">
-      <thead><tr style="border-bottom:1px solid #333">
-        <th style="text-align:left;padding:8px 12px">Token</th>
-        ${intervals.map(iv => `<th style="text-align:center;padding:8px 12px">${iv.label}</th>`).join('')}
-        <th style="text-align:center;padding:8px 12px">${T('rsi_confluence')}</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
+    <div style="display:grid;${KOLUMNY};gap:8px;padding:0 6px 4px;font-size:9px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:700;border-bottom:1px solid var(--border)">
+      <span>Token</span>${intervals.map(iv => `<span style="text-align:center">${iv.label}</span>`).join('')}<span>${T('rsi_confluence')}</span><span></span>
     </div>
-    <p style="margin-top:10px;font-size:0.75em;color:#666">RSI(14) Wilder's smoothing · ${T('rsi_oversold')} ≤30 · ${T('rsi_overbought')} ≥70</p>
-  </div>`;
+    ${rows}
+    <div class="panel-foot">${T('rsi_foot')}</div>
+  </section>`;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -5386,7 +5456,8 @@ async function renderVpvrPanel() {
   if (!slot) return;
   const lang = window._lang || 'pl';
   const T = k => (I18N[k] || {})[lang] || (I18N[k] || {}).en || k;
-  slot.innerHTML = `<div class="panel"><h2>${T('vpvr_title')}</h2><p class="panel-sub" style="margin-bottom:12px">${T('vpvr_sub')}</p><div style="text-align:center;padding:30px 0;color:#888">${T('vpvr_loading')}</div></div>`;
+  const head = `<div class="panel-head"><h3>${T('vpvr_title')}</h3><span class="meta">${T('vpvr_meta')}</span></div>`;
+  slot.innerHTML = `<section class="panel">${head}<div style="text-align:center;padding:24px 0;color:var(--text-dim);font-size:11px">${T('vpvr_loading')}</div></section>`;
 
   const tickers = typeof SM_TICKERS !== 'undefined' ? SM_TICKERS : ['BTC','ETH','SOL','XRP','SUI'];
   const profiles = {};
@@ -5454,12 +5525,19 @@ async function renderVpvrPanel() {
     } catch { profiles[ticker] = null; }
   }));
 
-  // Render
-  let html = `<div class="panel"><h2>${T('vpvr_title')}</h2><p class="panel-sub" style="margin-bottom:12px">${T('vpvr_sub')}</p>`;
+  // Render — jeden wiersz na token, wykres wolumenu po kliknięciu
+  const KOLUMNY = 'grid-template-columns: 46px 1fr 1fr auto 10px';
+  let html = `<section class="panel">${head}
+    <div style="display:grid;${KOLUMNY};gap:8px;padding:0 6px 4px;font-size:9px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;font-weight:700;border-bottom:1px solid var(--border)">
+      <span>Token</span><span>POC</span><span>Value Area</span><span>Cena</span><span></span>
+    </div>`;
 
   for (const tk of tickers) {
     const p = profiles[tk];
-    if (!p) { html += `<div style="margin-bottom:16px"><strong>${tk}</strong> — no data</div>`; continue; }
+    if (!p) {
+      html += `<details class="tok-acc"><summary style="${KOLUMNY}"><span class="tk">${tk}</span><span style="grid-column:span 3;color:var(--text-dim);font-size:10px">${T('vpvr_no_data')}</span><span></span></summary></details>`;
+      continue;
+    }
 
     const pocPrice = p.bucketPrices[p.pocIdx];
     const vaLowPrice = p.minPrice + (p.vaLow * (p.maxPrice - p.minPrice) / p.numBuckets);
@@ -5469,11 +5547,20 @@ async function renderVpvrPanel() {
     // Format price helper
     const fmtP = v => v >= 1000 ? '$' + v.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ',') : v >= 1 ? '$' + v.toFixed(2) : '$' + v.toFixed(4);
 
-    html += `<div style="margin-bottom:20px;padding:12px;background:rgba(255,255,255,0.03);border-radius:8px">`;
-    html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">`;
-    html += `<strong style="font-size:1.1em">${tk}</strong>`;
-    html += `<span style="font-size:0.85em;color:#888">Current: <span style="color:#fff;font-weight:600">${fmtP(p.currentPrice)}</span></span>`;
-    html += `</div>`;
+    // Jedna linia podsumowania: POC, Value Area, gdzie stoi cena
+    const wVA = p.currentPrice >= vaLowPrice && p.currentPrice <= vaHighPrice;
+    const pozKolor = wVA ? '#60a5fa' : (p.currentPrice > vaHighPrice ? '#22c55e' : '#ef4444');
+    const pozTekst = wVA ? T('vpvr_in_va') : (p.currentPrice > vaHighPrice ? T('vpvr_above_va') : T('vpvr_below_va'));
+
+    html += `<details class="tok-acc">
+      <summary style="${KOLUMNY}">
+        <span class="tk">${tk}</span>
+        <span style="font-family:var(--mono);color:#fbbf24;font-weight:700">${fmtP(pocPrice)}</span>
+        <span style="font-family:var(--mono);color:var(--text-muted);font-size:10px">${fmtP(vaLowPrice)} – ${fmtP(vaHighPrice)}</span>
+        <span style="color:${pozKolor};font-size:10px;font-weight:700">${fmtP(p.currentPrice)} · ${pozTekst}</span>
+        <span class="caret">▶</span>
+      </summary>
+      <div class="acc-body">`;
 
     // Key levels badges
     html += `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">`;
@@ -5523,11 +5610,11 @@ async function renderVpvrPanel() {
       posNote = `<span style="color:#ef4444">📍 ${lang === 'pl' ? 'Cena poniżej VA — niedźwiedzi, POC jako opór' : 'Price below VA — bearish, POC as resistance'}</span>`;
     }
     html += `<div style="margin-top:6px;font-size:0.8em">${posNote}</div>`;
-    html += `</div>`;
+    html += `</div></details>`;
   }
 
-  html += `<p style="margin-top:10px;font-size:0.75em;color:#666">${lang === 'pl' ? '100 dziennych świec · 30 przedziałów cenowych · POC = max wolumen · VA = 70% wolumenu' : '100 daily candles · 30 price buckets · POC = max volume · VA = 70% volume'}</p>`;
-  html += `</div>`;
+  html += `<div class="panel-foot">${T('vpvr_foot')}</div>`;
+  html += `</section>`;
   slot.innerHTML = html;
 }
 
@@ -5802,6 +5889,93 @@ async function smRefreshHyperliquid() {
   });
   for (const t of SM_TICKERS) agg[t].top.sort((a, b) => b.val - a.val).splice(4);
   smartMoney.hl.agg = agg; smartMoney.hl.ts = Date.now();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SKUTECZNOŚĆ PICKÓW — czy screener wybiera dobrze, i która kategoria
+// Dane: picks_tracker.py → crypto_picks_history.json → fusion JSON.
+// Panel odpowiada na pytanie "czy trzeba zmienić kategorie", więc najważniejsze
+// jest porównanie kategorii między sobą i wersji screenera przed/po filtrze RSI.
+// Kategorie z próbką < 8 rozstrzygnięć są wyszarzone: przy takiej liczbie
+// różnica w hit rate to szum, a nie wiedza.
+// ═══════════════════════════════════════════════════════════════════════════
+const PS_MIN_PROBKA = 8;
+
+function renderPicksScorecard(ph) {
+  if (!ph || !ph.summary) return '';
+
+  const T = k => (typeof t === 'function' ? t(k) : k);
+  const head = `<div class="panel-head"><h3>${T('ps_title')}</h3><span class="meta">${T('ps_meta')}</span></div>`;
+
+  const pct = (v, prog = 0) => v == null ? '<span style="color:var(--text-dim)">—</span>'
+    : `<span style="color:${v > prog ? 'var(--green)' : v < prog ? 'var(--red)' : 'var(--text-dim)'}">${v > 0 ? '+' : ''}${v}%</span>`;
+  const hitKolor = v => v == null ? 'var(--text-dim)' : v >= 55 ? 'var(--green)' : v >= 45 ? 'var(--amber)' : 'var(--red)';
+
+  const KAT_IKONA = { 'Momentum': '🚀', 'Derivatives': '📊', 'Squeeze setup': '🧨',
+                      'New listing': '🆕', 'Mean reversion': '↩️' };
+
+  function tabela(wersja, etykieta) {
+    const s = ph.summary[wersja];
+    if (!s) return '';
+    const kat = Object.entries(s).filter(([k]) => k !== 'RAZEM')
+      .sort((a, b) => (b[1].hit_rate_pct ?? -1) - (a[1].hit_rate_pct ?? -1));
+    const razem = s.RAZEM;
+    if (!kat.length) return '';
+    const wiersz = ([nazwa, d]) => {
+      const male = (d.resolved || 0) < PS_MIN_PROBKA;
+      return `<tr style="border-bottom:1px solid var(--border-soft);${male ? 'opacity:.55' : ''}">
+        <td style="padding:5px 6px;font-weight:700">${KAT_IKONA[nazwa] || '📌'} ${nazwa}${male ? `<span style="font-size:8.5px;color:var(--text-dim);font-weight:600"> · ${T('ps_small')}</span>` : ''}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${d.n}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${d.resolved}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono);font-weight:800;color:${hitKolor(d.hit_rate_pct)}">${d.hit_rate_pct != null ? d.hit_rate_pct + '%' : '—'}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${pct(d.median_return_7d_pct)}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${pct(d.median_return_1d_pct)}</td>
+      </tr>`;
+    };
+    const stopka = razem ? `<tr style="border-top:2px solid var(--border);font-weight:800">
+        <td style="padding:5px 6px">${T('ps_all')}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${razem.n}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${razem.resolved}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono);color:${hitKolor(razem.hit_rate_pct)}">${razem.hit_rate_pct != null ? razem.hit_rate_pct + '%' : '—'}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${pct(razem.median_return_7d_pct)}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${pct(razem.median_return_1d_pct)}</td>
+      </tr>` : '';
+    const naglowek = `<tr style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em">
+        <th style="text-align:left;padding:4px 6px">${T('ps_cat')}</th>
+        <th style="padding:4px 6px">${T('ps_n')}</th><th style="padding:4px 6px">${T('ps_resolved')}</th>
+        <th style="padding:4px 6px">${T('ps_hit')}</th><th style="padding:4px 6px">${T('ps_med7')}</th>
+        <th style="padding:4px 6px">${T('ps_med1')}</th></tr>`;
+    return `<div style="margin-bottom:14px">
+      <div style="font-size:10px;color:var(--text-muted);font-weight:700;margin-bottom:5px">${etykieta}</div>
+      <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px">
+        ${naglowek}${kat.map(wiersz).join('')}${stopka}</table></div></div>`;
+  }
+
+  const OUT = { target_hit: ['ps_out_target', 'var(--green)'], invalidated: ['ps_out_inval', 'var(--red)'],
+                expired_up: ['ps_out_up', 'var(--green)'], expired_down: ['ps_out_down', 'var(--red)'] };
+  const ostatnie = (ph.recent || []).slice(0, 12).map(e => {
+    const [kl, kol] = OUT[e.outcome] || ['', 'var(--text-dim)'];
+    return `<tr style="border-bottom:1px solid var(--border-soft)">
+      <td style="padding:4px 6px;font-family:var(--mono);font-weight:700">${e.ticker}</td>
+      <td style="padding:4px 6px;font-size:10px;color:var(--text-muted)">${KAT_IKONA[e.category] || '📌'} ${e.category || ''}</td>
+      <td style="padding:4px 6px;font-size:10px;color:var(--text-dim);font-family:var(--mono)">${e.date}</td>
+      <td style="padding:4px 6px;font-size:10px;font-weight:700;color:${kol}">${T(kl)}</td>
+      <td style="padding:4px 6px;text-align:right;font-family:var(--mono);font-size:10.5px">${pct(e.return_7d_pct)}</td>
+      <td style="padding:4px 6px;text-align:right;font-family:var(--mono);font-size:10px;color:var(--text-dim)" title="największy spadek w oknie">${e.max_adverse_pct != null ? e.max_adverse_pct + '%' : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  const maDane = (ph.summary.all?.RAZEM?.resolved || 0) > 0;
+  return `<section class="panel p-12" id="sec-picks-score">${head}
+    ${maDane ? `
+      ${tabela('all', T('ps_all'))}
+      ${tabela('v2', T('ps_v2'))}
+      ${tabela('v1', T('ps_v1'))}
+      ${ostatnie ? `<div style="font-size:10px;color:var(--text-muted);font-weight:700;margin:10px 0 5px">${T('ps_recent')}</div>
+        <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px">${ostatnie}</table></div>` : ''}
+    ` : `<div style="padding:14px;color:var(--text-muted);font-size:11px">${T('ps_none')}</div>`}
+    <div class="panel-foot">${T('ps_foot')}</div>
+  </section>`;
 }
 
 // ─── WHALE TAPE — kiedy wieloryby otwierają / zamykają (Hyperliquid userFillsByTime) ───

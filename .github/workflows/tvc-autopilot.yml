@@ -69,6 +69,16 @@ jobs:
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 auto_picks.py --telegram
 
+      # Rozliczenie picków: co z nich wyszło. Dopisuje dzisiejsze do archiwum
+      # i domyka te sprzed 1-7 dni danymi z MEXC. Przy pierwszym przebiegu sam
+      # odtwarza historię z commitów crypto_picks.json (41 dni wstecz).
+      # Jak picks — awaria nie jest awarią cyklu, to warstwa obserwacyjna.
+      - name: Picks tracker (skuteczność picków)
+        id: picks_tracker
+        continue-on-error: true
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
+        run: python3 picks_tracker.py
+
       # Pump Radar — skan całego rynku perpów (HL + MEXC) pod krótkoterminowe pumpy:
       # OI surge / funding / kompresja / wieloryby HL / zapłon wolumenu / listingi.
       # radar_cache.json (serie cen/OI, fills) żyje w actions/cache, nie w repo — za duży
@@ -276,7 +286,7 @@ jobs:
           git config user.name "tvc-autopilot"
           git config user.email "autopilot@tvcfusion.local"
           git add fusion_*.json paper_trades.db
-          for f in crypto_picks.json layers_cache.json pump_radar.json pump_radar_alerts.json correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json tg_sent.json autopilot_health.json; do [ -e "$f" ] && git add "$f"; done; true
+          for f in crypto_picks.json crypto_picks_history.json layers_cache.json pump_radar.json pump_radar_alerts.json correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json tg_sent.json autopilot_health.json; do [ -e "$f" ] && git add "$f"; done; true
           if git diff --cached --quiet; then
             echo "Brak zmian do commitu."
             exit 0
@@ -333,6 +343,7 @@ jobs:
               fi
               git checkout --theirs -- paper_trades.db 2>/dev/null || true
               git checkout --theirs -- crypto_picks.json 2>/dev/null || true
+              git checkout --theirs -- crypto_picks_history.json 2>/dev/null || true
               git checkout --theirs -- layers_cache.json pump_radar.json pump_radar_alerts.json 2>/dev/null || true
               git checkout --theirs -- correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json tg_sent.json autopilot_health.json 2>/dev/null || true
               # v4.3.1 (13.10.2026) — DRUGI strażnik, w ścieżce rebase.

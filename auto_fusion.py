@@ -2230,6 +2230,7 @@ def generate_fusion():
         "short_blocked_by_regime": [] if regime in ("TRENDING_DOWN", "TRENDING_DOWN_VOLATILE", "CRASH") else [f"Regime {regime} — shorty bez CHoCH override dozwolone tylko w TRENDING_DOWN/CRASH. Token ze świeżym bearish CHoCH na 1h omija ten gate (patrz choch_override w decyzji)."],
         "catalyst_calendar_this_week": generate_catalyst_calendar(),
         "crypto_picks": load_crypto_picks(),
+        "crypto_picks_history": load_picks_history(),
         "pump_radar": load_pump_radar(),
         "correlation_matrix": load_correlation_data(),
         "market_predictions": load_market_predictions(),
@@ -2347,6 +2348,45 @@ def load_crypto_picks():
         return data
     except Exception as e:
         print(f"[picks] crypto_picks.json unreadable: {e}")
+        return None
+
+
+def load_picks_history():
+    """
+    Skuteczność Crypto Picks — picks_tracker.py prowadzi crypto_picks_history.json
+    z rozliczeniem każdego picka (zwrot 24h/3d/7d + czy teza się obroniła).
+
+    Do fusion_latest.json idzie TYLKO podsumowanie i ostatnie 30 rozstrzygniętych
+    wpisów. Całe archiwum to 117 picków i rośnie — wrzucanie go tutaj rozdęłoby
+    JSON, który terminal pobiera przy każdym odświeżeniu.
+    """
+    path = FUSION_DIR / "crypto_picks_history.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text())
+        wpisy = data.get("entries") or {}
+        if not isinstance(wpisy, dict) or not data.get("summary"):
+            return None
+        rozstrzygniete = [
+            {**{k: v for k, v in e.items() if k != "wynik"},
+             **{k: e["wynik"].get(k) for k in
+                ("outcome", "return_1d_pct", "return_7d_pct", "max_adverse_pct")}}
+            for e in wpisy.values()
+            if (e.get("wynik") or {}).get("resolved")
+        ]
+        rozstrzygniete.sort(key=lambda e: e["date"], reverse=True)
+        return {
+            "generated_at": data.get("generated_at"),
+            "horizon_days": data.get("horizon_days"),
+            "screener_v2_since": data.get("screener_v2_since"),
+            "note": data.get("note"),
+            "summary": data["summary"],
+            "total": len(wpisy),
+            "recent": rozstrzygniete[:30],
+        }
+    except Exception as e:
+        print(f"[picks] crypto_picks_history.json unreadable: {e}")
         return None
 
 
