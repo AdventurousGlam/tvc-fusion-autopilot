@@ -1531,6 +1531,11 @@ const I18N = {
   ps_hit:             { pl: 'Trafienia', en: 'Hit rate' },
   ps_med7:            { pl: 'Mediana 7d', en: 'Median 7d' },
   ps_med1:            { pl: 'Mediana 24h', en: 'Median 24h' },
+  ps_plus7:           { pl: 'Na plusie', en: 'Above entry' },
+  ps_hit_sample:      { pl: 'próbka', en: 'sample' },
+  ps_day0:            { pl: 'trafień w dniu 0', en: 'hits on day 0' },
+  ps_excluded:        { pl: 'celów odrzuconych jako niemierzalne', en: 'targets rejected as unmeasurable' },
+  ps_lead:            { pl: 'Główna miara to zwrot po 7 dniach — trafienia mówią tylko, czy cena dotknęła poziomu z tezy, nie czy tam została.', en: 'The headline number is the 7-day return — hits only say price touched the thesis level, not that it stayed there.' },
   ps_all:             { pl: 'RAZEM', en: 'TOTAL' },
   ps_v1:              { pl: 'Screener v1 (do 6.10)', en: 'Screener v1 (through Oct 6)' },
   ps_v2:              { pl: 'Screener v2 (od 7.10, filtr RSI)', en: 'Screener v2 (from Oct 7, RSI filter)' },
@@ -1541,7 +1546,7 @@ const I18N = {
   ps_out_down:        { pl: '7d na minusie', en: '7d down' },
   ps_small:           { pl: 'próbka za mała', en: 'sample too small' },
   ps_none:            { pl: 'Brak rozliczonych picków — tracker zbiera dane.', en: 'No settled picks yet — tracker is collecting.' },
-  ps_foot:            { pl: 'Trafienie = cena dotknęła oporu z tezy albo po 7 dniach jest nad wejściem. Gdy cel i inwalidacja padną w tej samej świecy dziennej, liczone jako inwalidacja. Zwrot liczony od ceny z momentu picka, bez założeń o wyjściu.', en: 'Hit = price reached the thesis resistance, or sits above entry after 7 days. When target and invalidation fall in the same daily candle it counts as invalidated. Returns measured from the pick price, with no exit assumption.' },
+  ps_foot:            { pl: 'Zwrot liczony od ceny z momentu picka, bez założeń o wyjściu. Trafienia liczone wyłącznie dla celów oddalonych o co najmniej 3% od wejścia — bliższe były dotykane w tej samej świecy, w której pick powstał, i zawyżały wynik. Gdy cel i inwalidacja padną w jednej świecy dziennej, liczone jako inwalidacja.', en: 'Returns measured from the pick price, with no exit assumption. Hits counted only for targets at least 3% away from entry — closer ones were touched in the same candle the pick was made and inflated the result. When target and invalidation fall in one daily candle it counts as invalidated.' },
   vpvr_sub:           { pl: 'High Volume Nodes = silne S/R. Low Volume Nodes = cena przechodzi szybko. POC = najsilniejszy poziom.', en: 'High Volume Nodes = strong S/R. Low Volume Nodes = price passes fast. POC = strongest level.' },
   vpvr_poc:           { pl: 'POC (Point of Control)', en: 'POC (Point of Control)' },
   vpvr_hvn:           { pl: 'HVN — silne S/R', en: 'HVN — strong S/R' },
@@ -5918,33 +5923,37 @@ function renderPicksScorecard(ph) {
     const s = ph.summary[wersja];
     if (!s) return '';
     const kat = Object.entries(s).filter(([k]) => k !== 'RAZEM')
-      .sort((a, b) => (b[1].hit_rate_pct ?? -1) - (a[1].hit_rate_pct ?? -1));
+      .sort((a, b) => (b[1].median_return_7d_pct ?? -999) - (a[1].median_return_7d_pct ?? -999));
     const razem = s.RAZEM;
     if (!kat.length) return '';
     const wiersz = ([nazwa, d]) => {
-      const male = (d.resolved || 0) < PS_MIN_PROBKA;
+      const male = (d.sample_7d || 0) < PS_MIN_PROBKA;
+      // Zwrot 7d pogrubiony — to jest liczba, na której podejmuje się decyzję.
+      // Hit rate ostatni i z próbką, bo bez niej wprowadza w błąd.
       return `<tr style="border-bottom:1px solid var(--border-soft);${male ? 'opacity:.55' : ''}">
         <td style="padding:5px 6px;font-weight:700">${KAT_IKONA[nazwa] || '📌'} ${nazwa}${male ? `<span style="font-size:8.5px;color:var(--text-dim);font-weight:600"> · ${T('ps_small')}</span>` : ''}</td>
         <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${d.n}</td>
-        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${d.resolved}</td>
-        <td style="padding:5px 6px;text-align:center;font-family:var(--mono);font-weight:800;color:${hitKolor(d.hit_rate_pct)}">${d.hit_rate_pct != null ? d.hit_rate_pct + '%' : '—'}</td>
-        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${pct(d.median_return_7d_pct)}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono);font-weight:800;font-size:12px">${pct(d.median_return_7d_pct)}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${d.share_positive_7d_pct != null ? d.share_positive_7d_pct + '%' : '—'}</td>
         <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${pct(d.median_return_1d_pct)}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono);color:${hitKolor(d.hit_rate_pct)}">${d.hit_rate_pct != null ? d.hit_rate_pct + '%' : '—'}<div style="font-size:8.5px;color:var(--text-dim);font-weight:600">${T('ps_hit_sample')} ${d.hit_sample || 0}</div></td>
       </tr>`;
     };
     const stopka = razem ? `<tr style="border-top:2px solid var(--border);font-weight:800">
         <td style="padding:5px 6px">${T('ps_all')}</td>
         <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${razem.n}</td>
-        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${razem.resolved}</td>
-        <td style="padding:5px 6px;text-align:center;font-family:var(--mono);color:${hitKolor(razem.hit_rate_pct)}">${razem.hit_rate_pct != null ? razem.hit_rate_pct + '%' : '—'}</td>
-        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${pct(razem.median_return_7d_pct)}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono);font-size:12px">${pct(razem.median_return_7d_pct)}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${razem.share_positive_7d_pct != null ? razem.share_positive_7d_pct + '%' : '—'}</td>
         <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${pct(razem.median_return_1d_pct)}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono);color:${hitKolor(razem.hit_rate_pct)}">${razem.hit_rate_pct != null ? razem.hit_rate_pct + '%' : '—'}<div style="font-size:8.5px;color:var(--text-dim);font-weight:600">${T('ps_hit_sample')} ${razem.hit_sample || 0}</div></td>
       </tr>` : '';
     const naglowek = `<tr style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em">
         <th style="text-align:left;padding:4px 6px">${T('ps_cat')}</th>
-        <th style="padding:4px 6px">${T('ps_n')}</th><th style="padding:4px 6px">${T('ps_resolved')}</th>
-        <th style="padding:4px 6px">${T('ps_hit')}</th><th style="padding:4px 6px">${T('ps_med7')}</th>
-        <th style="padding:4px 6px">${T('ps_med1')}</th></tr>`;
+        <th style="padding:4px 6px">${T('ps_n')}</th>
+        <th style="padding:4px 6px">${T('ps_med7')}</th>
+        <th style="padding:4px 6px">${T('ps_plus7')}</th>
+        <th style="padding:4px 6px">${T('ps_med1')}</th>
+        <th style="padding:4px 6px">${T('ps_hit')}</th></tr>`;
     return `<div style="margin-bottom:14px">
       <div style="font-size:10px;color:var(--text-muted);font-weight:700;margin-bottom:5px">${etykieta}</div>
       <div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:11px">
@@ -5966,8 +5975,19 @@ function renderPicksScorecard(ph) {
   }).join('');
 
   const maDane = (ph.summary.all?.RAZEM?.resolved || 0) > 0;
+  const R = ph.summary.all?.RAZEM || {};
+  // Wykluczone cele i trafienia w dniu 0 pokazane wprost — to one psuły
+  // pierwotną wersję tej statystyki, więc mają być widoczne, nie schowane.
+  const zastrzezenie = (R.excluded_unmeasurable || R.hits_on_day_0)
+    ? `<div style="font-size:9.5px;color:var(--text-dim);margin:-4px 0 10px;line-height:1.5">
+         ${R.excluded_unmeasurable ? `${R.excluded_unmeasurable} ${T('ps_excluded')}` : ''}
+         ${R.excluded_unmeasurable && R.hits_on_day_0 ? ' · ' : ''}
+         ${R.hits_on_day_0 ? `${R.hits_on_day_0} ${T('ps_day0')}` : ''}
+       </div>` : '';
   return `<section class="panel p-12" id="sec-picks-score">${head}
     ${maDane ? `
+      <div style="font-size:10.5px;color:var(--text-muted);margin:2px 0 10px;line-height:1.5">${T('ps_lead')}</div>
+      ${zastrzezenie}
       ${tabela('all', T('ps_all'))}
       ${tabela('v2', T('ps_v2'))}
       ${tabela('v1', T('ps_v1'))}

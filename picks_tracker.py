@@ -64,6 +64,11 @@ WERSJA_SCREENERA = "2026-10-07"
 # Po tylu dniach pick jest zamknięty i już go nie przeliczamy.
 HORYZONT_DNI = 7
 
+# Cel bliżej niż tyle procent od wejścia nie jest celem — zostaje dotknięty
+# w dniu zerowym samym szumem. Bez tego progu hit rate pokazywał 71% przy
+# medianie zwrotu −6%, czyli mierzył kształt tezy, nie jakość wyboru.
+MIN_DYSTANS_CELU = 3.0
+
 UA = "Mozilla/5.0 (compatible; TVCPicksTracker/1.0)"
 SSL_CTX = ssl.create_default_context()
 
@@ -158,6 +163,22 @@ def policz_wynik(p, swiece):
     zwroty["max_adverse_pct"] = round(((maks - entry) / entry * -100.0) if short
                                       else ((mini - entry) / entry * 100.0), 2)
 
+    # Czy cel w ogóle jest celem.
+    #
+    # 25 picków na 112 ma opór USTAWIONY PONIŻEJ ceny wejścia, a 87% "trafień"
+    # pada w dniu zerowym — w tej samej świecy, w której pick powstał. Taki cel
+    # jest spełniony z definicji, nie przez ruch rynku, i zawyża hit rate do
+    # bezużytecznych 71% przy medianie zwrotu −6%.
+    #
+    # Dlatego pick, którego cel leży mniej niż MIN_DYSTANS_CELU od wejścia,
+    # dostaje target_mierzalny = False i wypada z liczenia trafień. Zwroty
+    # liczymy mu normalnie — one są poprawne niezależnie od tego, gdzie ktoś
+    # postawił opór.
+    dyst = None
+    if cel is not None and entry:
+        dyst = (entry - cel) / entry * 100.0 if short else (cel - entry) / entry * 100.0
+    mierzalny = dyst is not None and dyst >= MIN_DYSTANS_CELU
+
     # co padło pierwsze: cel czy stop
     wynik = "open"
     dzien = None
@@ -186,6 +207,9 @@ def policz_wynik(p, swiece):
         "outcome_day": dzien,
         "days_elapsed": dni_minelo,
         "resolved": wynik != "open",
+        "target_dist_pct": round(dyst, 2) if dyst is not None else None,
+        "target_mierzalny": mierzalny,
+        "trafiony_w_dniu_0": wynik == "target_hit" and dzien == 0,
         "scored_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
 
@@ -286,10 +310,22 @@ def mediana(xs):
 
 
 def podsumuj(arch):
-    """Statystyka per kategoria i per wersja screenera — to, co widzi panel."""
+    """
+    Statystyka per kategoria i per wersja screenera.
+
+    Główną liczbą jest ZWROT PO 7 DNIACH, nie hit rate. Powód w komentarzu
+    przy MIN_DYSTANS_CELU: trafienia liczone na oryginalnych poziomach z tezy
+    mierzyły to, jak blisko ktoś postawił opór, a nie czy pick był dobry.
+
+    Hit rate zostaje, ale liczony wyłącznie na pickach z mierzalnym celem
+    (opór co najmniej MIN_DYSTANS_CELU powyżej wejścia). Obok podajemy,
+    ile picków z tego wypadło — żeby wykluczenie było widoczne, nie ukryte.
+    """
     def pusty():
-        return {"n": 0, "rozstrzygnietych": 0, "target_hit": 0, "invalidated": 0,
-                "expired_up": 0, "expired_down": 0, "zwroty7": [], "zwroty1": []}
+        return {"n": 0, "rozstrzygnietych": 0, "mierzalnych": 0, "niemierzalnych": 0,
+                "w_dniu_0": 0, "target_hit": 0, "invalidated": 0,
+                "expired_up": 0, "expired_down": 0, "zwroty7": [], "zwroty1": [],
+                "dodatnie7": 0}
 
     wg = {}
     for e in arch.values():
@@ -300,27 +336,43 @@ def podsumuj(arch):
             s["n"] += 1
             if w.get("resolved"):
                 s["rozstrzygnietych"] += 1
-                s[w["outcome"]] = s.get(w["outcome"], 0) + 1
-            if w.get("return_7d_pct") is not None:
-                s["zwroty7"].append(w["return_7d_pct"])
+                if w.get("trafiony_w_dniu_0"):
+                    s["w_dniu_0"] += 1
+                if w.get("target_mierzalny"):
+                    s["mierzalnych"] += 1
+                    s[w["outcome"]] = s.get(w["outcome"], 0) + 1
+                else:
+                    s["niemierzalnych"] += 1
+            z7 = w.get("return_7d_pct")
+            if z7 is not None:
+                s["zwroty7"].append(z7)
+                if z7 > 0:
+                    s["dodatnie7"] += 1
             if w.get("return_1d_pct") is not None:
                 s["zwroty1"].append(w["return_1d_pct"])
 
     out = {}
     for (wersja, kat), s in wg.items():
-        roz = s["rozstrzygnietych"]
+        mier = s["mierzalnych"]
         udane = s["target_hit"] + s["expired_up"]
+        n7 = len(s["zwroty7"])
         out.setdefault(wersja, {})[kat] = {
             "n": s["n"],
-            "resolved": roz,
+            "resolved": s["rozstrzygnietych"],
+            # Główna miara: gdzie cena była po 7 dniach.
+            "median_return_7d_pct": mediana(s["zwroty7"]),
+            "median_return_1d_pct": mediana(s["zwroty1"]),
+            "share_positive_7d_pct": round(s["dodatnie7"] / n7 * 100, 1) if n7 else None,
+            "sample_7d": n7,
+            # Miara pomocnicza, tylko na mierzalnych celach.
+            "hit_rate_pct": round(udane / mier * 100, 1) if mier else None,
+            "hit_sample": mier,
+            "excluded_unmeasurable": s["niemierzalnych"],
+            "hits_on_day_0": s["w_dniu_0"],
             "target_hit": s["target_hit"],
             "invalidated": s["invalidated"],
             "expired_up": s["expired_up"],
             "expired_down": s["expired_down"],
-            "hit_rate_pct": round(udane / roz * 100, 1) if roz else None,
-            "median_return_7d_pct": mediana(s["zwroty7"]),
-            "median_return_1d_pct": mediana(s["zwroty1"]),
-            "sample_7d": len(s["zwroty7"]),
         }
     return out
 
@@ -379,8 +431,11 @@ def main():
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "horizon_days": HORYZONT_DNI,
         "screener_v2_since": WERSJA_SCREENERA,
-        "note": ("Zwrot liczony od ceny z momentu picka. Gdy cel i invalidation "
-                 "padną w tej samej świecy dziennej, liczone jako invalidated."),
+        "min_target_dist_pct": MIN_DYSTANS_CELU,
+        "note": ("Główna miara to zwrot po 7 dniach od ceny z momentu picka. "
+                 f"Hit rate liczony tylko dla celów oddalonych o ≥{MIN_DYSTANS_CELU}% "
+                 "od wejścia — bliższe były dotykane w dniu zerowym i zawyżały wynik. "
+                 "Gdy cel i invalidation padną w tej samej świecy, liczone jako invalidated."),
         "summary": podsumuj(arch),
         "entries": arch,
     }
@@ -394,8 +449,10 @@ def main():
     for wersja in ("all", "v1", "v2"):
         s = out["summary"].get(wersja, {}).get("RAZEM")
         if s:
-            print(f"  {wersja:4s} n={s['n']:3d} rozstrzygniętych={s['resolved']:3d} "
-                  f"hit={s['hit_rate_pct']}% mediana7d={s['median_return_7d_pct']}%")
+            print(f"  {wersja:4s} n={s['n']:3d}  mediana7d={s['median_return_7d_pct']}%  "
+                  f"na plusie po 7d={s['share_positive_7d_pct']}%  "
+                  f"hit={s['hit_rate_pct']}% (z {s['hit_sample']} mierzalnych, "
+                  f"{s['excluded_unmeasurable']} odrzuconych)")
     return 0
 
 
