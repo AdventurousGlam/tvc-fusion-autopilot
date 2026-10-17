@@ -100,6 +100,20 @@ def symbol_z_picka(p):
     return f"{t}_USDT" if t else ""
 
 
+_BTC_CACHE = {}
+
+
+def swiece_btc(od_ts, do_ts):
+    """
+    Świece BTC do porównania. Pobierane raz na przebieg i trzymane w pamięci —
+    przy 122 pickach bez cache'u byłoby 122 identyczne zapytania.
+    """
+    klucz = (int(od_ts) // 86400, int(do_ts) // 86400)
+    if klucz not in _BTC_CACHE:
+        _BTC_CACHE[klucz] = swiece_dzienne("BTC_USDT", od_ts, do_ts)
+    return _BTC_CACHE[klucz]
+
+
 def swiece_dzienne(symbol, od_ts, do_ts):
     """Świece dzienne z MEXC w zadanym oknie. Pusta lista zamiast wyjątku."""
     try:
@@ -119,6 +133,26 @@ def swiece_dzienne(symbol, od_ts, do_ts):
 
 
 # ── scoring jednego picka ────────────────────────────────────────────────────
+
+def zwrot_btc(data_picka, dni):
+    """
+    Zwrot BTC w tym samym oknie co pick. None, gdy brak danych.
+
+    Po co: 115 ze 117 picków to longi, a wrzesień–październik 2026 był risk-off.
+    Bez tego punktu odniesienia nie da się odróżnić "screener źle wybiera"
+    od "longi w spadającym rynku tracą, niezależnie od wyboru".
+    """
+    d0 = datetime.strptime(data_picka, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    sw = swiece_btc((d0 - timedelta(days=2)).timestamp(),
+                    (d0 + timedelta(days=HORYZONT_DNI + 2)).timestamp())
+    po = sorted((s for s in sw if s["t"] >= int(d0.timestamp())), key=lambda s: s["t"])
+    if len(po) <= dni:
+        return None
+    baza = po[0]["o"]
+    if not baza:
+        return None
+    return round((po[dni]["c"] - baza) / baza * 100.0, 2)
+
 
 def policz_wynik(p, swiece):
     """
@@ -211,7 +245,26 @@ def policz_wynik(p, swiece):
         "target_mierzalny": mierzalny,
         "trafiony_w_dniu_0": wynik == "target_hit" and dzien == 0,
         "scored_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        **btc_porownanie(p, zwroty, short),
     }
+
+
+def btc_porownanie(p, zwroty, short):
+    """
+    Zwrot BTC w tych samych oknach + nadwyżka picka nad BTC (alfa).
+
+    Dla shorta BTC też odwracamy — short, który stracił 5%, gdy BTC urósł 10%,
+    zachował się zgodnie z oczekiwaniem i nie powinien wyglądać jak porażka.
+    """
+    out = {}
+    for n in (1, 3, 7):
+        b = zwrot_btc(p["date"], n)
+        if short and b is not None:
+            b = -b
+        out[f"btc_{n}d_pct"] = b
+        z = zwroty.get(f"return_{n}d_pct")
+        out[f"alpha_{n}d_pct"] = round(z - b, 2) if (z is not None and b is not None) else None
+    return out
 
 
 # ── archiwum ─────────────────────────────────────────────────────────────────
@@ -325,7 +378,7 @@ def podsumuj(arch):
         return {"n": 0, "rozstrzygnietych": 0, "mierzalnych": 0, "niemierzalnych": 0,
                 "w_dniu_0": 0, "target_hit": 0, "invalidated": 0,
                 "expired_up": 0, "expired_down": 0, "zwroty7": [], "zwroty1": [],
-                "dodatnie7": 0}
+                "dodatnie7": 0, "alfa7": [], "alfa_dodatnia7": 0}
 
     wg = {}
     for e in arch.values():
@@ -350,6 +403,11 @@ def podsumuj(arch):
                     s["dodatnie7"] += 1
             if w.get("return_1d_pct") is not None:
                 s["zwroty1"].append(w["return_1d_pct"])
+            a7 = w.get("alpha_7d_pct")
+            if a7 is not None:
+                s["alfa7"].append(a7)
+                if a7 > 0:
+                    s["alfa_dodatnia7"] += 1
 
     out = {}
     for (wersja, kat), s in wg.items():
@@ -364,6 +422,11 @@ def podsumuj(arch):
             "median_return_1d_pct": mediana(s["zwroty1"]),
             "share_positive_7d_pct": round(s["dodatnie7"] / n7 * 100, 1) if n7 else None,
             "sample_7d": n7,
+            # Nadwyżka nad BTC — czy screener dodaje cokolwiek ponad kierunek rynku.
+            "median_alpha_7d_pct": mediana(s["alfa7"]),
+            "share_beat_btc_7d_pct": (round(s["alfa_dodatnia7"] / len(s["alfa7"]) * 100, 1)
+                                      if s["alfa7"] else None),
+            "sample_alpha_7d": len(s["alfa7"]),
             # Miara pomocnicza, tylko na mierzalnych celach.
             "hit_rate_pct": round(udane / mier * 100, 1) if mier else None,
             "hit_sample": mier,
@@ -450,9 +513,9 @@ def main():
         s = out["summary"].get(wersja, {}).get("RAZEM")
         if s:
             print(f"  {wersja:4s} n={s['n']:3d}  mediana7d={s['median_return_7d_pct']}%  "
-                  f"na plusie po 7d={s['share_positive_7d_pct']}%  "
-                  f"hit={s['hit_rate_pct']}% (z {s['hit_sample']} mierzalnych, "
-                  f"{s['excluded_unmeasurable']} odrzuconych)")
+                  f"vs BTC={s['median_alpha_7d_pct']}%  "
+                  f"lepsze od BTC={s['share_beat_btc_7d_pct']}%  "
+                  f"hit={s['hit_rate_pct']}% (z {s['hit_sample']})")
     return 0
 
 

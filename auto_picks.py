@@ -420,8 +420,13 @@ def score_momentum(r, a):
         s *= 0.7   # pościg
     if r["r7"] > 150:
         s *= 0.6   # +150% w tydzień = późna faza
-    if a["rsi"] is not None and a["rsi"] > 70:
-        s *= 0.8   # overbought — niższy priorytet, rośnie ryzyko cofnięcia
+    # RSI usunięty 17.10.2026. Na 99 pickach korelacja RSI ↔ zwrot 7d = −0,02,
+    # bo kierunek zależy od kontekstu: przy spokojnej cenie (24h < 5%) wysokie RSI
+    # faktycznie wróży źle, ale po świeżym skoku (24h ≥ 15%) jest odwrotnie —
+    # niskie RSI oznacza tam odbicie z dołka, które wraca. Efekty znoszą się
+    # do zera, więc kara nałożona bezwarunkowo w jednej trzeciej przypadków
+    # pomagała, w drugiej szkodziła. Kara z 7.10 celowała w przedział > 70,
+    # a najgorszy jest 60–70 (−9,6% mediana wobec −2,7% dla 70–80).
     return s
 
 
@@ -459,8 +464,7 @@ def score_squeeze(r, a):
     if not compress and not sfp:
         return None
     s = 20 + min(-f, 0.3) * 120 + min(oi_ratio, 3) * 8 + (12 if compress else 0) + (15 if sfp else 0)
-    if a["rsi"] is not None and a["rsi"] > 65:
-        s *= 0.7   # squeeze z wysokiego RSI = już po ruchu
+    # RSI usunięty 17.10.2026 — patrz komentarz w score_momentum().
     return s
 
 
@@ -502,8 +506,6 @@ def build_pick(cat, r, a, mcap, score):
         flags.append(f"negative funding {f:+.3f}%/8h (shorts paying)")
     if r["r24"] > 15:
         flags.append(f"+{r['r24']:.0f}% in 24h — chasing, wait for retest")
-    if a and a.get("rsi") is not None and a["rsi"] > 70:
-        flags.append(f"RSI {a['rsi']:.0f} — overbought zone, wait for pullback before entry")
     if datetime.now(timezone.utc).weekday() >= 5:
         flags.append("weekend — thin order book")
 

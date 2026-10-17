@@ -1532,10 +1532,12 @@ const I18N = {
   ps_med7:            { pl: 'Mediana 7d', en: 'Median 7d' },
   ps_med1:            { pl: 'Mediana 24h', en: 'Median 24h' },
   ps_plus7:           { pl: 'Na plusie', en: 'Above entry' },
+  ps_alpha:           { pl: 'vs BTC', en: 'vs BTC' },
+  ps_beat:            { pl: 'Lepsze od BTC', en: 'Beat BTC' },
   ps_hit_sample:      { pl: 'próbka', en: 'sample' },
   ps_day0:            { pl: 'trafień w dniu 0', en: 'hits on day 0' },
   ps_excluded:        { pl: 'celów odrzuconych jako niemierzalne', en: 'targets rejected as unmeasurable' },
-  ps_lead:            { pl: 'Główna miara to zwrot po 7 dniach — trafienia mówią tylko, czy cena dotknęła poziomu z tezy, nie czy tam została.', en: 'The headline number is the 7-day return — hits only say price touched the thesis level, not that it stayed there.' },
+  ps_lead:            { pl: 'Kolumna „vs BTC” to nadwyżka nad rynkiem — bez niej spadek picka w spadającym rynku wygląda na błąd doboru, a może nim nie być. Trafienia mówią tylko, czy cena dotknęła poziomu z tezy, nie czy tam została.', en: 'The "vs BTC" column is the excess over the market — without it, a pick falling in a falling market looks like a selection error when it may not be. Hits only say price touched the thesis level, not that it stayed there.' },
   ps_all:             { pl: 'RAZEM', en: 'TOTAL' },
   ps_v1:              { pl: 'Screener v1 (do 6.10)', en: 'Screener v1 (through Oct 6)' },
   ps_v2:              { pl: 'Screener v2 (od 7.10, filtr RSI)', en: 'Screener v2 (from Oct 7, RSI filter)' },
@@ -5935,7 +5937,8 @@ function renderPicksScorecard(ph) {
         <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${d.n}</td>
         <td style="padding:5px 6px;text-align:center;font-family:var(--mono);font-weight:800;font-size:12px">${pct(d.median_return_7d_pct)}</td>
         <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${d.share_positive_7d_pct != null ? d.share_positive_7d_pct + '%' : '—'}</td>
-        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${pct(d.median_return_1d_pct)}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono);font-weight:800;font-size:12px">${pct(d.median_alpha_7d_pct)}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${d.share_beat_btc_7d_pct != null ? d.share_beat_btc_7d_pct + '%' : '—'}</td>
         <td style="padding:5px 6px;text-align:center;font-family:var(--mono);color:${hitKolor(d.hit_rate_pct)}">${d.hit_rate_pct != null ? d.hit_rate_pct + '%' : '—'}<div style="font-size:8.5px;color:var(--text-dim);font-weight:600">${T('ps_hit_sample')} ${d.hit_sample || 0}</div></td>
       </tr>`;
     };
@@ -5944,7 +5947,8 @@ function renderPicksScorecard(ph) {
         <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${razem.n}</td>
         <td style="padding:5px 6px;text-align:center;font-family:var(--mono);font-size:12px">${pct(razem.median_return_7d_pct)}</td>
         <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${razem.share_positive_7d_pct != null ? razem.share_positive_7d_pct + '%' : '—'}</td>
-        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${pct(razem.median_return_1d_pct)}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono);font-size:12px">${pct(razem.median_alpha_7d_pct)}</td>
+        <td style="padding:5px 6px;text-align:center;font-family:var(--mono)">${razem.share_beat_btc_7d_pct != null ? razem.share_beat_btc_7d_pct + '%' : '—'}</td>
         <td style="padding:5px 6px;text-align:center;font-family:var(--mono);color:${hitKolor(razem.hit_rate_pct)}">${razem.hit_rate_pct != null ? razem.hit_rate_pct + '%' : '—'}<div style="font-size:8.5px;color:var(--text-dim);font-weight:600">${T('ps_hit_sample')} ${razem.hit_sample || 0}</div></td>
       </tr>` : '';
     const naglowek = `<tr style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em">
@@ -5952,7 +5956,8 @@ function renderPicksScorecard(ph) {
         <th style="padding:4px 6px">${T('ps_n')}</th>
         <th style="padding:4px 6px">${T('ps_med7')}</th>
         <th style="padding:4px 6px">${T('ps_plus7')}</th>
-        <th style="padding:4px 6px">${T('ps_med1')}</th>
+        <th style="padding:4px 6px">${T('ps_alpha')}</th>
+        <th style="padding:4px 6px">${T('ps_beat')}</th>
         <th style="padding:4px 6px">${T('ps_hit')}</th></tr>`;
     return `<div style="margin-bottom:14px">
       <div style="font-size:10px;color:var(--text-muted);font-weight:700;margin-bottom:5px">${etykieta}</div>
