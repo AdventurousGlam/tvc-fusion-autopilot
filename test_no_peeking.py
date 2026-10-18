@@ -118,17 +118,45 @@ def snapshot_time(row):
 
 
 def klines(ticker, start_ms, end_ms, interval="1m"):
+    """
+    Świece z całego okna, stronicowane.
+
+    Binance oddaje maksymalnie 1000 świec na zapytanie, czyli przy interwale 1m
+    tylko 16 h 40 min. Wcześniej pobieraliśmy jedną stronę i milcząco gubiliśmy
+    resztę okna — przy pozycji trzymanej dłużej sprawdzenie [5] widziało sam
+    początek i orzekało "poziom nigdy nie dotknięty", choć został dotknięty
+    później. Sześć z ośmiu zgłoszeń z 18.10.2026 miało właśnie taką przyczynę,
+    w tym #102 NEAR, gdzie TP2 padło w świecy 10:45 — poza pobranym zakresem.
+    Fałszywy alarm w audycie jest groźniejszy niż brak alarmu: podważa zaufanie
+    do rejestru i każe wykluczać pozycje, z którymi nic nie było nie tak.
+    """
     sym = BINANCE.get(ticker)
     if not sym:
         return []
-    url = (f"https://data-api.binance.vision/api/v3/klines?symbol={sym}"
-           f"&interval={interval}&startTime={int(start_ms)}&endTime={int(end_ms)}&limit=1000")
-    try:
-        with ur.urlopen(url, timeout=20) as r:
-            return json.loads(r.read())
-    except Exception as e:
-        warn(f"klines {ticker}: {e}")
-        return []
+    MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000}.get(interval, 60_000)
+    out, kursor, start_ms, end_ms = [], int(start_ms), int(start_ms), int(end_ms)
+    # Zabezpieczenie przed pętlą bez końca, gdyby API przestało przesuwać kursor.
+    for _ in range(50):
+        if kursor > end_ms:
+            break
+        url = (f"https://data-api.binance.vision/api/v3/klines?symbol={sym}"
+               f"&interval={interval}&startTime={kursor}&endTime={end_ms}&limit=1000")
+        try:
+            with ur.urlopen(url, timeout=20) as r:
+                strona = json.loads(r.read())
+        except Exception as e:
+            warn(f"klines {ticker}: {e}")
+            break
+        if not strona:
+            break
+        out.extend(strona)
+        nowy = int(strona[-1][0]) + MS
+        if nowy <= kursor:          # API nie posuwa się dalej — kończymy
+            break
+        kursor = nowy
+        if len(strona) < 1000:      # ostatnia strona
+            break
+    return out
 
 
 def main():
