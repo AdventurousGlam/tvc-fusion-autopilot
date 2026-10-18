@@ -117,6 +117,11 @@ def snapshot_time(row):
     return snap
 
 
+# Sprawdzenie [4]: poniżej tego dystansu od ceny wejścia "poziom był wcześniej
+# w zasięgu" nie niesie informacji. Uzasadnienie przy samym sprawdzeniu.
+MIN_DYSTANS_POZIOMU = 2.0
+
+
 def klines(ticker, start_ms, end_ms, interval="1m"):
     """
     Świece z całego okna, stronicowane.
@@ -271,9 +276,24 @@ def main():
             sl_hit = r["hit_or_miss"] == "hit_sl"
             # Poziom osiągalny PRZED wejściem to podejrzenie, nie dowód — stąd ostrzeżenie.
             reachable = (lo <= px) if (long_ == sl_hit) else (hi >= px)
-            if reachable:
-                warn(f"#{r['id']} {r['ticker']} {r['hit_or_miss']}: poziom {px} był "
-                     f"w zasięgu już przed wejściem (6h przed: {lo}–{hi}) — sprawdź ręcznie")
+            # Ale samo "był w zasięgu" nic nie znaczy przy poziomie tuż obok ceny
+            # wejścia. Trailing SL przesunięty na breakeven leży 0,1% od wejścia —
+            # rynek *oczywiście* tam był, bo to w zasadzie cena, po której weszliśmy.
+            # Bez tego progu ostrzeżenie zgłaszało 19 pozycji, z czego 16 miało
+            # poziom bliżej niż 3%: zgłoszenie odpalało się na ciasnocie poziomów,
+            # nie na wadzie. Dziewiętnaście pozycji "do ręcznego sprawdzenia"
+            # oznacza w praktyce, że nikt nie sprawdza żadnej.
+            #
+            # Próg 2%, nie 3%: przy 3% wypadłaby #64 (2,37%) — jedyny przypadek,
+            # o którym wiemy na pewno, że był prawdziwą wadą (stop z zyskiem
+            # +2,23%). Próg, który nie łapie znanego błędu, jest bezużyteczny.
+            entry = r["entry_price"]
+            daleko = (entry and abs(px - entry) / entry * 100 >= MIN_DYSTANS_POZIOMU)
+            if reachable and daleko:
+                d = abs(px - entry) / entry * 100
+                warn(f"#{r['id']} {r['ticker']} {r['hit_or_miss']}: poziom {px} "
+                     f"({d:.1f}% od wejścia) był w zasięgu już przed wejściem "
+                     f"(6h przed: {lo}–{hi}) — sprawdź ręcznie")
         print("  gotowe\n")
 
         # ── 5. Czy poziom wyjścia był KIEDYKOLWIEK dotknięty ─────────────
