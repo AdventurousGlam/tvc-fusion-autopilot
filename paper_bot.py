@@ -104,6 +104,7 @@ Config (edit at top or override via env vars):
 from __future__ import annotations
 
 import argparse
+import html as _html
 import json
 import math
 import os
@@ -191,6 +192,8 @@ MIN_LONG_SCORE = _params.get("MIN_LONG_SCORE", 70)   # v4.1: produkcyjny próg w
 #   Wstrzymane, bo 09.10 rozszerzyliśmy koszyk z 5 do 15 tokenów — najpierw trzeba
 #   zobaczyć efekt samego koszyka, inaczej nie da się przypisać zmiany wyniku.
 #   Wrócić do tego po ~2 tygodniach obserwacji (ok. 23.10.2026).
+RULES_VERSION = "v4.4"  # v4.4: zapisywane przy każdej nowej pozycji (kolumna rules_version)
+MIN_LONG_SCORE_FLOOR = max(62, _params.get("MIN_LONG_SCORE_FLOOR", 62))  # v3.1: nie da się obniżyć sekretem
 MAX_SHORT_SCORE = _params.get("MAX_SHORT_SCORE", 30)
 MIN_RR_AT_ENTRY = _params.get("MIN_RR_AT_ENTRY", 1.5)
 REOPEN_COOLDOWN_MINUTES = _params.get("REOPEN_COOLDOWN_MINUTES", 180)
@@ -361,12 +364,70 @@ def db_init():
     _migrate_add_column(conn, "positions", "tp1_pnl_usd", "REAL")
     _migrate_add_column(conn, "positions", "tp1_at", "TEXT")
     _migrate_add_column(conn, "positions", "pnl_gross_pct", "REAL")
+    # v4.4: R zrealizowane (netto) i wersja reguł przy każdej transakcji.
+    _migrate_add_column(conn, "positions", "r_multiple", "REAL")
+    _migrate_add_column(conn, "positions", "rules_version", "TEXT")
     conn.commit()
     _migrate_sl_rescan_bug(conn)
     _migrate_restate_net(conn)
     _migrate_flag_out_of_range(conn)
-    _migrate_flag_flip_choch(conn)
+    _migrate_flag_flip_choch(conn)   # v4.3.6 — przeniesione z produkcji, bez zmian
+    _stamp_r_multiple(conn)
     conn.close()
+
+
+def _migrate_flag_flip_choch(conn):
+    """v4.3.6 (15.10.2026) — oznacz w BAZIE 32 pozycje zamknięte wycofaną regułą.
+
+    REJESTR_WYKLUCZEN.md pkt 2 wyklucza klasę `flip_choch`: regułę wyjścia na
+    odwróceniu struktury, wycofaną w v0.5 dnia 9.09 (commit ace0b98). Te pozycje
+    zostały zamknięte mechanizmem, którego w bocie już nie ma.
+
+    Problem, który to naprawia: informacja o wykluczeniu istniała WYŁĄCZNIE
+    w pliku .md. Kolumna `excluded` miała 0, więc żaden skrypt nie był w stanie
+    odtworzyć liczb z rejestru. 15.10 wyszło to bokiem — eksport wyników na
+    stronę filtrował tylko po `excluded` i dałby inne liczby niż rejestr.
+    Po tej migracji rejestr jest odtwarzalny z kodu: 46 pozycji, 13/33, −0,94 $.
+
+    To NIE poprawia wyniku „na korzyść". Klasa ma 1 wygraną na 32 i −11,17 $,
+    więc jej usunięcie wynik PODNOSI — i dokładnie dlatego kryterium musi być
+    oparte na defekcie, nie na rezultacie. Rejestr opisuje też klasę, której
+    usunięcie wynik pogarsza (era przed 28.08, +40,69 $). Oba kierunki wynikają
+    z tej samej zasady: liczy się to, czy pozycję wygenerowała reguła, która
+    nadal obowiązuje.
+
+    Pozycje zostają w bazie. Audyt dalej je sprawdza i wypisuje osobno.
+    """
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(positions)")]
+    if "excluded" not in cols:
+        return
+    cur = conn.execute(
+        "UPDATE positions SET excluded = 1 "
+        "WHERE hit_or_miss = 'flip_choch' AND COALESCE(excluded, 0) = 0"
+    )
+    if cur.rowcount:
+        conn.commit()
+        print(f"[migrate] v4.3.6 — oznaczono {cur.rowcount} pozycji `flip_choch` "
+              f"jako wykluczone (rejestr pkt 2, reguła wycofana 9.09).")
+
+
+def _stamp_r_multiple(conn):
+    """v4.4 — R zrealizowane netto = pnl_pct / ryzyko% (|wejście − sl_initial| / wejście).
+
+    Idempotentne: liczy tylko zamknięte pozycje bez r_multiple. Jedno miejsce dla
+    wszystkich ścieżek zamknięcia (SL/TP/trailing/max_hold/killswitch/manual),
+    więc żadna nie może o tym zapomnieć. Pozycje bez sl_initial (sprzed v4.3)
+    zostają z NULL — nie zgadujemy ich początkowego stopa.
+    """
+    cur = conn.execute(
+        "UPDATE positions SET r_multiple = ROUND(pnl_pct / "
+        "(ABS(entry_price - sl_initial) / entry_price * 100.0), 3) "
+        "WHERE status = 'closed' AND r_multiple IS NULL AND pnl_pct IS NOT NULL "
+        "AND sl_initial IS NOT NULL AND sl_initial > 0 AND entry_price > 0 "
+        "AND ABS(entry_price - sl_initial) > 0"
+    )
+    if cur.rowcount:
+        conn.commit()
 
 
 def _migrate_flag_out_of_range(conn):
@@ -416,41 +477,6 @@ def _migrate_flag_out_of_range(conn):
               f"jako wykluczone (rejestr pkt 2a)")
 
 
-
-def _migrate_flag_flip_choch(conn):
-    """v4.3.6 (15.10.2026) — oznacz w BAZIE 32 pozycje zamknięte wycofaną regułą.
-
-    REJESTR_WYKLUCZEN.md pkt 2 wyklucza klasę `flip_choch`: regułę wyjścia na
-    odwróceniu struktury, wycofaną w v0.5 dnia 9.09 (commit ace0b98). Te pozycje
-    zostały zamknięte mechanizmem, którego w bocie już nie ma.
-
-    Problem, który to naprawia: informacja o wykluczeniu istniała WYŁĄCZNIE
-    w pliku .md. Kolumna `excluded` miała 0, więc żaden skrypt nie był w stanie
-    odtworzyć liczb z rejestru. 15.10 wyszło to bokiem — eksport wyników na
-    stronę filtrował tylko po `excluded` i dałby inne liczby niż rejestr.
-    Po tej migracji rejestr jest odtwarzalny z kodu: 46 pozycji, 13/33, −0,94 $.
-
-    To NIE poprawia wyniku „na korzyść". Klasa ma 1 wygraną na 32 i −11,17 $,
-    więc jej usunięcie wynik PODNOSI — i dokładnie dlatego kryterium musi być
-    oparte na defekcie, nie na rezultacie. Rejestr opisuje też klasę, której
-    usunięcie wynik pogarsza (era przed 28.08, +40,69 $). Oba kierunki wynikają
-    z tej samej zasady: liczy się to, czy pozycję wygenerowała reguła, która
-    nadal obowiązuje.
-
-    Pozycje zostają w bazie. Audyt dalej je sprawdza i wypisuje osobno.
-    """
-    cols = [r[1] for r in conn.execute("PRAGMA table_info(positions)")]
-    if "excluded" not in cols:
-        return
-    cur = conn.execute(
-        "UPDATE positions SET excluded = 1 "
-        "WHERE hit_or_miss = 'flip_choch' AND COALESCE(excluded, 0) = 0"
-    )
-    if cur.rowcount:
-        conn.commit()
-        print(f"[migrate] v4.3.6 — oznaczono {cur.rowcount} pozycji `flip_choch` "
-              f"jako wykluczone (rejestr pkt 2, reguła wycofana 9.09).")
-
 def _migrate_restate_net(conn):
     """v4.3 (13.10.2026) — JEDNORAZOWE przeliczenie całej historii na PnL netto.
 
@@ -472,11 +498,22 @@ def _migrate_restate_net(conn):
     cols = [r[1] for r in conn.execute("PRAGMA table_info(positions)")]
     if "pnl_gross_pct" not in cols:
         return
+    # v3 (14.10.2026): JEDNORAZOWO naprawdę — flaga w meta. Wcześniej kluczem był
+    # wyłącznie `pnl_gross_pct IS NULL`, a max_hold / short_killswitch / manual_close
+    # (liczone już netto) nie zapisywały pnl_gross_pct, więc przy KAŻDYM db_init
+    # traciły koszty drugi raz.
+    if _meta_get(conn, "migr_restate_net_v43") == "done":
+        return
+    # Przy pierwszym uruchomieniu z flagą pomijamy zamknięcia v4.3 bez brutto
+    # (max_hold/short_killswitch/manual_close od 13.10) — one są już netto.
     rows = conn.execute(
         """SELECT id, pnl_pct, size_usd FROM positions
-           WHERE status='closed' AND pnl_pct IS NOT NULL AND pnl_gross_pct IS NULL"""
+           WHERE status='closed' AND pnl_pct IS NOT NULL AND pnl_gross_pct IS NULL
+             AND NOT (hit_or_miss IN ('max_hold','short_killswitch','manual_close')
+                      AND COALESCE(closed_at,'') >= '2026-10-13')"""
     ).fetchall()
     if not rows:
+        _meta_set(conn, "migr_restate_net_v43", "done")
         return
     d_usd = 0.0
     for _id, gross, size in rows:
@@ -491,6 +528,7 @@ def _migrate_restate_net(conn):
     print(f"[migrate] v4.3 — historia przeliczona na netto: {len(rows)} pozycji, "
           f"koszt {COST_PCT:.2f}% na obrót, suma PnL zmieniona o {d_usd:+.2f} $. "
           f"Wartości brutto zachowane w pnl_gross_pct.")
+    _meta_set(conn, "migr_restate_net_v43", "done")
     print(f"[init] db ready at {DB_PATH}")
 
 
@@ -627,8 +665,13 @@ def _mid_entry(entry_low, entry_high, ticker, ex) -> float:
 # --- Telegram notifications (v0.6 — dual-channel) -------------------------
 # Env: TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID (GitHub Secrets w workflow).
 # Kanały hardcoded (to publiczne ID, nie sekrety):
-TG_PRO_CHANNEL = "-1004436927192"   # TVC Fusion PRO (płatny)
+TG_PRO_CHANNEL = "-1004436927192"   # dawny kanał PRO — v4.4: nic tu nie wysyłamy (tylko telegram-test sprawdza dostęp)
 TG_FREE_CHANNEL = "-1004341989751"  # TVC Fusion Signals (darmowy)
+# v4.4 (2026-10-16) — TRYB EDUKACYJNY: żadnych sygnałów na kanałach publicznych.
+# Wejścia, SL/TP i zamknięcia idą tylko na prywatny czat (TELEGRAM_CHAT_ID).
+# Kanał PRO nic nie dostaje. Kanał FREE dostaje wyłącznie omówienie PO zamknięciu
+# całej transakcji (bez cen do skopiowania, bez CTA do płatnego kanału).
+EDUCATION_ONLY = os.environ.get("TVC_EDUCATION_ONLY", "1") != "0"
 # PRO = pełny sygnał natychmiast, FREE = stripped (bez cen/SL/TP/score).
 
 _TELEGRAM_LAST_ERROR = None   # ostatni błąd wysyłki — trafia do health w gist (widoczny w terminalu)
@@ -642,8 +685,31 @@ def _tg_ssl():
     except ImportError:
         return ssl.create_default_context()
 
-def _telegram_send(text: str, chat_id: str | None = None) -> bool:
-    """Wyślij wiadomość na jeden chat/kanał. Domyślnie: osobisty chat z env."""
+TG_SENT = "sent"         # v3: status wysyłki — prawdziwe (truthy)
+TG_SKIPPED = "skipped"   # v3: dedupe zablokował duplikat — truthy, ale NIE „wysłano”
+_TELEGRAM_SKIPPED = []   # v3: ostatnie pominięcia (do health w gist)
+
+
+def _tg_esc(v) -> str:
+    """v3: escapowanie treści spoza bota do parse_mode=HTML (tickery z JSON, notatki itp.)."""
+    return _html.escape(str(v if v is not None else ""), quote=False)
+
+
+def _telegram_send(text: str, chat_id: str | None = None, review: bool = False):
+    if EDUCATION_ONLY and chat_id in (TG_PRO_CHANNEL, TG_FREE_CHANNEL) and not (review and chat_id == TG_FREE_CHANNEL):
+        print(f"[telegram] education-only: pominięto wysyłkę na kanał ({chat_id[-4:]})")
+        return False
+    if len(text) > TG_MAX_LEN:  # v4.4: limit Telegrama 4096 — dzielimy zamiast tracić wiadomość
+        parts = _tg_split(text)
+        sts = [_telegram_send(pt, chat_id, review) for pt in parts]
+        print(f"[telegram] długa wiadomość ({len(text)} zn.) wysłana w {len(parts)} częściach")
+        return TG_SENT if all(st == TG_SENT for st in sts) else (False if not any(sts) else sts[0])
+    """Wyślij wiadomość na jeden chat/kanał. Domyślnie: osobisty chat z env.
+
+    v3: zwraca TG_SENT, TG_SKIPPED (duplikat zablokowany przez dedupe) albo False.
+    429 → czeka retry_after (max 30 s) i ponawia; 400 „can't parse entities” →
+    ponawia jako czysty tekst bez parse_mode.
+    """
     global _TELEGRAM_LAST_ERROR, _TELEGRAM_LAST_OK
     token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
     if not chat_id:
@@ -657,30 +723,52 @@ def _telegram_send(text: str, chat_id: str | None = None) -> bool:
         try:
             from tg_dedupe import should_send, forget
             if not should_send(chat_id, text):
-                print(f"[telegram] duplicate suppressed ({chat_id[-4:]})")
-                return True
+                print(f"[telegram] duplicate SKIPPED ({chat_id[-4:]})")
+                _TELEGRAM_SKIPPED.append({"at": datetime.now(timezone.utc).isoformat(),
+                                          "chat": chat_id[-4:], "head": text[:60]})
+                del _TELEGRAM_SKIPPED[:-20]
+                return TG_SKIPPED
         except Exception as e:
             print(f"[telegram] dedupe unavailable ({e}) — sending")
             guarded = False
+    import time as _time
     import urllib.request as ur
     import urllib.parse as up
     import urllib.error as ue
     ssl_ctx = _tg_ssl()
-    try:
-        data = up.urlencode({"chat_id": chat_id, "text": text, "parse_mode": "HTML",
-                             "disable_web_page_preview": "true"}).encode()
-        req = ur.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data)
-        with ur.urlopen(req, timeout=10, context=ssl_ctx) as resp:
-            ok = resp.status == 200
-            if ok:
-                _TELEGRAM_LAST_OK = datetime.now(timezone.utc).isoformat()
-                _TELEGRAM_LAST_ERROR = None
-            return ok
-    except ue.HTTPError as e:
-        body = e.read().decode(errors="replace")[:300]
-        _TELEGRAM_LAST_ERROR = f"HTTP {e.code}: {body}"
-    except Exception as e:
-        _TELEGRAM_LAST_ERROR = f"{type(e).__name__}: {e}"
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML",
+               "disable_web_page_preview": "true"}
+    for attempt in range(3):
+        try:
+            req = ur.Request(f"https://api.telegram.org/bot{token}/sendMessage",
+                             data=up.urlencode(payload).encode())
+            with ur.urlopen(req, timeout=10, context=ssl_ctx) as resp:
+                if resp.status == 200:
+                    _TELEGRAM_LAST_OK = datetime.now(timezone.utc).isoformat()
+                    _TELEGRAM_LAST_ERROR = None
+                    return TG_SENT
+                _TELEGRAM_LAST_ERROR = f"HTTP {resp.status}"
+                break
+        except ue.HTTPError as e:
+            body = e.read().decode(errors="replace")[:300]
+            _TELEGRAM_LAST_ERROR = f"HTTP {e.code}: {body}"
+            if e.code == 429 and attempt < 2:
+                try:
+                    wait = int(json.loads(body).get("parameters", {}).get("retry_after", 5))
+                except Exception:
+                    wait = 5
+                print(f"[telegram] 429 — czekam {wait}s")
+                _time.sleep(min(max(wait, 1), 30))
+                continue
+            if e.code == 400 and "parse" in body.lower() and "parse_mode" in payload:
+                print("[telegram] błąd parsowania HTML — ponawiam jako czysty tekst")
+                payload.pop("parse_mode")
+                payload["text"] = _html.unescape(re.sub(r"<[^>]+>", "", text))
+                continue
+            break
+        except Exception as e:
+            _TELEGRAM_LAST_ERROR = f"{type(e).__name__}: {e}"
+            break
     print(f"[telegram] send failed ({chat_id[-4:]}): {_TELEGRAM_LAST_ERROR}")
     if guarded:
         try:
@@ -693,7 +781,9 @@ def _telegram_send(text: str, chat_id: str | None = None) -> bool:
 def _telegram_broadcast(pro_text: str, free_text: str | None = None):
     """Wyślij na 3 kanały: osobisty + PRO (pełny) + FREE (jeśli podany)."""
     ok = _telegram_send(pro_text)           # osobisty chat — pełna wersja
-    _telegram_send(pro_text, TG_PRO_CHANNEL)  # PRO kanał — pełna wersja
+    if EDUCATION_ONLY:                      # v4.4: kanały publiczne nic nie dostają
+        return ok
+    _telegram_send(pro_text, TG_PRO_CHANNEL)  # kanał PRO (tylko gdy TVC_EDUCATION_ONLY=0)
     if free_text:
         _telegram_send(free_text, TG_FREE_CHANNEL)  # FREE kanał — ograniczona wersja
     return ok
@@ -753,6 +843,8 @@ def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime
             "TRENDING_DOWN": "Trending Down ▼", "TRENDING_DOWN_VOLATILE": "Trending Down ⚡",
             "RANGING": "Range-bound ↔", "CRASH": "Crash ⛔",
         }.get(regime, regime or "—")
+        regime_label = _tg_esc(regime_label)
+        ticker = _tg_esc(ticker)
         pro_lines = [
             f"📈 <b>NEW TRADE — {ticker}</b>",
             "",
@@ -773,7 +865,9 @@ def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime
         # BUGFIX: używaj tego samego conn co caller, żeby uniknąć "database is locked"
         # (cmd_open trzyma write lock na conn podczas INSERT → drugie conn nie może pisać)
         try:
-            if db_conn is not None:
+            if EDUCATION_ONLY:
+                pass  # v4.4: brak opóźnionych sygnałów na FREE — tylko omówienie po zamknięciu
+            elif db_conn is not None:
                 _queue_free_signal(db_conn, {
                     "ticker": ticker, "direction": direction,
                     "entry": entry, "sl": sl, "tp1": tp1, "tp2": tp2,
@@ -795,6 +889,7 @@ def _notify_open(ticker, direction, entry, size_usd, sl, tp1, tp2, score, regime
 
 def _notify_close(ticker, direction, entry, exit_price, pnl_pct, pnl_usd, reason):
     """Telegram: zamknięcie pozycji — osobisty + PRO (pełny) + FREE (tylko jeśli trade był ogłoszony na FREE)."""
+    ticker = _tg_esc(ticker)
     try:
         exit_label = {"hit_tp1": "🎯 TP1 Hit",
                       "hit_tp1_partial": f"🎯 TP1 — zamknięte {TP1_CLOSE_FRAC:.0%}, SL na breakeven",
@@ -814,6 +909,14 @@ def _notify_close(ticker, direction, entry, exit_price, pnl_pct, pnl_usd, reason
         pro_text = "\n".join(pro_lines)
         _telegram_broadcast(pro_text)  # osobisty + PRO
 
+        # v3: częściowe TP1 NIE idzie na FREE i NIE zdejmuje flagi ogłoszenia —
+        # inaczej końcowy wynik transakcji (TP2/BE/trailing) nigdy nie trafiłby na FREE.
+        if reason == "hit_tp1_partial":
+            print(f"[free-close] ⏭ {ticker}: TP1 częściowe — FREE dostanie wynik całej transakcji przy zamknięciu")
+            return
+        if EDUCATION_ONLY:
+            _send_trade_review(ticker, direction, pnl_pct, exit_label, res, reason)
+            return
         # FREE: wynik zamknięcia TYLKO jeśli trade był wcześniej ogłoszony na FREE
         if _is_free_announced(ticker):
             _send_free_close_report(ticker, direction, pnl_pct, pnl_usd, exit_label, res)
@@ -824,8 +927,114 @@ def _notify_close(ticker, direction, entry, exit_price, pnl_pct, pnl_usd, reason
         print(f"[telegram] notify_close failed: {e}")
 
 
+# v4.4: omówienia po zamknięciu — PL + EN w jednej wiadomości (kanał FREE jest czytany
+# w obu językach). Klucz = hit_or_miss. Bez cen wejścia/wyjścia i bez CTA.
+_REVIEW_TEXT = {
+    "hit_sl": ("Stop loss", "Stop loss",
+               "Stop zadziałał zgodnie z planem. Wielkość straty była znana przed wejściem, to koszt sprawdzenia pomysłu.",
+               "The stop worked as planned. The size of the loss was known before entry; that is the cost of testing an idea."),
+    "hit_tp1": ("pierwszy cel (TP1)", "first target (TP1)",
+                "Cena doszła do pierwszego celu. Plan wyjścia był ustalony przed wejściem.",
+                "Price reached the first target. The exit plan was set before entry."),
+    "hit_tp2": ("drugi cel (TP2)", "second target (TP2)",
+                "Cena doszła do drugiego, dalszego celu. Plan wyjścia był ustalony przed wejściem, a ruch go zrealizował.",
+                "Price reached the second, more distant target. The exit plan was set before entry and the move completed it."),
+    "hit_breakeven": ("stop na cenie wejścia po TP1", "break-even stop after TP1",
+                      "Po częściowym zysku na TP1 stop przesunięto na cenę wejścia, więc reszta pozycji zamknęła się bez straty.",
+                      "After taking partial profit at TP1, the stop was moved to the entry price, so the rest of the position closed without a loss."),
+    "hit_trailing_sl": ("stop kroczący", "trailing stop",
+                        "Stop kroczący oddał część ruchu, ale zabezpieczył wypracowany zysk.",
+                        "The trailing stop gave back part of the move but locked in the profit."),
+    "max_hold": ("limit czasu", "time limit",
+                 "Pozycja nie ruszyła w zakładanym czasie, więc system ją zamknął. Czas też jest ryzykiem.",
+                 "The trade did not move within the planned time window, so the system closed it. Time is a risk too."),
+    "zombie_expired": ("limit czasu", "time limit",
+                       "Pozycja nie ruszyła w zakładanym czasie, więc system ją zamknął. Czas też jest ryzykiem.",
+                       "The trade did not move within the planned time window, so the system closed it. Time is a risk too."),
+    "short_killswitch": ("bezpiecznik dla shortów", "short safety switch",
+                         "Short zamknięty bezpiecznikiem: reżim rynku przestał sprzyjać pozycjom krótkim.",
+                         "The short was closed by the safety switch: the market regime no longer favoured short positions."),
+    "manual_close": ("zamknięcie ręczne", "manual close",
+                     "Pozycja zamknięta ręcznie, poza regułami automatu. Takie zamknięcia opisujemy osobno w dzienniku.",
+                     "The position was closed manually, outside the automated rules. Such closes are flagged separately in the journal."),
+}
+_REVIEW_DEFAULT = ("zamknięcie według reguł", "rule-based exit",
+                   "Transakcja zamknięta według reguł ustalonych przed wejściem.",
+                   "The trade was closed according to rules set before entry.")
+TG_MAX_LEN = 4000   # Telegram: 4096 znaków na wiadomość; zostawiamy zapas na encje HTML
+
+
+def _build_trade_review(ticker, direction, pnl_pct, res_emoji, reason="", n=0, wins=0):
+    """Treść omówienia PL + EN (czysta funkcja — testowalna bez Telegrama i bazy)."""
+    ex_pl, ex_en, les_pl, les_en = _REVIEW_TEXT.get(reason, _REVIEW_DEFAULT)
+    side_pl = "LONG (na wzrost)" if direction == "long" else "SHORT (na spadek)"
+    side_en = "LONG" if direction == "long" else "SHORT"
+    pnl_en = f"{pnl_pct:+.2f}%"
+    pnl_pl = pnl_en.replace(".", ",")
+    lines = [f"{res_emoji} <b>Paper trade: {ticker} {side_en}</b>", "",
+             "🇵🇱 <b>Omówienie</b>",
+             f"Kierunek: {side_pl}",
+             f"Wyjście: {ex_pl}",
+             f"Wynik: <b>{pnl_pl}</b> (symulacja)",
+             les_pl]
+    if n >= 5:
+        lines.append(f"Wszystkie transakcje paper: {n}, zyskownych {wins}.")
+    lines += ["", "🇬🇧 <b>Review</b>",
+              f"Direction: {side_en}",
+              f"Exit: {ex_en}",
+              f"Result: <b>{pnl_en}</b> (simulated)",
+              les_en]
+    if n >= 5:
+        lines.append(f"All paper trades: {n}, {wins} winners.")
+    lines += ["",
+              "<i>Symulacja edukacyjna opublikowana po zamknięciu transakcji. To nie jest porada inwestycyjna.</i>",
+              "<i>Educational simulation, published after the trade closed. Not investment advice.</i>",
+              "Dziennik / Journal: tradingventureclub.com/results.html"]
+    return "\n".join(lines)
+
+
+def _send_trade_review(ticker, direction, pnl_pct, exit_label, res_emoji, reason=""):
+    """v4.4: omówienie zamkniętej transakcji paper tradingu na kanale FREE (PL + EN)."""
+    try:
+        conn = db(); stats = _compute_equity_stats(conn) or {}; conn.close()
+        text = _build_trade_review(ticker, direction, pnl_pct, res_emoji, reason,
+                                   stats.get("total_closed", 0), stats.get("wins", 0))
+        _telegram_send(text, TG_FREE_CHANNEL, review=True)
+    except Exception as e:
+        print(f"[telegram] trade_review failed: {e}")
+
+
+def _tg_split(text: str, limit: int = TG_MAX_LEN) -> list:
+    """Podział na części ≤ limit: najpierw po akapitach, potem po liniach, na końcu twardo.
+    Tnie tylko na granicach linii, a nasze tagi HTML nie przechodzą przez nową linię."""
+    if len(text) <= limit:
+        return [text]
+    parts, cur = [], ""
+    for para in text.split("\n\n"):
+        chunks = [para] if len(para) <= limit else []
+        if not chunks:
+            line_buf = ""
+            for ln in para.split("\n"):
+                while len(ln) > limit:
+                    chunks.append(ln[:limit]); ln = ln[limit:]
+                if len(line_buf) + len(ln) + 1 > limit:
+                    chunks.append(line_buf); line_buf = ln
+                else:
+                    line_buf = f"{line_buf}\n{ln}" if line_buf else ln
+            if line_buf:
+                chunks.append(line_buf)
+        for ch in chunks:
+            if cur and len(cur) + 2 + len(ch) > limit:
+                parts.append(cur); cur = ch
+            else:
+                cur = f"{cur}\n\n{ch}" if cur else ch
+    if cur:
+        parts.append(cur)
+    return parts
+
+
 def _send_free_close_report(ticker, direction, pnl_pct, pnl_usd, exit_label, res_emoji):
-    """Send trade close result to FREE channel — shows PnL as social proof + CTA to join PRO."""
+    """Wynik zamkniętej transakcji na FREE (tryb nie-edukacyjny). v4.4: bez CTA."""
     try:
         # Pobierz aktualne statystyki z DB
         conn = db()
@@ -857,13 +1066,17 @@ def _send_free_close_report(ticker, direction, pnl_pct, pnl_usd, exit_label, res
 
         lines.extend([
             "",
-            "🔓 <b>Get all signals instantly → TVC Fusion PRO</b>",
-            "<i>$29/mo · Cancel anytime · Full access</i>",
+            "<i>Paper trading (symulacja edukacyjna). To nie jest porada inwestycyjna.</i>",
         ])
 
         free_text = "\n".join(lines)
-        _telegram_send(free_text, TG_FREE_CHANNEL)
-        print(f"[free-close] ✅ sent to FREE: {ticker} {pnl_pct:+.2f}%")
+        st = _telegram_send(free_text, TG_FREE_CHANNEL)
+        if st == TG_SKIPPED:
+            print(f"[free-close] ⏭ duplikat pominięty (dedupe): {ticker}")
+        elif st:
+            print(f"[free-close] ✅ sent to FREE: {ticker} {pnl_pct:+.2f}%")
+        else:
+            print(f"[free-close] ❌ FREE nie wysłane: {_TELEGRAM_LAST_ERROR}")
     except Exception as e:
         print(f"[free-close] ❌ send failed: {e}")
 
@@ -878,7 +1091,8 @@ def cmd_telegram_test(args):
     print(f"[telegram-test] token: {'OK (' + str(len(tok)) + ' znaków)' if tok else 'BRAK'} · chat_id: {cid or 'BRAK'}")
     if getattr(args, "send", False):
         ok = _telegram_send("🧪 <b>TVC Alerts — test z bota</b>\nJeśli to widzisz, powiadomienia działają.")
-        result = "OK (wysłano)" if ok else f"FAIL {_TELEGRAM_LAST_ERROR}"
+        result = ("OK (wysłano)" if ok == TG_SENT else "POMINIĘTE (dedupe)" if ok == TG_SKIPPED
+                  else f"FAIL {_TELEGRAM_LAST_ERROR}")
     else:
         ok_me, me = _telegram_api("getMe")
         if not ok_me:
@@ -950,6 +1164,13 @@ def _queue_free_signal(conn, signal_data: dict):
 
 def _process_free_queue(conn):
     """Sprawdź kolejkę FREE i wyślij sygnały starsze niż 15 min (max 1/dzień)."""
+    if EDUCATION_ONLY:
+        # v4.4: brak sygnałów na FREE. Stara kolejka (sprzed v4.4) jest czyszczona,
+        # żeby po ewentualnym powrocie do TVC_EDUCATION_ONLY=0 nie wysłać starych wejść.
+        if _meta_get(conn, "free_pending", "[]") not in ("[]", "", None):
+            _meta_set(conn, "free_pending", "[]")
+            print("[free-queue] education-only: wyczyszczono kolejkę FREE")
+        return
     raw = _meta_get(conn, "free_pending", "[]")
     try:
         queue = json.loads(raw)
@@ -1054,7 +1275,7 @@ def _unmark_free_announced(ticker: str):
 
 
 def _send_free_delayed_signal(sig):
-    """Send delayed signal to FREE channel — same format as PRO + delay note + CTA."""
+    """Opóźniony sygnał na FREE (tylko TVC_EDUCATION_ONLY=0). v4.4: bez CTA."""
     ticker = sig.get("ticker", "???")
     direction = sig.get("direction", "long")
     entry = sig.get("entry", 0)
@@ -1096,9 +1317,7 @@ def _send_free_delayed_signal(sig):
         f"Regime: {regime_label}",
         f"✅ Smart Money confirmed (≥2/3 layers aligned)",
         "",
-        f"⏱ <i>Signal delayed 15 min vs PRO channel</i>",
-        f"🔓 <b>Get all signals instantly → TVC Fusion PRO</b>",
-        f"<i>$29/mo · Cancel anytime · Full access</i>",
+        "<i>Paper trading (symulacja edukacyjna). To nie jest porada inwestycyjna.</i>",
     ]
     free_text = "\n".join(lines)
     try:
@@ -1150,8 +1369,8 @@ def _maybe_daily_digest_inner(conn):
                      f"· WR {wr_all:.0f}% ({stats['total_closed']} trade'ów)"
                      f"{' · PF ' + format(pf, '.2f') if pf else ''}"
                      f" · maxDD {stats.get('max_drawdown_pct', 0) or 0:.1f}%")
-    # FREE kanał dostaje wyniki PRO jako social proof + CTA
-    free_lines = [f"📊 <b>TVC Fusion PRO — Daily Results</b>", ""]
+    # FREE: wyniki dnia (tylko gdy TVC_EDUCATION_ONLY=0; w trybie edukacyjnym nie idzie)
+    free_lines = [f"📊 <b>TVC Fusion — paper trading, wyniki dnia</b>", ""]
     if closed:
         free_lines.append(f"Closed today: <b>{len(closed)}</b> trades ({wins}W/{len(closed)-wins}L)")
         free_lines.append(f"Today's P&L: <b>${pnl:+,.2f}</b>")
@@ -1171,8 +1390,7 @@ def _maybe_daily_digest_inner(conn):
                           + (f" · PF <b>{pf_free:.2f}</b>" if pf_free else ""))
     free_lines.extend([
         "",
-        "🔓 <b>Get all signals instantly → TVC Fusion PRO</b>",
-        "<i>$29/mo · Cancel anytime · Full access</i>",
+        "<i>Paper trading (symulacja edukacyjna). To nie jest porada inwestycyjna.</i>",
     ])
     try:
         pro_text = "\n".join(lines)
@@ -1241,8 +1459,8 @@ def _cancel_pending(conn, pid, reason):
 
 def _notify_pending(ticker, direction, limit_px, zone_low, zone_high, sl, tp1, note):
     try:
-        _telegram_send(f"⏳ <b>OCZEKUJĄCE {direction.upper()} {ticker}</b> limit {_fmt_px(limit_px)} "
-                       f"(strefa {_fmt_px(zone_low)}–{_fmt_px(zone_high)})\nSL {_fmt_px(sl)} · TP1 {_fmt_px(tp1)}\n{note}")
+        _telegram_send(f"⏳ <b>OCZEKUJĄCE {direction.upper()} {_tg_esc(ticker)}</b> limit {_fmt_px(limit_px)} "
+                       f"(strefa {_fmt_px(zone_low)}–{_fmt_px(zone_high)})\nSL {_fmt_px(sl)} · TP1 {_fmt_px(tp1)}\n{_tg_esc(note)}")
     except Exception as e:
         print(f"[telegram] pending notify failed: {e}")
 
@@ -1383,8 +1601,13 @@ def cmd_open(args):
             effective_regime = "RANGING"
             print(f"[regime] {ticker} MOMENTUM DIVERGENCE: {regime} + bear_momentum → effective RANGING")
 
-        min_long = MIN_LONG_SCORE_BY_REGIME.get(effective_regime, MIN_LONG_SCORE)
-        max_short = MAX_SHORT_SCORE_BY_REGIME.get(effective_regime, MAX_SHORT_SCORE)
+        # v3.1: twarda podłoga 62 — żaden próg z TVC_PARAMS nie zejdzie niżej
+        # (analiza 78 trade'ów od 28.08: score <62 → WR 7%, −1,15% netto/trade).
+        min_long = max(MIN_LONG_SCORE_BY_REGIME.get(effective_regime, MIN_LONG_SCORE),
+                       MIN_LONG_SCORE_FLOOR)
+        # v3.1: shorty TYLKO w reżimach z mapy z wartością > 0 (domyślnie
+        # TRENDING_DOWN*/CRASH). Nieznany reżim → short zablokowany (było: MAX_SHORT_SCORE).
+        max_short = MAX_SHORT_SCORE_BY_REGIME.get(effective_regime, 0)
         if direction == "long":
             if score < min_long:
                 blocked = "ZABLOKOWANY" if min_long >= 100 else "za niska konwikcja"
@@ -1627,11 +1850,11 @@ def cmd_open(args):
                 status, exit_price, exit_date, pnl_pct, pnl_usd, hit_or_miss,
                 thesis, invalidation, risk_flag, onchain_data_thin,
                 opened_at, closed_at, context_tags, entry_zone_low, entry_zone_high, rr,
-                sl_initial
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                sl_initial, rules_version
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             # v4.3: sl_initial zapisywany przy otwarciu i NIGDY nie zmieniany — to
             # mianownik dla R w trailingu. sl_price będzie się przesuwać, ten nie.
-            row + (dec.get("sl"),),
+            row + (dec.get("sl"), RULES_VERSION),
         )
         opened += 1
         opened_today += 1
@@ -1731,59 +1954,6 @@ def _iso_to_ms(iso: str) -> int:
     return int(d.timestamp() * 1000)
 
 
-def _update_trailing_sl(conn, row, current_price):
-    """
-    v4.3: trailing liczony w jednostkach R, gdzie R = |wejście − SL początkowy|.
-
-    Dlaczego nie w procentach: stary próg TRAILING_TRIGGER = 4% traktował tak samo
-    pozycję ze stopem 1% (zysk 4% = 4R, dawno po celu) i ze stopem 4% (zysk 4% = 1R,
-    ledwo wyszła na zero po kosztach). Przy stopie liczonym z ATR te dwa przypadki
-    zdarzają się na przemian w tym samym tygodniu.
-
-    Breakeven NIE jest tu ustawiany — robi to częściowe zamknięcie na TP1
-    (patrz cmd_check). Ta funkcja tylko zacieśnia stopa, nigdy go nie luzuje.
-
-    Przyjmuje dict ALBO sqlite3.Row. Jedyne wywołanie produkcyjne podaje dict,
-    ale sqlite3.Row nie ma .get() i oparcie się na tym byłoby zależnością od
-    przypadku w innym miejscu pliku.
-    Zwraca (new_sl, reason) jeśli zmienione, None w.p.p.
-    """
-    def _f(key, default=0.0):
-        try:
-            v = row[key]
-        except (KeyError, IndexError):
-            return default
-        return float(v) if v is not None else default
-
-    direction = (row["direction"] or "long").lower()
-    entry = _f("entry_price")
-    current_sl = _f("sl_price")
-    sl0 = _f("sl_initial") or current_sl      # stare pozycje nie mają sl_initial
-    if not entry or not sl0:
-        return None
-
-    R = abs(entry - sl0) / entry * 100
-    if R <= 0:
-        return None
-    profit_pct = ((current_price - entry) if direction == "long" else (entry - current_price)) / entry * 100
-    if profit_pct / R < TRAILING_TRIGGER_R:
-        return None
-
-    dist = TRAILING_DISTANCE_R * R / 100
-    if direction == "long":
-        new_sl = current_price * (1 - dist)
-        better = new_sl > current_sl
-    else:
-        new_sl = current_price * (1 + dist)
-        better = (current_sl == 0) or (new_sl < current_sl)
-    if not better:
-        return None
-
-    conn.execute("UPDATE positions SET sl_price = ?, sl_since = ? WHERE id = ?",
-                 (new_sl, _now_ms(), row["id"]))
-    return (new_sl, f"trailing +{profit_pct / R:.1f}R (R={R:.2f}%), SL={new_sl:.4f}")
-
-
 def _snapshot_equity(conn, open_rows):
     """Zapisz current equity state do equity_snapshots table."""
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -1812,6 +1982,66 @@ def _snapshot_equity(conn, open_rows):
     )
     conn.commit()
     print(f"[equity] snapshot: ${total_equity:.2f} · realized ${realized:+.2f} · unrealized ${unrealized:+.2f}")
+
+
+def _scan_candles(direction, ohlc, sl_since_ms, entry, sl_initial, sl, tp1, tp2, tp1_done):
+    """v3 (14.10.2026) — przejście po świecach [ts, o, h, l, c, v] BEZ zaglądania w przyszłość.
+
+    • Świece z ts < sl_since_ms są pomijane (sl_rescan_bug).
+    • SL wyzwalany KNOTEM (low ≤ SL dla longa), tak samo jak TP knotem — wcześniej SL
+      wymagał zamknięcia świecy, a TP tylko dotknięcia, co systematycznie zaniżało straty.
+    • Na tej samej świecy SL ma pierwszeństwo przed TP (kolejność z OHLC nieznana).
+    • Wypełnienie SL po poziomie stopa; przy luce (open już za stopem) po open.
+    • Trailing (w R od SL początkowego) liczony świeca po świecy: szczyt z bieżącej
+      świecy przesuwa stop, który obowiązuje dopiero od NASTĘPNEJ świecy.
+    Zwraca dict: exit_price, exit_ts, label, trail_sl, trail_since.
+    """
+    long_ = direction == "long"
+    R = abs(entry - sl_initial) / entry * 100 if entry and sl_initial else 0.0
+    dist = TRAILING_DISTANCE_R * R / 100
+    trailed = False
+    trail_sl = None
+    trail_since = None
+    peak = None
+    for candle in ohlc:
+        ts, o, h, l = candle[0], float(candle[1]), float(candle[2]), float(candle[3])
+        if ts < sl_since_ms:
+            continue
+        lbl_sl = "hit_trailing_sl" if trailed else "hit_sl"
+        if long_:
+            if sl and l <= sl:
+                return {"exit_price": min(sl, o), "exit_ts": ts, "label": lbl_sl,
+                        "trail_sl": trail_sl, "trail_since": trail_since}
+            if tp2 and h >= tp2:
+                return {"exit_price": max(tp2, o), "exit_ts": ts, "label": "hit_tp2",
+                        "trail_sl": trail_sl, "trail_since": trail_since}
+            if tp1 and not tp1_done and h >= tp1:
+                return {"exit_price": max(tp1, o), "exit_ts": ts, "label": "hit_tp1",
+                        "trail_sl": trail_sl, "trail_since": trail_since}
+            peak = h if peak is None else max(peak, h)
+            prof_r = ((peak - entry) / entry * 100 / R) if R > 0 else 0
+            if R > 0 and prof_r >= TRAILING_TRIGGER_R:
+                cand = peak * (1 - dist)
+                if cand > (sl or 0):
+                    sl = cand; trailed = True; trail_sl = cand; trail_since = ts + 5 * 60_000
+        else:
+            if sl and h >= sl:
+                return {"exit_price": max(sl, o), "exit_ts": ts, "label": lbl_sl,
+                        "trail_sl": trail_sl, "trail_since": trail_since}
+            if tp2 and l <= tp2:
+                return {"exit_price": min(tp2, o), "exit_ts": ts, "label": "hit_tp2",
+                        "trail_sl": trail_sl, "trail_since": trail_since}
+            if tp1 and not tp1_done and l <= tp1:
+                return {"exit_price": min(tp1, o), "exit_ts": ts, "label": "hit_tp1",
+                        "trail_sl": trail_sl, "trail_since": trail_since}
+            peak = l if peak is None else min(peak, l)
+            prof_r = ((entry - peak) / entry * 100 / R) if R > 0 else 0
+            if R > 0 and prof_r >= TRAILING_TRIGGER_R:
+                cand = peak * (1 + dist)
+                if not sl or cand < sl:
+                    sl = cand; trailed = True; trail_sl = cand; trail_since = ts + 5 * 60_000
+    return {"exit_price": None, "exit_ts": None, "label": None,
+            "trail_sl": trail_sl, "trail_since": trail_since}
 
 
 def cmd_check(args):
@@ -1851,7 +2081,7 @@ def cmd_check(args):
             # v4.3: netto po kosztach; uwzględnia zrealizowane TP1, jeśli było
             _f1 = _tp1_frac_of(r)
             _, _rest, _gross = _net_pnl(direction, r["entry_price"], exit_price,
-                                   float(r["size_usd"] or 0) * (1 - _f1))
+                                        float(r["size_usd"] or 0) * (1 - _f1))
             pnl_usd = (float(r["tp1_pnl_usd"] or 0) if _f1 > 0 else 0.0) + _rest
             pnl_pct = pnl_usd / float(r["size_usd"]) * 100 if r["size_usd"] else 0.0
             close_ts = now_utc.isoformat()
@@ -1891,7 +2121,7 @@ def cmd_check(args):
         # v4.3: netto po kosztach; uwzględnia zrealizowane TP1, jeśli było
         _f1 = _tp1_frac_of(r)
         _, _rest, _gross = _net_pnl("short", r["entry_price"], exit_price,
-                               float(r["size_usd"] or 0) * (1 - _f1))
+                                    float(r["size_usd"] or 0) * (1 - _f1))
         pnl_usd = (float(r["tp1_pnl_usd"] or 0) if _f1 > 0 else 0.0) + _rest
         pnl_pct = pnl_usd / float(r["size_usd"]) * 100 if r["size_usd"] else 0.0
         close_ts = now_utc.isoformat()
@@ -1942,72 +2172,25 @@ def cmd_check(args):
         # v4.3: ile pozycji już zamknięto na TP1 — jeśli >0, TP1 się nie powtarza
         tp1_frac_done = _tp1_frac_of(r)
 
-        for candle in ohlc:  # [ts, o, h, l, c, v]
-            ts, _o, h, l, c, _v = candle
-            # v4.3: jeden wspólny warunek zamiast powtarzania `ts >= sl_since_ms`
-            # przy każdej gałęzi. Dotyczy teraz także TP — świeca sprzed ostatniej
-            # zmiany SL nie powinna zamykać pozycji w ŻADNĄ stronę.
-            if ts < sl_since_ms:
-                continue
-            if direction == "long":
-                # v3.1: CLOSE-BASED SL — wymaga zamknięcia świecy poniżej SL, nie tylko
-                # wick (low). Wicki często dotykają SL i wracają (fałszywa presja).
-                # v4.3: SL sprawdzany PRZED TP. Gdy jedna świeca 5m dotyka obu poziomów,
-                # z samego OHLC nie da się ustalić kolejności. Dotąd przyznawaliśmy TP,
-                # czyli przy każdej niejednoznaczności zapisywaliśmy wygraną. To jedno
-                # z dwóch miejsc, w których rejestr był systematycznie zbyt optymistyczny
-                # (drugim był brak kosztów). Teraz przy niejednoznaczności idzie strata.
-                if sl and c <= sl:
-                    # v4.2 (13.10.2026): wypełnienie po GORSZEJ z dwóch cen — poziomu SL
-                    # albo zamknięcia świecy. Wyzwalaczem jest zamknięcie poniżej SL, więc
-                    # gdy świeca przeskoczy przez stopa, realne wypełnienie byłoby po close,
-                    # nie po poziomie. Zapisywanie samego `sl` zaniżało każdą taką stratę.
-                    # Wykryte przez test_no_peeking.py — exit_price bywał powyżej całego
-                    # zakresu świecy, czyli po cenie, której nie było.
-                    exit_price = min(sl, c); exit_ts = ts; hit_or_miss = "hit_sl"; break
-                if tp2 and h >= tp2:
-                    exit_price = tp2; exit_ts = ts; hit_or_miss = "hit_tp2"; break
-                if tp1 and h >= tp1 and tp1_frac_done <= 0:
-                    exit_price = tp1; exit_ts = ts; hit_or_miss = "hit_tp1"; break
-            else:  # SHORT
-                # v3.1: SHORT SL = candle CLOSE above SL. v4.3: SL przed TP, jak w LONG.
-                if sl and c >= sl:
-                    # v4.2: symetrycznie do LONG — dla shorta gorsza cena to WYŻSZA.
-                    exit_price = max(sl, c); exit_ts = ts; hit_or_miss = "hit_sl"; break
-                if tp2 and l <= tp2:
-                    exit_price = tp2; exit_ts = ts; hit_or_miss = "hit_tp2"; break
-                if tp1 and l <= tp1 and tp1_frac_done <= 0:
-                    exit_price = tp1; exit_ts = ts; hit_or_miss = "hit_tp1"; break
-
+        # v3 (14.10.2026): cała logika świec w czystej funkcji _scan_candles —
+        # SL po knocie (spójnie z TP), SL przed TP na tej samej świecy, trailing
+        # świeca po świecy od sl_since. Testowane w test_no_peeking.py [0].
+        try:
+            sl0 = float(r["sl_initial"] or 0) or sl
+        except (KeyError, IndexError):
+            sl0 = sl
+        res = _scan_candles(direction, ohlc, sl_since_ms, float(r["entry_price"]), sl0,
+                            sl, tp1, tp2, tp1_frac_done > 0)
+        exit_price, exit_ts, hit_or_miss = res["exit_price"], res["exit_ts"], res["label"]
+        if res["trail_sl"] is not None:
+            conn.execute("UPDATE positions SET sl_price = ?, sl_since = ? WHERE id = ?",
+                         (res["trail_sl"], res["trail_since"], r["id"]))
+            conn.commit()
+            print(f"[trail] {r['ticker']} SL: {sl:.4f} → {res['trail_sl']:.4f} (od świecy {res['trail_since']})")
         if exit_price is None:
-            # Position still open — check if trailing SL should update
-            last_price = ohlc[-1][4]
-            r_dict = dict(r)  # convert for _update_trailing_sl
-            trail_result = _update_trailing_sl(conn, r_dict, last_price)
-            if trail_result:
-                new_sl, reason = trail_result
-                conn.commit()
-                print(f"[trail] {r['ticker']} SL updated: {r['sl_price']:.4f} → {new_sl:.4f} ({reason})")
-                # Re-fetch updated row for immediate re-check on next iteration
-                r = conn.execute("SELECT * FROM positions WHERE id = ?", (r["id"],)).fetchone()
-                sl = float(r["sl_price"] or 0)
-                # Re-check if the new trailing SL is already hit
-                # v4.2 (13.10.2026): ta sama poprawka co przy zwykłym SL — wypełnienie po
-                # gorszej z dwóch cen. Tu było najgroźniejsze: trailing SL podniesiony
-                # POWYŻEJ rynku natychmiast spełniał warunek i zamykał pozycję po cenie
-                # wyższej niż cokolwiek, czym handlowano. Stąd stop lossy z dodatnim PnL.
-                if direction == "long" and sl and last_price <= sl:
-                    exit_price = min(sl, last_price); exit_ts = ohlc[-1][0]; hit_or_miss = "hit_trailing_sl"
-                elif direction != "long" and sl and last_price >= sl:
-                    exit_price = max(sl, last_price); exit_ts = ohlc[-1][0]; hit_or_miss = "hit_trailing_sl"
-                else:
-                    print(f"[check] {r['ticker']} ({direction}): still open  entry {r['entry_price']:.4f}  "
-                          f"last {last_price:.4f}  trailing SL {sl:.4f}")
-                    continue
-            else:
-                print(f"[check] {r['ticker']} ({direction}): still open  entry {r['entry_price']:.4f}  "
-                      f"last {last_price:.4f}  SL {r['sl_price']:.4f}")
-                continue
+            print(f"[check] {r['ticker']} ({direction}): still open  entry {r['entry_price']:.4f}  "
+                  f"last {ohlc[-1][4]:.4f}  SL {res['trail_sl'] or sl:.4f}")
+            continue
 
         exit_dt = datetime.fromtimestamp(exit_ts / 1000, tz=timezone.utc).isoformat()
         entry_px = float(r["entry_price"])
@@ -2022,7 +2205,7 @@ def cmd_check(args):
             part_usd = size_usd * TP1_CLOSE_FRAC
             _part_pct, part_usd_pnl, _g = _net_pnl(direction, entry_px, exit_price, part_usd)
             be = entry_px * (1 + COST_PCT / 100) if direction == "long" else entry_px * (1 - COST_PCT / 100)
-            cur_sl = float(r["sl_price"] or 0)
+            cur_sl = float(res["trail_sl"] or r["sl_price"] or 0)  # v3: uwzględnij trailing z tego skanu
             new_sl = max(cur_sl, be) if direction == "long" else (min(cur_sl, be) if cur_sl else be)
             # sl_since przesunięte o jedną świecę 5m do przodu — nowy stop nie może
             # trafić w świecę, na której dopiero co zrealizowaliśmy TP1 (sl_rescan_bug).
@@ -2062,6 +2245,7 @@ def cmd_check(args):
               f"PnL {pnl_pct:+.2f}% (${pnl_usd:+.2f})")
         _notify_close(r["ticker"], direction, r["entry_price"], exit_price, pnl_pct, pnl_usd, hit_or_miss)
 
+    _stamp_r_multiple(conn)   # v4.4
     _maybe_daily_digest(conn)
     conn.close()
 
@@ -2824,6 +3008,7 @@ def cmd_upload(args):
         "telegram_free_channel": TG_FREE_CHANNEL,
         "telegram_last_error": _TELEGRAM_LAST_ERROR,
         "telegram_last_ok": _TELEGRAM_LAST_OK,
+        "telegram_skipped": list(_TELEGRAM_SKIPPED),   # v3: duplikaty zablokowane przez dedupe
         "telegram_test_result": tg_meta.get("telegram_test_result"),
         "digest_last_date": tg_meta.get("last_digest_date"),
         "digest_last_error": tg_meta.get("digest_last_error"),
@@ -2832,6 +3017,7 @@ def cmd_upload(args):
         "open_count": len(open_positions),
         "gates": {
             "min_long_score": MIN_LONG_SCORE,
+            "min_long_score_floor": MIN_LONG_SCORE_FLOOR,
             "min_long_by_regime": MIN_LONG_SCORE_BY_REGIME,
             "max_short_score": MAX_SHORT_SCORE,
             "max_short_by_regime": MAX_SHORT_SCORE_BY_REGIME,
@@ -2944,7 +3130,7 @@ def cmd_close(args):
         # v4.3: netto po kosztach; uwzględnia zrealizowane TP1, jeśli było
         _f1 = _tp1_frac_of(r)
         _, _rest, _gross = _net_pnl(direction, r['entry_price'], exit_price,
-                               float(r['size_usd'] or 0) * (1 - _f1))
+                                    float(r['size_usd'] or 0) * (1 - _f1))
         pnl_usd = (float(r['tp1_pnl_usd'] or 0) if _f1 > 0 else 0.0) + _rest
         pnl_pct = pnl_usd / float(r['size_usd']) * 100 if r['size_usd'] else 0.0
         conn.execute(

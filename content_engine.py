@@ -43,7 +43,7 @@ PLATFORM SPLIT:
              under large accounts — replies are where X still gives this account reach.
   Saturday — no posts anywhere.
 
-CTA: "TVC Fusion PRO" by name only, every 3rd post. Never a raw t.me link on X.
+CTA: link do publicznego dziennika paper tradingu, every 3rd post (v4.4: bez PRO/kanałów sygnałowych).
 
 v5.0 changes:
   - MAX_X_PER_DAY 3→1, MAX_LI_PER_DAY 2→1, LinkedIn only on Mon/Wed/Fri
@@ -111,7 +111,7 @@ DAILY_CHECKLIST = (
 )
 
 TG_PERSONAL_CHAT = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-CTA = "TVC Fusion PRO"  # v5.0: name only, no raw link on X
+CTA = "tradingventureclub.com/results.html"  # v4.4 (tryb edukacyjny): dziennik zamiast „PRO”; na X linia CTA i tak jest usuwana
 CTA_EVERY_N = 3        # v4.0: CTA every Nth post, not every post
 BOOK_MENTION_EVERY_N = 9  # v4.1: mention books roughly every 9th post
 
@@ -152,11 +152,70 @@ def _load_json(path):
         return {}
 
 
+# ── v4.4: FILTR CTA DO PŁATNYCH SYGNAŁÓW ─────────────────────────────────────
+# Tryb edukacyjny: żaden post w kolejce nie może kierować do płatnych sygnałów
+# (PRO, $29/mo, kanał sygnałów, t.me/TVCFusionSignals, @TVCAlertsBot). Filtr działa
+# przy KAŻDYM odczycie i zapisie kolejki oraz przed wysłaniem propozycji na
+# Telegram, więc stare wpisy znikają same przy pierwszym cyklu, a nowe (np. z
+# ręcznego --recap/--alert) nie mają jak wejść. Wzorce są celowo wąskie: łapią
+# CTA/ofertę, a nie zwykłe słowo „signal” w analizie („derivatives signals”)
+# ani krytykę branży („If a signal channel won't show you…”).
+_PAID_CTA_RE = re.compile(
+    r"TVC\s*Fusion\s*PRO\b"
+    r"|\bPRO\s+(?:tier|channel|kanał\w*|plan|members?\w*|subscription|signals?|access)\b"
+    r"|(?:\bin|\bjoin|\bget|→)\s+PRO\b"
+    r"|\$\s?29(?![.,]?\d)\b|\b29\s*/\s*mo\b|cancel anytime"
+    r"|t\.me/TVCFusionSignals|TVCFusionSignals|TVCAlertsBot"
+    r"|\b(?:free|paid|premium|vip|instant|daily)\s+(?:trade\s+|crypto\s+)?signals?\b"
+    r"|\b(?:get|join|follow|subscribe(?:\s+to)?)\s+(?:the\s+|our\s+|all\s+|my\s+)?signals?\b"
+    r"|\bI\s+(?:post|share)\s+(?:the\s+|every\s+|all\s+)?signals?\b"
+    r"|\b(?:płatn\w*|premium|vip)\s+(?:kanał\w*|sygnał\w*)|\bsygnał\w*\s+(?:płatn\w*|premium|PRO\b|VIP)",
+    re.I)
+
+
+def _has_paid_cta(post) -> bool:
+    """True, jeśli którekolwiek pole tekstowe posta zawiera CTA do płatnych sygnałów."""
+    if isinstance(post, str):
+        return bool(_PAID_CTA_RE.search(post))
+    if not isinstance(post, dict):
+        return False
+    return any(isinstance(v, str) and _PAID_CTA_RE.search(v) for v in post.values())
+
+
+def _purge_paid_cta(q, where=""):
+    """Usuń z kolejki posty z CTA do płatnych sygnałów. Zwraca liczbę usuniętych."""
+    posts = q.get("posts") or []
+    keep = [p for p in posts if not _has_paid_cta(p)]
+    removed = len(posts) - len(keep)
+    if removed:
+        q["posts"] = keep
+        meta = q.setdefault("meta", {})
+        meta["paid_cta_purged"] = int(meta.get("paid_cta_purged", 0) or 0) + removed
+        log(f"  v4.4: usunięto {removed} post(ów) z CTA do płatnych sygnałów{(' (' + where + ')') if where else ''}")
+    return removed
+
+
+def _purge_queue_once_at_start():
+    """Jednorazowe (i bezpieczne do powtarzania) czyszczenie pliku kolejki przy starcie."""
+    if not QUEUE_PATH.exists():
+        return 0
+    try:
+        q = _load_queue(purge=False)
+    except QueueCorrupted:
+        return 0  # run() i tak przerwie z czytelnym błędem
+    n = _purge_paid_cta(q, "start")
+    meta = q.setdefault("meta", {})
+    if n or not meta.get("paid_cta_purge_v44"):
+        meta["paid_cta_purge_v44"] = _now().isoformat()
+        _save_queue(q)
+    return n
+
+
 class QueueCorrupted(Exception):
     """Kolejka istnieje, ale nie da się jej odczytać — NIE wolno uznać jej za pustą."""
 
 
-def _load_queue():
+def _load_queue(purge=True):
     """
     Wczytaj kolejkę. Brak pliku = pusta kolejka (pierwszy start, to normalne).
     Plik nieczytelny = błąd, nie pustka.
@@ -182,10 +241,13 @@ def _load_queue():
         raise QueueCorrupted(f"{QUEUE_PATH.name} nie jest poprawnym JSON-em ({e}) — przerywam.")
     if not isinstance(q, dict) or "posts" not in q:
         raise QueueCorrupted(f"{QUEUE_PATH.name} ma nieoczekiwaną strukturę — przerywam.")
+    if purge:
+        _purge_paid_cta(q, "odczyt")  # v4.4
     return q
 
 
 def _save_queue(q):
+    _purge_paid_cta(q, "zapis")  # v4.4: nic z CTA do płatnych sygnałów nie trafia do pliku
     QUEUE_PATH.write_text(
         json.dumps(q, indent=2, default=str, ensure_ascii=False), encoding="utf-8"
     )
@@ -229,7 +291,7 @@ def _should_add_cta(q):
     return (total + 1) % CTA_EVERY_N == 0
 
 
-def _cta_line(q, prefix="Free signals"):
+def _cta_line(q, prefix="Paper-trading journal"):
     """v4.0: Returns CTA line or empty string based on rotation."""
     if _should_add_cta(q):
         return f"{prefix}: {CTA}"
@@ -341,7 +403,7 @@ def _scrub_stats(text):
     the blank-line gaps it leaves. Applies to every platform while SHOW_STATS is False."""
     text = _STATS_LINE_RE.sub("", text)
     return re.sub(r"\n{3,}", "\n\n", text).strip()
-_CTA_LINE_RE = re.compile(r"^\s*(free signals?|follow the signals?|want to see them live\??|see it live)\s*[:→-]?.*$",
+_CTA_LINE_RE = re.compile(r"^\s*(paper-trading journal|full journal|free signals?|follow the signals?|want to see them live\??|see it live)\s*[:→-]?.*$",
                           re.I | re.M)
 
 
@@ -354,7 +416,7 @@ def _x_safe(text):
     text = _CASHTAG_RE.sub(r"\1", text)
     text = _NFA_RE.sub("", text)
     text = _HASHTAG_RE.sub("", text)  # v5.1: no hashtags on X either
-    text = _CTA_LINE_RE.sub("", text)  # v5.1: "Free signals: ..." lines read as spam
+    text = _CTA_LINE_RE.sub("", text)  # v5.1: "Paper-trading journal: ..." lines read as spam
     out = []
     for ln in text.split("\n"):
         st = ln.strip()
@@ -583,14 +645,14 @@ _TUESDAY_TOPICS = [
             "Total daily time: ~20 minutes publishing pre-written posts.\n\n"
             "The rest runs itself. That's the point.\n\n"
             "What part of your workflow could you automate but haven't yet?\n\n"
-            "Free signals from this system → {cta}\n\n"
+            "Paper-trading journal → {cta}\n\n"
             "#BuildInPublic #Python #Automation #CryptoTrading"
         ),
         "x": (
             "7 Python scripts. GitHub Actions. $0/month.\n\n"
             "That's the entire infrastructure behind our 24/7 crypto trading system.\n\n"
             "No AWS. No servers. Just cron + code.\n\n"
-            "Free signals: {cta}"
+            "Paper-trading journal: {cta}"
         ),
         "graphic": (
             "📸 GRAPHIC: GitHub Actions workflow runs page or TVC Terminal bird's eye view\n"
@@ -610,7 +672,7 @@ _TUESDAY_TOPICS = [
             "The advantage of algorithmic trading: every fix is permanent. "
             "The bot can't forget its rules on a bad day.\n\n"
             "What's the most expensive lesson trading taught you?\n\n"
-            "Free signals → {cta}\n\n"
+            "Paper-trading journal → {cta}\n\n"
             "#AlgoTrading #BuildInPublic #TradingLessons"
         ),
         "x": (
@@ -620,7 +682,7 @@ _TUESDAY_TOPICS = [
             "After zombie close: 52%\n"
             "After Smart Money veto: {wr}%\n\n"
             "Every loss = a permanent fix.\n\n"
-            "Free signals: {cta}"
+            "Paper-trading journal: {cta}"
         ),
         "graphic": (
             "📸 GRAPHIC: TVC Terminal P&L History panel showing equity curve\n"
@@ -651,7 +713,7 @@ _TUESDAY_TOPICS = [
             "→ Binance top trader L/S\n"
             "→ Taker flow CVD\n\n"
             "≥2/3 must confirm. Otherwise: no trade.\n\n"
-            "Free signals: {cta}"
+            "Paper-trading journal: {cta}"
         ),
         "graphic": (
             "📸 GRAPHIC: TVC Terminal Smart Money panel — whales + L/S ratio + taker CVD\n"
@@ -665,8 +727,7 @@ _TUESDAY_TOPICS = [
             "It has:\n"
             "→ A ~10,000-line trading terminal built from scratch\n"
             "→ 7 Python scripts running autonomously every 5 minutes\n"
-            "→ Automated Stripe membership system\n"
-            "→ Dual Telegram channels (free + premium)\n"
+            "→ A public, unedited paper-trading journal\n"
             "→ A content engine that writes posts from bot data\n\n"
             "I'm sharing this not to impress — but because the narrative that you need "
             "a team and funding to build something useful is wrong.\n\n"
@@ -683,7 +744,7 @@ _TUESDAY_TOPICS = [
             "→ $0 infrastructure cost\n"
             "→ Team size: 1\n\n"
             "You don't need a team. You need a system.\n\n"
-            "Free signals: {cta}"
+            "Paper-trading journal: {cta}"
         ),
         "graphic": (
             "📸 GRAPHIC: Terminal bird's eye view showing multiple panels\n"
@@ -707,7 +768,7 @@ _TUESDAY_TOPICS = [
             "Ask anyone selling you signals: \"Can I see your full, unedited trade history?\"\n"
             "If the answer is no — you have your answer.\n\n"
             "Full transparency → {cta}\n\n"
-            "#Transparency #CryptoSignals #TradingVentureClub"
+            "#Transparency #CryptoEducation #TradingVentureClub"
         ),
         "x": (
             "If a signal channel won't show you their full history — "
@@ -746,7 +807,7 @@ _TUESDAY_TOPICS = [
             "\"I'll average down.\"\n\n"
             "Every blown account starts with one of these.\n\n"
             "That's why I removed myself from the equation. The bot follows the rules. I don't have to.\n\n"
-            "Free signals: {cta}"
+            "Paper-trading journal: {cta}"
         ),
         "graphic": (
             "📸 GRAPHIC: TVC Terminal equity curve — smooth, systematic line\n"
@@ -869,14 +930,14 @@ def gen_wednesday():
             f"When they don't — stay flat.\n\n"
             f"After {stats['total']} trades at {stats['wr']}% win rate, "
             f"I trust the numbers more than any CT thread.\n\n"
-            f"Daily signals → {CTA}\n\n"
+            f"Paper-trading journal → {CTA}\n\n"
             f"#CryptoTrading #DataDriven #AlgoTrading"
         )
         x = (
             f"Opinions are free. Data costs effort.\n\n"
             f"That's why our system measures 5 factors before any trade.\n\n"
             f"What do you base YOUR entries on?\n\n"
-            f"Free signals: {CTA}"
+            f"Paper-trading journal: {CTA}"
         )
 
     gr = (
@@ -974,10 +1035,10 @@ def gen_thursday():
             f"Win rate: {len(wins)}/{len(weekly)} = {week_wr}%\n"
             f"Net P&L: ${week_pnl:+.1f}\n\n"
             f"Not backtested. Paper traded in real-time, every 5 minutes, 24/7.\n"
-            f"Every signal posted to Telegram as it fires.\n\n"
+            f"Every paper trade logged publicly as it happens.\n\n"
             f"Cumulative: {stats['total']} trades, {stats['wr']}% win rate, "
             f"${stats['pnl']:+.0f} total PnL.\n\n"
-            f"Want to see them live? → {CTA}\n\n"
+            f"Full journal → {CTA}\n\n"
             f"#CryptoTrading #Transparency #AlgoTrading #TradingResults"
         )
 
@@ -991,13 +1052,13 @@ def gen_thursday():
                 f"Entry: {_fmt_px(best.get('entry_price'))} → "
                 f"Exit: {_fmt_px(best.get('exit_price'))}\n\n"
                 f"Not a prediction. A system.\n\n"
-                f"Free signals: {CTA}"
+                f"Paper-trading journal: {CTA}"
             )
         else:
             x = (
                 f"This week: {len(wins)}/{len(weekly)} wins. Net: ${week_pnl:+.1f}\n\n"
                 f"Not every week is green. That's what a real track record looks like.\n\n"
-                f"Free signals: {CTA}"
+                f"Paper-trading journal: {CTA}"
             )
     else:
         li = (
@@ -1007,13 +1068,13 @@ def gen_thursday():
             f"Cumulative record: {stats['total']} trades, {stats['wr']}% win rate, "
             f"${stats['pnl']:+.0f} PnL.\n\n"
             f"Patience > activity.\n\n"
-            f"Follow the signals → {CTA}\n\n"
+            f"Paper-trading journal → {CTA}\n\n"
             f"#TradingDiscipline #AlgoTrading #CryptoTrading"
         )
         x = (
             f"Zero trades this week. 12 rejection gates said: not yet.\n\n"
             f"Patience IS the edge.\n\n"
-            f"Free signals: {CTA}"
+            f"Paper-trading journal: {CTA}"
         )
 
     gr = (
@@ -1045,7 +1106,7 @@ _FRIDAY_TOPICS = [
             "Only when 3+ align does it open a position.\n\n"
             "This single filter improved our win rate dramatically. "
             "Multi-timeframe confluence isn't optional. It's the edge.\n\n"
-            "I post the signals this system generates → {cta}\n\n"
+            "Full paper-trading journal → {cta}\n\n"
             "#TradingEducation #MultiTimeframe #CryptoTrading"
         ),
         "x": (
@@ -1054,7 +1115,7 @@ _FRIDAY_TOPICS = [
             "5m confirms. 1h directs. 4h structures. 1D defines regime.\n\n"
             "3+ must align. Otherwise: no trade.\n\n"
             "Simple, but most skip it.\n\n"
-            "Free signals: {cta}"
+            "Paper-trading journal: {cta}"
         ),
         "graphic": (
             "📸 GRAPHIC: TVC Terminal showing multi-timeframe analysis panel\n"
@@ -1084,7 +1145,7 @@ _FRIDAY_TOPICS = [
             "Our rules are hard-coded. The bot can't break them.\n\n"
             "Max 3 trades/day. Mandatory SL. Smart Money veto.\n\n"
             "{total} trades later: {wr}% WR.\n\n"
-            "Free signals: {cta}"
+            "Paper-trading journal: {cta}"
         ),
         "graphic": (
             "📸 GRAPHIC: TVC Terminal positions panel + P&L History\n"
@@ -1113,7 +1174,7 @@ _FRIDAY_TOPICS = [
             "Downtrend → short bias, strict SL\n\n"
             "Our bot detects regime FIRST. Then adapts.\n\n"
             "Most traders skip this step entirely.\n\n"
-            "Free signals: {cta}"
+            "Paper-trading journal: {cta}"
         ),
         "graphic": (
             "📸 GRAPHIC: TVC Terminal BTC chart with regime label + Fibonacci levels\n"
@@ -1145,7 +1206,7 @@ _FRIDAY_TOPICS = [
             "Negative + extreme = squeeze incoming\n"
             "Near zero = follow the trend\n\n"
             "We check 200+ tokens every run. Free alpha in plain sight.\n\n"
-            "Free signals: {cta}"
+            "Paper-trading journal: {cta}"
         ),
         "graphic": (
             "📸 GRAPHIC: TVC Terminal Pump Radar panel — funding rate data visible\n"
@@ -1175,7 +1236,7 @@ _FRIDAY_TOPICS = [
             "Funding extreme = crowded trade unwinding\n"
             "Liquidation cluster = price magnet\n\n"
             "Our Pump Radar scans 200+ tokens for this. Every 5 min.\n\n"
-            "Free signals: {cta}"
+            "Paper-trading journal: {cta}"
         ),
         "graphic": (
             "📸 GRAPHIC: TVC Terminal Pump Radar panel — OI + funding + factor breakdown\n"
@@ -1210,7 +1271,7 @@ _FRIDAY_TOPICS = [
             "→ Rigid risk rules > flexible entry rules\n"
             "→ Adapting to regime > one-size-fits-all\n\n"
             "5 factors + 3 SM layers + 12 gates = {wr}% WR over {total} trades.\n\n"
-            "Free signals: {cta}"
+            "Paper-trading journal: {cta}"
         ),
         "graphic": (
             "📸 GRAPHIC: TVC Terminal Fusion Score breakdown + Smart Money panel\n"
@@ -1293,9 +1354,9 @@ def gen_sunday():
         f"→ Macro blackout: no new trades 3h before / 1h after Tier-1 events\n"
         f"→ Regime detection adapts entry criteria in real-time\n"
         f"→ Smart Money veto stays active — no override possible\n\n"
-        f"I'll share signals as they fire throughout the week.\n\n"
+        f"I'll log every paper trade publicly throughout the week.\n\n"
         f"What's on YOUR radar?\n\n"
-        f"Free daily signals → {CTA}\n\n"
+        f"Paper-trading journal → {CTA}\n\n"
         f"#CryptoTrading #WeekAhead #SmartMoney #MarketAnalysis"
     )
 
@@ -1347,7 +1408,7 @@ def gen_trade_close(trade):
             f"{_fmt_px(entry)} → {_fmt_px(exit_px)} ({exit_label})\n"
             f"Fusion Score at entry: {score}/100\n\n"
             f"Bot stats: {stats['total']} trades, {stats['wr']}% WR\n\n"
-            f"Free signals: {CTA}\n"
+            f"Paper-trading journal: {CTA}\n"
             f"#{ticker} #crypto #trading"
         )
     else:
@@ -1355,7 +1416,7 @@ def gen_trade_close(trade):
             f"❌ ${ticker} {direction} stopped out {pnl_pct:+.1f}%\n\n"
             f"Risk managed. WR still {stats['wr']}% over {stats['total']} trades.\n\n"
             f"Transparency > hype.\n\n"
-            f"Free signals: {CTA}\n"
+            f"Paper-trading journal: {CTA}\n"
             f"#{ticker} #crypto"
         )
 
@@ -1367,7 +1428,7 @@ def gen_trade_close(trade):
             f"This wasn't a gut call. It was an algorithm following rules I defined months ago.\n\n"
             f"Running stats: {stats['total']} trades, {stats['wr']}% win rate, "
             f"${stats['pnl']:+.0f} cumulative PnL.\n\n"
-            f"I share every signal — wins and losses → {CTA}\n\n"
+            f"Every paper trade, wins and losses → {CTA}\n\n"
             f"#CryptoTrading #AlgoTrading #SmartMoney"
         )
     else:
@@ -1526,7 +1587,7 @@ def gen_evening_x():
 
     # Every 3rd evening post gets CTA
     q = _load_queue()
-    cta_line = _cta_line(q, prefix="\nFree signals")
+    cta_line = _cta_line(q, prefix="\nPaper-trading journal")
 
     x = f"{insight}{cta_line}\n\n⚡"
 
@@ -1617,7 +1678,10 @@ def _tg_already_sent(key):
             pass
     sent[key] = now.isoformat()
     cutoff = (now - timedelta(days=3)).isoformat()
-    sent = {k: v for k, v in sent.items() if v >= cutoff}
+    # v4.4: tg_sent.json współdzieli tg_dedupe.py (wartości = float time.time()).
+    # Porównanie float >= str rzucało TypeError i przerywało content_engine przy
+    # pierwszym nowym poście. Przycinamy tylko własne wpisy (ISO str), cudze zostawiamy.
+    sent = {k: v for k, v in sent.items() if not isinstance(v, str) or v >= cutoff}
     try:
         TG_SENT_PATH.write_text(json.dumps(sent, indent=1, ensure_ascii=False), encoding="utf-8")
     except Exception as e:
@@ -1627,6 +1691,14 @@ def _tg_already_sent(key):
 
 def _notify_new_posts(posts):
     """Send full post texts to personal Telegram — ready for copy-paste."""
+    if not posts:
+        return
+
+    # v4.4: propozycje z CTA do płatnych sygnałów nie idą nawet na prywatny czat
+    blocked = [p for p in posts if _has_paid_cta(p)]
+    if blocked:
+        log(f"  v4.4: pominięto {len(blocked)} propozycji z CTA do płatnych sygnałów")
+        posts = [p for p in posts if not _has_paid_cta(p)]
     if not posts:
         return
 
@@ -1685,6 +1757,7 @@ def run():
     weekday = _now().weekday()
     theme = DAY_THEMES.get(weekday, "Unknown")
     log(f"Content Engine v5.2 — {_now().isoformat()} — {theme}")
+    _purge_queue_once_at_start()  # v4.4
 
     q = _load_queue()
     new_posts = []
@@ -1994,6 +2067,7 @@ def _strip_cta(text):
             or "follow" in stripped or "→ t.me" in stripped
             or stripped.startswith("free") or stripped.startswith("→ t.me")
             or stripped.startswith("daily signal") or "see the full" in stripped
+            or "journal" in stripped or "wins and losses" in stripped  # v4.4
         ):
             continue
         cleaned.append(line)

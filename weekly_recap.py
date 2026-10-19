@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Weekly Recap v1.0 — Sunday compilation of the week's trades + signals.
+TVC Fusion Weekly Recap v1.1 — Sunday compilation of the week's paper trades.
+
+v1.1 (v4.4, tryb edukacyjny): treści dwujęzyczne PL + EN, bez cen wejścia/wyjścia,
+bez CTA do kanałów sygnałowych, bez cennika PRO,
+bez linku do kanału sygnałów; wszędzie jasno „paper trading / symulacja”.
 
 Generates:
   - X thread (5-7 tweets with weekly stats, best/worst trade, lessons)
@@ -143,304 +147,299 @@ def get_cumulative_stats():
 
 
 # --- generators ------------------------------------------------------------
+# v1.1 (v4.4): treści dwujęzyczne PL + EN, ton edukacyjny, bez cen wejścia/wyjścia,
+# bez CTA do sygnałów. Kwoty = wirtualny kapitał paper tradingu ($10K).
 
-def generate_x_thread(trades, stats, cum):
-    """Generate a 5-7 tweet thread for X."""
+X_MAX = 280          # limit znaków posta na X (konto bez Premium)
+TG_MAX_LEN = 4000    # Telegram: 4096 znaków; zapas na encje HTML
+
+EXIT_PL_EN = {
+    "hit_sl": ("stop loss", "stop loss"),
+    "hit_tp1": ("pierwszy cel (TP1)", "first target (TP1)"),
+    "hit_tp2": ("drugi cel (TP2)", "second target (TP2)"),
+    "hit_breakeven": ("stop na cenie wejścia po TP1", "break-even stop after TP1"),
+    "hit_trailing_sl": ("stop kroczący", "trailing stop"),
+    "max_hold": ("limit czasu", "time limit"),
+    "zombie_expired": ("limit czasu", "time limit"),
+    "short_killswitch": ("bezpiecznik dla shortów", "short safety switch"),
+    "manual_close": ("zamknięcie ręczne", "manual close"),
+}
+
+
+def _exit_pl_en(t):
+    r = t.get("hit_or_miss") or ""
+    return EXIT_PL_EN.get(r, ("zamknięcie według reguł", "rule-based exit"))
+
+
+def _pct_pl(v, nd=1):
+    return f"{(v or 0):+.{nd}f}%".replace(".", ",")
+
+
+def _pct_en(v, nd=1):
+    return f"{(v or 0):+.{nd}f}%"
+
+
+def _num_pl(v):
+    return f"{v}".replace(".", ",")
+
+
+def _week_numbers(trades):
     total = len(trades)
     wins = [t for t in trades if (t.get("pnl_usd") or 0) > 0]
-    losses = [t for t in trades if (t.get("pnl_usd") or 0) <= 0]
-    week_pnl = sum(t.get("pnl_usd", 0) for t in trades)
+    week_pnl = sum(t.get("pnl_usd", 0) or 0 for t in trades)
     week_wr = round(len(wins) / total * 100, 1) if total else 0
+    best = max(trades, key=lambda t: t.get("pnl_pct", 0) or 0) if trades else None
+    worst = min(trades, key=lambda t: t.get("pnl_pct", 0) or 0) if trades else None
+    return total, wins, week_pnl, week_wr, best, worst
 
-    best = max(trades, key=lambda t: t.get("pnl_pct", 0)) if trades else None
-    worst = min(trades, key=lambda t: t.get("pnl_pct", 0)) if trades else None
+
+def _x_len(text):
+    """Ostrożna długość wg X: znaki spoza BMP/emoji liczone podwójnie, link nie skracany do 23."""
+    return sum(2 if ord(c) >= 0x2000 else 1 for c in text)
+
+
+def _pair(num, pl, en, graphic=""):
+    """Jeden wpis wątku PL+EN, jeśli mieści się w limicie X; inaczej dwa kolejne (PL, potem EN)."""
+    both = f"🇵🇱 {pl}\n\n🇬🇧 {en}"
+    if _x_len(both) <= X_MAX:
+        return [{"tweet_num": num, "lang": "pl+en", "text": both, "graphic": graphic}]
+    return [{"tweet_num": num, "lang": "pl", "text": f"🇵🇱 {pl}", "graphic": graphic},
+            {"tweet_num": num, "lang": "en", "text": f"🇬🇧 {en}", "graphic": ""}]
+
+
+def generate_x_thread(trades, stats, cum):
+    """Wątek X: każda myśl po polsku i po angielsku (jeden post albo para PL→EN)."""
+    total, wins, week_pnl, week_wr, best, worst = _week_numbers(trades)
+    emoji = "🟢" if week_pnl >= 0 else "🔴"
+    raw = []
+
+    raw.append((1,
+        f"{emoji} TVC Fusion: tydzień paper tradingu (symulacja)\n\n"
+        f"Transakcje: {total}\nTrafione: {_num_pl(week_wr)}%\nWynik: ${week_pnl:+.0f} na wirtualnych $10K\n\n"
+        f"Zapisujemy każdą transakcję, także straty. Omówienie niżej 🧵👇",
+        f"{emoji} TVC Fusion: paper trading week (simulation)\n\n"
+        f"Trades: {total}\nWin rate: {week_wr}%\nResult: ${week_pnl:+.0f} on $10K virtual capital\n\n"
+        f"Every trade is logged, losses included. Breakdown below 🧵👇",
+        "📸 GRAPHIC: Equity curve from P&L History panel (last 7 days), 1200x675px\n"
+        "  URL: tradingventureclub.com/terminal/"))
+
+    if best:
+        ex_pl, ex_en = _exit_pl_en(best)
+        d = best.get("direction", "long").upper()
+        raw.append((2,
+            f"Najlepsza transakcja: {best['ticker']} {d}\n"
+            f"Wynik: {_pct_pl(best.get('pnl_pct'))}\nWyjście: {ex_pl}\n"
+            f"Fusion Score przy wejściu: {best.get('fusion_score', '?')}/100\n\n"
+            f"Lekcja: cel i stop były znane przed wejściem.",
+            f"Best trade: {best['ticker']} {d}\n"
+            f"Result: {_pct_en(best.get('pnl_pct'))}\nExit: {ex_en}\n"
+            f"Fusion Score at entry: {best.get('fusion_score', '?')}/100\n\n"
+            f"Lesson: target and stop were set before entry.",
+            f"📸 GRAPHIC: Terminal chart of {best['ticker']} (no price labels needed)\n"
+            f"  URL: tradingventureclub.com/terminal/?token={best['ticker']}"))
+
+    if worst and (worst.get("pnl_usd") or 0) < 0:
+        ex_pl, ex_en = _exit_pl_en(worst)
+        d = worst.get("direction", "long").upper()
+        raw.append((3,
+            f"Najsłabsza transakcja: {worst['ticker']} {d}\n"
+            f"Wynik: {_pct_pl(worst.get('pnl_pct'))}\nWyjście: {ex_pl}\n\n"
+            f"Straty też pokazujemy. Stop ograniczył je do poziomu znanego przed wejściem.",
+            f"Weakest trade: {worst['ticker']} {d}\n"
+            f"Result: {_pct_en(worst.get('pnl_pct'))}\nExit: {ex_en}\n\n"
+            f"We show losses too. The stop capped it at a level known before entry.",
+            f"📸 GRAPHIC: Terminal chart of {worst['ticker']} with the stop marked\n"
+            f"  URL: tradingventureclub.com/terminal/?token={worst['ticker']}"))
+
+    by_dir = {}
+    for t in trades:
+        s = by_dir.setdefault(t.get("direction", "long"), {"count": 0, "pnl": 0.0, "wins": 0})
+        s["count"] += 1
+        s["pnl"] += t.get("pnl_usd", 0) or 0
+        s["wins"] += 1 if (t.get("pnl_usd") or 0) > 0 else 0
+    pl_l, en_l = [], []
+    for d, s in by_dir.items():
+        wr = round(s["wins"] / s["count"] * 100) if s["count"] else 0
+        pl_l.append(f"{d.upper()}: {s['count']} transakcji, {wr}% trafionych, ${s['pnl']:+.0f}")
+        en_l.append(f"{d.upper()}: {s['count']} trades, {wr}% WR, ${s['pnl']:+.0f}")
+    raw.append((4,
+        "Podział według kierunku:\n" + "\n".join(pl_l) +
+        "\n\nBot rozpoznaje reżim rynku (trend albo konsolidacja) i do niego dopasowuje filtry wejścia.",
+        "By direction:\n" + "\n".join(en_l) +
+        "\n\nThe bot detects the market regime (trend or range) and adapts its entry filters.",
+        "📸 GRAPHIC: 'What Works' panel (WR/PnL by direction, regime, exit type)\n"
+        "  URL: tradingventureclub.com/terminal/"))
+
+    raw.append((5,
+        f"Od 2 września:\n📊 {cum['total']} transakcji\n✅ {_num_pl(cum['wr'])}% trafionych\n"
+        f"💰 ${cum['pnl']:+.0f} łącznie\n\nKapitał wirtualny $10K. Pełny dziennik: tradingventureclub.com/results.html",
+        f"Since Sep 2:\n📊 {cum['total']} trades\n✅ {cum['wr']}% win rate\n"
+        f"💰 ${cum['pnl']:+.0f} total\n\n$10K virtual capital. Full journal: tradingventureclub.com/results.html",
+        "📸 GRAPHIC: Full equity curve from Sep 2 (P&L History, zoomed out)\n"
+        "  URL: tradingventureclub.com/results.html"))
+
+    raw.append((6,
+        "To dziennik edukacyjnego paper tradingu, a nie sygnały ani porada inwestycyjna.\n\nDo zobaczenia za tydzień 🫡",
+        "This is an educational paper-trading log, not trade signals and not investment advice.\n\n"
+        "See you next week 🫡\n\n#crypto #trading #algotrading",
+        "📸 GRAPHIC: results page (tradingventureclub.com/results.html), 1200x675px"))
 
     thread = []
-
-    # Tweet 1 — hook
-    emoji = "🟢" if week_pnl >= 0 else "🔴"
-    thread.append({
-        "tweet_num": 1,
-        "text": (
-            f"{emoji} TVC Fusion Weekly Recap\n\n"
-            f"Trades: {total}\n"
-            f"Win rate: {week_wr}%\n"
-            f"PnL: ${week_pnl:+.0f}\n\n"
-            f"Fully automated. Every trade logged. Here's the breakdown 🧵👇"
-        ),
-        "graphic": (
-            "📸 GRAPHIC: Equity curve screenshot from P&L History panel\n"
-            "  - Show the last 7 days clearly\n"
-            "  - Add text overlay: \"Week of [date range]\"\n"
-            "  - Format: 1200x675px\n"
-            "  URL: tradingventureclub.com/terminal/"
-        ),
-    })
-
-    # Tweet 2 — best trade
-    if best:
-        thread.append({
-            "tweet_num": 2,
-            "text": (
-                f"Best trade: ${best['ticker']} {best.get('direction','long').upper()}\n\n"
-                f"Entry: {_fmt_px(best.get('entry_price'))}\n"
-                f"Exit: {_fmt_px(best.get('exit_price'))}\n"
-                f"PnL: {best.get('pnl_pct',0):+.1f}% (${best.get('pnl_usd',0):+.0f})\n"
-                f"Fusion Score: {best.get('fusion_score','?')}/100\n\n"
-                f"Smart Money confirmed before entry ✅"
-            ),
-            "graphic": (
-                f"📸 GRAPHIC: Terminal chart of ${best['ticker']} showing:\n"
-                f"  - Entry/exit points annotated on price chart\n"
-                f"  - Smart Money panel showing confirmation\n"
-                f"  URL: tradingventureclub.com/terminal/?token={best['ticker']}"
-            ),
-        })
-
-    # Tweet 3 — worst trade (transparency)
-    if worst and worst.get("pnl_usd", 0) < 0:
-        thread.append({
-            "tweet_num": 3,
-            "text": (
-                f"Worst trade: ${worst['ticker']} {worst.get('direction','long').upper()}\n\n"
-                f"PnL: {worst.get('pnl_pct',0):+.1f}%\n"
-                f"Stopped out — risk managed.\n\n"
-                f"Posting losses = credibility.\n"
-                f"If someone only shows wins, run 🚩"
-            ),
-            "graphic": (
-                f"📸 GRAPHIC: Terminal chart of ${worst['ticker']} with stop-loss hit marked\n"
-                f"  URL: tradingventureclub.com/terminal/?token={worst['ticker']}"
-            ),
-        })
-
-    # Tweet 4 — stats breakdown
-    by_direction = {}
-    for t in trades:
-        d = t.get("direction", "long")
-        if d not in by_direction:
-            by_direction[d] = {"count": 0, "pnl": 0, "wins": 0}
-        by_direction[d]["count"] += 1
-        by_direction[d]["pnl"] += t.get("pnl_usd", 0)
-        if (t.get("pnl_usd", 0)) > 0:
-            by_direction[d]["wins"] += 1
-
-    stats_lines = []
-    for d, s in by_direction.items():
-        wr = round(s["wins"] / s["count"] * 100) if s["count"] else 0
-        stats_lines.append(f"{d.upper()}: {s['count']} trades, {wr}% WR, ${s['pnl']:+.0f}")
-
-    thread.append({
-        "tweet_num": 4,
-        "text": (
-            f"Direction breakdown:\n\n"
-            + "\n".join(stats_lines) + "\n\n"
-            f"The bot auto-detects regime (trending/ranging) and adjusts entry filters accordingly."
-        ),
-        "graphic": (
-            "📸 GRAPHIC: Screenshot of 'What Works' panel from terminal\n"
-            "  - Shows WR/PnL by direction, regime, exit type\n"
-            "  URL: tradingventureclub.com/terminal/"
-        ),
-    })
-
-    # Tweet 5 — cumulative
-    thread.append({
-        "tweet_num": 5,
-        "text": (
-            f"Cumulative stats (since Sep 2):\n\n"
-            f"📊 {cum['total']} trades\n"
-            f"✅ {cum['wr']}% win rate\n"
-            f"💰 ${cum['pnl']:+.0f} total PnL\n\n"
-            f"$10K paper capital. Fully transparent.\n"
-            f"Track record on: tradingventureclub.com/terminal/"
-        ),
-        "graphic": (
-            "📸 GRAPHIC: Full equity curve from day 1 (Sep 2)\n"
-            "  - P&L History panel, zoomed out to show entire history\n"
-            "  - System Health panel visible\n"
-            "  URL: tradingventureclub.com/terminal/"
-        ),
-    })
-
-    # Tweet 6 — CTA
-    thread.append({
-        "tweet_num": 6,
-        "text": (
-            f"Want the signals?\n\n"
-            f"🆓 Free: t.me/TVCFusionSignals\n"
-            f"  → 1 pick/day + 2 delayed trade signals\n\n"
-            f"🔑 PRO ($29/mo): full instant signals + Smart Money data\n"
-            f"  → @TVCAlertsBot on Telegram\n\n"
-            f"See you next week 🫡\n\n"
-            f"#crypto #trading #smartmoney #algotrading"
-        ),
-        "graphic": (
-            "📸 GRAPHIC: Terminal bird's-eye view (multiple panels visible)\n"
-            "  - Or: side-by-side Telegram PRO vs FREE channel screenshots\n"
-            "  - Format: 1200x675px"
-        ),
-    })
-
+    for num, pl, en, g in raw:
+        thread += _pair(num, pl, en, g)
     return thread
 
 
-def generate_linkedin_newsletter(trades, stats, cum):
-    """Generate a long-form LinkedIn Newsletter draft."""
-    total = len(trades)
-    wins = [t for t in trades if (t.get("pnl_usd") or 0) > 0]
-    week_pnl = sum(t.get("pnl_usd", 0) for t in trades)
-    week_wr = round(len(wins) / total * 100, 1) if total else 0
-
-    best = max(trades, key=lambda t: t.get("pnl_pct", 0)) if trades else None
-    worst = min(trades, key=lambda t: t.get("pnl_pct", 0)) if trades else None
-
-    now = _now()
-    week_start = (now - timedelta(days=7)).strftime("%b %d")
-    week_end = now.strftime("%b %d, %Y")
-
-    # Trade log
-    trade_log = ""
+def _trade_log(trades, lang):
+    out = []
     for t in trades:
-        emoji = "✅" if (t.get("pnl_usd", 0)) > 0 else "❌"
-        trade_log += (
-            f"  {emoji} ${t['ticker']} {t.get('direction','long').upper()} — "
-            f"{t.get('pnl_pct',0):+.1f}% (${t.get('pnl_usd',0):+.0f}) — "
-            f"Score {t.get('fusion_score','?')}, {t.get('hit_or_miss','closed')}\n"
-        )
+        emoji = "✅" if (t.get("pnl_usd", 0) or 0) > 0 else "❌"
+        ex_pl, ex_en = _exit_pl_en(t)
+        pct = _pct_pl(t.get("pnl_pct")) if lang == "pl" else _pct_en(t.get("pnl_pct"))
+        out.append(f"  {emoji} {t['ticker']} {t.get('direction', 'long').upper()}: {pct} "
+                   f"(${t.get('pnl_usd', 0) or 0:+.0f}), score {t.get('fusion_score', '?')}, "
+                   f"{ex_pl if lang == 'pl' else ex_en}")
+    return "\n".join(out)
 
-    text = f"""TVC Fusion Weekly Report: {week_start} — {week_end}
 
-Another week of fully automated, transparent crypto trading. Here's what our algorithm did.
+def generate_linkedin_newsletter(trades, stats, cum):
+    """Newsletter LinkedIn: pełna wersja PL, potem pełna wersja EN, w jednym tekście."""
+    total, wins, week_pnl, week_wr, best, worst = _week_numbers(trades)
+    now = _now()
+    ws = (now - timedelta(days=7))
+    pl_range = f"{ws.strftime('%d.%m')}–{now.strftime('%d.%m.%Y')}"
+    en_range = f"{ws.strftime('%b %d')} — {now.strftime('%b %d, %Y')}"
 
-THE NUMBERS
-
-Trades closed: {total}
-Wins: {len(wins)} | Losses: {total - len(wins)}
-Win rate: {week_wr}%
-Week PnL: ${week_pnl:+.0f}
-
-TRADE LOG
-
-{trade_log}
-"""
-
+    pl = (f"🇵🇱 TVC Fusion: tygodniowy raport paper tradingu, {pl_range}\n\n"
+          f"Kolejny tydzień w pełni automatycznego, jawnego paper tradingu (symulacja, wirtualne $10 000). "
+          f"Oto co zrobił algorytm i czego to uczy.\n\n"
+          f"LICZBY\n\nZamknięte transakcje: {total}\nZyskowne: {len(wins)} | Stratne: {total - len(wins)}\n"
+          f"Trafność: {_num_pl(week_wr)}%\nWynik tygodnia: ${week_pnl:+.0f}\n\n"
+          f"DZIENNIK TRANSAKCJI\n\n{_trade_log(trades, 'pl')}\n\n")
+    en = (f"🇬🇧 TVC Fusion Weekly Paper-Trading Report: {en_range}\n\n"
+          f"Another week of fully automated, transparent paper trading (simulation, $10,000 virtual capital). "
+          f"Here's what the algorithm did and what it teaches.\n\n"
+          f"THE NUMBERS\n\nTrades closed: {total}\nWins: {len(wins)} | Losses: {total - len(wins)}\n"
+          f"Win rate: {week_wr}%\nWeek result: ${week_pnl:+.0f}\n\n"
+          f"TRADE LOG\n\n{_trade_log(trades, 'en')}\n\n")
     if best:
-        text += f"""BEST TRADE: ${best['ticker']}
-
-Direction: {best.get('direction','long').upper()}
-Entry: {_fmt_px(best.get('entry_price'))} → Exit: {_fmt_px(best.get('exit_price'))}
-PnL: {best.get('pnl_pct',0):+.1f}%
-Fusion Score at entry: {best.get('fusion_score','?')}/100
-What worked: Smart Money layers aligned (≥2/3 confirmed), regime was {best.get('regime','favorable')}, and the Fibonacci pullback filter gave a clean entry.
-
-"""
-
-    if worst and worst.get("pnl_usd", 0) < 0:
-        text += f"""WORST TRADE: ${worst['ticker']}
-
-Direction: {worst.get('direction','long').upper()}
-PnL: {worst.get('pnl_pct',0):+.1f}%
-What happened: {worst.get('hit_or_miss','stopped out')}. The system caught the loss early via stop-loss. Risk per trade is capped at the tiered sizing model — no single loss can blow the account.
-
-"""
-
-    text += f"""SYSTEM INSIGHTS
-
-The algorithm runs 7 Python scripts every 5 minutes via GitHub Actions:
-→ Fusion scoring (on-chain + technical + derivatives + sentiment + momentum)
-→ Smart Money verification (Hyperliquid whales + Binance top traders + taker flow)
-→ Regime-aware entry filters (Fibonacci pullback thresholds adjust per market state)
-→ Automated risk management (SL/TP1/TP2 from market structure, max 5-day hold)
-
-CUMULATIVE PERFORMANCE (since Sep 2)
-
-Total trades: {cum['total']}
-Win rate: {cum['wr']}%
-Total PnL: ${cum['pnl']:+.0f}
-Capital: $10,000 (paper)
-
-GET THE SIGNALS
-
-Free tier: t.me/TVCFusionSignals — 1 crypto pick/day + 2 delayed trade signals
-PRO tier ($29/mo): Full instant signals + Smart Money data — @TVCAlertsBot on Telegram
-Terminal ($79/mo): Full dashboard at tradingventureclub.com/terminal/
-
-Every trade is real, every result is public. No cherry-picking.
-
-#CryptoTrading #AlgoTrading #SmartMoney #TradingBot #WeeklyReport #BuildInPublic"""
+        ex_pl, ex_en = _exit_pl_en(best)
+        pl += (f"NAJLEPSZA TRANSAKCJA: {best['ticker']} {best.get('direction', 'long').upper()}\n"
+               f"Wynik: {_pct_pl(best.get('pnl_pct'))}, wyjście: {ex_pl}, Fusion Score {best.get('fusion_score', '?')}/100.\n"
+               f"Cel i stop były ustalone przed wejściem. Dobry wynik to efekt planu, nie zgadywania szczytu.\n\n")
+        en += (f"BEST TRADE: {best['ticker']} {best.get('direction', 'long').upper()}\n"
+               f"Result: {_pct_en(best.get('pnl_pct'))}, exit: {ex_en}, Fusion Score {best.get('fusion_score', '?')}/100.\n"
+               f"Target and stop were set before entry. A good result comes from the plan, not from guessing the top.\n\n")
+    if worst and (worst.get("pnl_usd") or 0) < 0:
+        ex_pl, ex_en = _exit_pl_en(worst)
+        pl += (f"NAJSŁABSZA TRANSAKCJA: {worst['ticker']} {worst.get('direction', 'long').upper()}\n"
+               f"Wynik: {_pct_pl(worst.get('pnl_pct'))}, wyjście: {ex_pl}.\n"
+               f"Strata była ograniczona stopem ustalonym przed wejściem. Żadna pojedyncza transakcja nie może zniszczyć konta.\n\n")
+        en += (f"WEAKEST TRADE: {worst['ticker']} {worst.get('direction', 'long').upper()}\n"
+               f"Result: {_pct_en(worst.get('pnl_pct'))}, exit: {ex_en}.\n"
+               f"The loss was capped by a stop set before entry. No single trade can blow up the account.\n\n")
+    pl += (f"JAK TO DZIAŁA\n\nCo 5 minut w GitHub Actions działa 7 skryptów Pythona:\n"
+           f"→ Fusion Score (on-chain + technika + derywaty + sentyment + momentum)\n"
+           f"→ Weryfikacja Smart Money (wieloryby Hyperliquid, top traderzy Binance, przepływ takerów)\n"
+           f"→ Filtry wejścia zależne od reżimu rynku\n"
+           f"→ Automatyczne zarządzanie ryzykiem (SL/TP1/TP2, maks. 5 dni w pozycji)\n\n"
+           f"OD POCZĄTKU (od 2 września)\n\nTransakcje: {cum['total']}\nTrafność: {_num_pl(cum['wr'])}%\n"
+           f"Wynik łącznie: ${cum['pnl']:+.0f}\nKapitał: $10 000 (wirtualny)\n\n"
+           f"O TYM DZIENNIKU\n\nTo edukacyjna symulacja paper tradingu, a nie sygnały ani porada inwestycyjna.\n"
+           f"Pełny dziennik razem ze stratami: tradingventureclub.com/results.html\n")
+    en += (f"HOW IT WORKS\n\nThe algorithm runs 7 Python scripts every 5 minutes via GitHub Actions:\n"
+           f"→ Fusion scoring (on-chain + technical + derivatives + sentiment + momentum)\n"
+           f"→ Smart Money verification (Hyperliquid whales + Binance top traders + taker flow)\n"
+           f"→ Regime-aware entry filters\n"
+           f"→ Automated risk management (SL/TP1/TP2, max 5-day hold)\n\n"
+           f"CUMULATIVE (since Sep 2)\n\nTotal trades: {cum['total']}\nWin rate: {cum['wr']}%\n"
+           f"Total result: ${cum['pnl']:+.0f}\nCapital: $10,000 (virtual)\n\n"
+           f"ABOUT THIS LOG\n\nThis is an educational paper-trading simulation, not trade signals and not investment advice.\n"
+           f"Full trade journal, including losses: tradingventureclub.com/results.html\n\n"
+           f"#CryptoTrading #AlgoTrading #PaperTrading #TradingEducation #BuildInPublic")
+    text = pl + "\n———\n\n" + en
 
     graphic = (
         "📸 GRAPHICS FOR LINKEDIN NEWSLETTER:\n"
-        "  1. Cover image: Terminal equity curve with week highlighted + text overlay \"Weekly Report\"\n"
+        "  1. Cover: terminal equity curve with the week highlighted + \"Weekly Report / Raport tygodniowy\"\n"
         "     Format: 1200x627px (newsletter header)\n"
-        "  2. Trade log table: Screenshot of terminal Transaction History panel\n"
-        "  3. Best trade chart: Terminal showing entry/exit on price chart\n"
-        "  4. System architecture diagram (optional): GitHub Actions → Python → Gist → Terminal flow\n"
-        "  5. Cumulative equity curve: Full history from Sep 2\n"
-        "  URL: tradingventureclub.com/terminal/"
+        "  2. Trade log: Transaction History panel (no entry prices needed)\n"
+        "  3. System diagram (optional): GitHub Actions → Python → Gist → Terminal\n"
+        "  4. Cumulative equity curve from Sep 2\n"
+        "  URL: tradingventureclub.com/results.html"
     )
-
-    return {"text": text, "graphic": graphic}
+    return {"text": text, "graphic": graphic, "chars": len(text), "lang": "pl+en"}
 
 
 def generate_youtube_script(trades, stats, cum):
-    """Generate a 60-second YouTube Shorts script."""
-    total = len(trades)
-    wins = [t for t in trades if (t.get("pnl_usd") or 0) > 0]
-    week_pnl = sum(t.get("pnl_usd", 0) for t in trades)
-    week_wr = round(len(wins) / total * 100, 1) if total else 0
-    best = max(trades, key=lambda t: t.get("pnl_pct", 0)) if trades else None
+    """Skrypt YouTube Shorts: wersja PL i wersja EN (dwa nagrania po ~60 s)."""
+    total, wins, week_pnl, week_wr, best, worst = _week_numbers(trades)
+    b_pl = (f"Najlepsza transakcja: {best['ticker']}, {_pct_pl(best.get('pnl_pct'))} w symulacji." if best
+            else "Szczegóły w dzienniku.")
+    b_en = (f"Best trade: {best['ticker']}, {_pct_en(best.get('pnl_pct'))} simulated." if best
+            else "Details in the journal.")
+    script = f"""YOUTUBE SHORTS — Weekly Recap (2 × ~60 s: PL, potem EN)
 
-    script = f"""YOUTUBE SHORTS SCRIPT — Weekly Recap (60 seconds)
+=== 🇵🇱 WERSJA POLSKA ===
+[HOOK 0–5 s] (krzywa kapitału w terminalu)
+"Mój bot do paper tradingu: ${week_pnl:+.0f} w tym tygodniu na wirtualnych 10 tysiącach dolarów. Zobacz, jak działa."
+[LICZBY 5–15 s]
+"{total} transakcji, {_num_pl(week_wr)}% trafionych. Każda zapisana publicznie, także straty."
+[PRZYKŁAD 15–30 s]
+"{b_pl} Cel i stop były ustalone przed wejściem."
+[JAK TO DZIAŁA 30–45 s] (GitHub Actions, przewijany kod)
+"Siedem skryptów w Pythonie co pięć minut analizuje on-chain, pozycje wielorybów i derywaty."
+"Gdy Fusion Score przekroczy 62, a Smart Money to potwierdzi, bot otwiera transakcję paper."
+[ZAKOŃCZENIE 45–60 s] (strona wyników)
+"To symulacja do nauki, a nie sygnały. Pełny dziennik: link w bio."
 
-[HOOK — 0-5s]
-(Screen recording of terminal equity curve)
-"My trading bot made ${week_pnl:+.0f} this week — fully automated. Here's how."
-
-[STATS — 5-15s]
-(Show terminal dashboard, zoom into stats)
-"{total} trades this week. {week_wr}% win rate. Every single one logged publicly."
-
-[BEST TRADE — 15-30s]
-(Show {best['ticker'] if best else 'BTC'} chart with entry/exit points)
-"Best trade: {'$' + best['ticker'] + ' — ' + str(round(best.get('pnl_pct', 0), 1)) + '% profit' if best else 'check the terminal'}."
-"The algorithm detected Smart Money flow aligning with technical structure."
-"2 out of 3 whale layers confirmed — that's our entry trigger."
-
-[HOW IT WORKS — 30-45s]
-(Show GitHub Actions running, code scrolling)
-"7 Python scripts run every 5 minutes in GitHub Actions."
-"They scan on-chain data, whale positions, and derivatives signals."
-"If the Fusion Score hits 60 and Smart Money confirms — the bot enters automatically."
-
-[CTA — 45-60s]
-(Show Telegram channels)
-"Free signals — link in bio. Or see everything live in the TVC Fusion Terminal."
-"Every trade. Every loss. Full transparency."
+=== 🇬🇧 ENGLISH VERSION ===
+[HOOK 0–5s] (terminal equity curve)
+"My paper-trading bot: ${week_pnl:+.0f} this week on $10K virtual capital. Here's how it works."
+[STATS 5–15s]
+"{total} trades this week. {week_wr}% win rate. Every one logged publicly, losses included."
+[EXAMPLE 15–30s]
+"{b_en} Target and stop were set before entry."
+[HOW IT WORKS 30–45s] (GitHub Actions, code scrolling)
+"Seven Python scripts run every five minutes, scanning on-chain data, whale positions and derivatives."
+"If the Fusion Score hits 62 and Smart Money confirms, the bot opens a paper trade."
+[OUTRO 45–60s] (results page)
+"It's a simulation for learning, not signals. Full journal: link in bio."
 """
-
     graphic = (
         "📸 VISUALS FOR YOUTUBE SHORT:\n"
         "  - Screen recording of TVC Terminal (scrolling through panels)\n"
         "  - Equity curve zoom-in with week highlighted\n"
-        f"  - {'$' + best['ticker'] + ' chart with entry/exit annotations' if best else 'BTC chart'}\n"
+        f"  - {best['ticker'] + ' chart' if best else 'BTC chart'} (no entry price labels)\n"
         "  - GitHub Actions workflow runs page (quick flash)\n"
-        "  - Telegram channel screenshots (PRO + FREE)\n"
-        "  - Record with OBS or similar (terminal in browser)\n"
-        "  Format: 1080x1920 (9:16 vertical)\n"
-        "  Duration: 55-60 seconds\n"
-        "  Background music: lo-fi or minimal electronic\n"
+        "  - Results page screenshot (tradingventureclub.com/results.html)\n"
+        "  Format: 1080x1920 (9:16 vertical), 55–60 s per language version\n"
         "  URL: tradingventureclub.com/terminal/"
     )
+    return {"script": script, "graphic": graphic, "lang": "pl+en"}
 
-    return {"script": script, "graphic": graphic}
+
+def _tg_split(text, limit=TG_MAX_LEN):
+    """Dzieli tekst na części ≤ limit po akapitach (tagi HTML nie przechodzą przez nową linię)."""
+    if len(text) <= limit:
+        return [text]
+    parts, cur = [], ""
+    for para in text.split("\n\n"):
+        while len(para) > limit:
+            parts.append(para[:limit]); para = para[limit:]
+        if cur and len(cur) + 2 + len(para) > limit:
+            parts.append(cur); cur = para
+        else:
+            cur = f"{cur}\n\n{para}" if cur else para
+    if cur:
+        parts.append(cur)
+    return parts
 
 
 # --- main ------------------------------------------------------------------
 
 def run():
-    log(f"Weekly Recap v1.0 — {_now().isoformat()}")
+    log(f"Weekly Recap v1.1 (PL+EN) — {_now().isoformat()}")
 
     trades = get_week_trades()
     if not trades:
@@ -480,17 +479,21 @@ def run():
     RECAP_PATH.write_text(json.dumps(recap, indent=2, default=str, ensure_ascii=False), encoding="utf-8")
     log(f"✓ Saved weekly_recap.json")
 
-    # Telegram digest
+    # Telegram digest (prywatny czat) — PL + EN, z pilnowaniem limitu 4096 znaków
+    sm = recap["summary"]
+    singles = sum(1 for t in x_thread if t.get("lang") == "pl+en")
     msg = (
-        f"📊 <b>Weekly Recap — {week_start} to {week_end}</b>\n\n"
-        f"Trades: {len(trades)} | WR: {recap['summary']['week_wr']}% | PnL: ${recap['summary']['week_pnl']:+.0f}\n\n"
-        f"<b>Generated content:</b>\n"
-        f"🐦 X thread: {len(x_thread)} tweets\n"
-        f"📝 LinkedIn Newsletter: ~{len(li_newsletter['text'])} chars\n"
-        f"🎬 YouTube Shorts script: ready\n\n"
-        f"Pliki w <code>weekly_recap.json</code> — skopiuj i opublikuj!"
+        f"📊 <b>Weekly Recap {week_start} → {week_end}</b>\n\n"
+        f"🇵🇱 Transakcje: {len(trades)} | trafione: {_num_pl(sm['week_wr'])}% | wynik: ${sm['week_pnl']:+.0f} (paper)\n"
+        f"Treści (PL + EN): wątek X: {len(x_thread)} postów (PL+EN w jednym poście: {singles}, "
+        f"pozostałe w parach PL→EN), newsletter LinkedIn ~{li_newsletter['chars']} znaków, skrypt Shorts PL i EN.\n"
+        f"Wszystko w <code>weekly_recap.json</code>, do skopiowania.\n\n"
+        f"🇬🇧 Trades: {len(trades)} | WR: {sm['week_wr']}% | result: ${sm['week_pnl']:+.0f} (paper)\n"
+        f"Content (PL + EN): X thread {len(x_thread)} posts, LinkedIn newsletter ~{li_newsletter['chars']} chars, "
+        f"Shorts script in PL and EN. All in <code>weekly_recap.json</code>."
     )
-    _tg_send(msg)
+    for part in _tg_split(msg):
+        _tg_send(part)
     log("Done!")
 
 

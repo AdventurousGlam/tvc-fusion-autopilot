@@ -481,12 +481,18 @@ def stats(alerts):
 
 
 # ─── Telegram (dual-channel v2) ────────────────────────────────────────────
-TG_PRO_CHANNEL = "-1004436927192"   # TVC Fusion PRO
-TG_FREE_CHANNEL = "-1004341989751"  # TVC Fusion Signals (free)
+TG_PRO_CHANNEL = "-1004436927192"   # dawny kanał PRO — v4.4: nic tu nie wysyłamy
+TG_FREE_CHANNEL = "-1004341989751"  # kanał FREE — v4.4: bez picków/alertów
+# v4.4 (tryb edukacyjny): kanały publiczne nie dostają picków ani alertów, tylko osobisty czat.
+# Powrót do starego zachowania: TVC_EDUCATION_ONLY=0 (zmienna w workflow).
+EDUCATION_ONLY = os.environ.get("TVC_EDUCATION_ONLY", "1") != "0"
 
 def _tg_send(text, chat_id):
     token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
     if not token or not chat_id:
+        return
+    if EDUCATION_ONLY and chat_id in (TG_PRO_CHANNEL, TG_FREE_CHANNEL):
+        log(f"telegram({chat_id[-4:]}) education-only: pominięto kanał publiczny")
         return
     # 2026-10-05: kanały PRO/FREE przez tg_dedupe — bez podwójnych alertów po restarcie cyklu
     guarded = chat_id in (TG_PRO_CHANNEL, TG_FREE_CHANNEL)
@@ -523,7 +529,7 @@ def send_telegram(new_alerts, st):
     pro_text = "\n".join(lines)
     # FREE kanał: wyłączony — FREE tier dostaje tylko Crypto Picks (auto_picks.py)
     _tg_send(pro_text, chat)           # osobisty
-    _tg_send(pro_text, TG_PRO_CHANNEL) # PRO kanał
+    _tg_send(pro_text, TG_PRO_CHANNEL) # kanał PRO — tylko gdy TVC_EDUCATION_ONLY=0
 
 
 # ─── Main ───────────────────────────────────────────────────────────────────

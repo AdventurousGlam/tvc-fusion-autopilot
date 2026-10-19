@@ -71,7 +71,9 @@ def _save(d: dict) -> None:
 
 def _prune(d: dict, now: float) -> dict:
     cutoff = now - TTL_HOURS * 3600
-    return {k: v for k, v in d.items() if isinstance(v, (int, float)) and v >= cutoff}
+    # v4.4: wpisy content_engine.py (ISO str, ten sam plik) zostawiamy — content_engine
+    # przycina je sam po 3 dniach. Wcześniej każde should_send() je kasowało.
+    return {k: v for k, v in d.items() if not isinstance(v, (int, float)) or v >= cutoff}
 
 
 def should_send(chat_id: str, text: str, key: str | None = None) -> bool:

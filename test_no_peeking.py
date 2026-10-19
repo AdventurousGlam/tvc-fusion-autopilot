@@ -73,6 +73,9 @@ BINANCE = {
     "LINK": "LINKUSDT", "DOT": "DOTUSDT", "LTC": "LTCUSDT", "BCH": "BCHUSDT",
     "TRX": "TRXUSDT", "NEAR": "NEARUSDT", "APT": "APTUSDT",
 }
+# v3 (14.10.2026): etykiety wyjść po poziomie — doszły stopy po TP1 i trailing.
+EXIT_LABELS = ("hit_sl", "hit_tp1", "hit_tp2", "hit_breakeven", "hit_trailing_sl")
+SL_LABELS = ("hit_sl", "hit_breakeven", "hit_trailing_sl")
 
 failures: list[str] = []
 # v1.2 (14.10.2026): pozycje z flagą excluded=1 w bazie są znane, opisane
@@ -164,9 +167,68 @@ def klines(ticker, start_ms, end_ms, interval="1m"):
     return out
 
 
+def unit_scan_candles():
+    """[0] v3 — offline, bez bazy: logika świec z paper_bot._scan_candles.
+
+    Sprawdza dokładnie te reguły, które decydują o uczciwości wyników:
+    SL knotem, SL przed TP na tej samej świecy, pomijanie świec sprzed sl_since,
+    trailing obowiązujący dopiero od NASTĘPNEJ świecy, wypełnienie po stopie/luce.
+    """
+    print("[0] Logika świec bota (_scan_candles) — testy jednostkowe")
+    try:
+        import importlib, types
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        if "tvc_params" not in sys.modules:
+            try:
+                importlib.import_module("tvc_params")
+            except ImportError:
+                stub = types.ModuleType("tvc_params")
+                # tvc_params.py nie leży w repo (sekret TVC_PARAMS) — do testu
+                # logiki świec wystarczą wartości domyślne z kodu.
+                stub.get = lambda k, d=None: d
+                stub.ranges = lambda k, d=None: d
+                stub.mapping = lambda k, d=None: d
+                stub.require_loaded = lambda *a, **kw: None
+                sys.modules["tvc_params"] = stub
+        pb = importlib.import_module("paper_bot")
+    except Exception as e:
+        warn(f"nie da się zaimportować paper_bot ({e}) — [0] pominięte")
+        return
+    S = pb._scan_candles
+    M = 5 * 60_000
+    def chk(name, got, exp):
+        if got != exp:
+            fail(f"[0] {name}: oczekiwano {exp}, jest {got}")
+    # LONG wejście 100, SL 98 (R=2%), TP1 103, TP2 106
+    r = S("long", [[0, 100, 101, 97.5, 100.5, 0]], 0, 100, 98, 98, 103, 106, False)
+    chk("SL knotem (close nad SL)", (r["label"], r["exit_price"]), ("hit_sl", 98))
+    r = S("long", [[0, 100, 104, 97, 101, 0]], 0, 100, 98, 98, 103, 106, False)
+    chk("SL przed TP na tej samej świecy", r["label"], "hit_sl")
+    r = S("long", [[0, 97, 99, 96, 98, 0]], 0, 100, 98, 98, 103, 106, False)
+    chk("luka pod SL → wypełnienie po open", r["exit_price"], 97)
+    r = S("long", [[0, 100, 101, 90, 100, 0], [M, 100, 103.5, 99, 103, 0]], M, 100, 98, 98, 103, 106, False)
+    chk("świeca sprzed sl_since pominięta", r["label"], "hit_tp1")
+    r = S("long", [[0, 100, 103.5, 99, 103, 0]], 0, 100, 98, 98, 103, 106, True)
+    chk("TP1 nie powtarza się po częściowym", r["label"], None)
+    # trailing: szczyt 104.5 (≥2R) → SL 102.5 obowiązuje od NASTĘPNEJ świecy
+    r = S("long", [[0, 100, 104.5, 102.0, 104, 0]], 0, 100, 98, 100.3, None, 110, True)
+    chk("trailing nie trafia w świecę, która go ustawiła", r["label"], None)
+    chk("trailing SL = szczyt − 1R", round(r["trail_sl"] or 0, 4), round(104.5 * 0.98, 4))
+    r = S("long", [[0, 100, 104.5, 102.6, 104, 0], [M, 104, 104.2, 101, 101.5, 0]], 0, 100, 98, 100.3, None, 110, True)
+    chk("trailing stop trafiony na następnej świecy", (r["label"], round(r["exit_price"], 4)),
+        ("hit_trailing_sl", round(104.5 * 0.98, 4)))
+    # SHORT lustrzanie
+    r = S("short", [[0, 100, 102.5, 99, 100, 0]], 0, 100, 102, 102, 97, 94, False)
+    chk("SHORT SL knotem", (r["label"], r["exit_price"]), ("hit_sl", 102))
+    r = S("short", [[0, 100, 103, 96, 99, 0]], 0, 100, 102, 102, 97, 94, False)
+    chk("SHORT SL przed TP", r["label"], "hit_sl")
+    print("  gotowe\n")
+
+
 def main():
+    unit_scan_candles()
     if not DB_PATH.exists():
-        print(f"Brak bazy: {DB_PATH}")
+        print(f"Brak bazy: {DB_PATH} — sprawdzenia [1]–[5] pominięte")
         return 1
 
     conn = sqlite3.connect(DB_PATH)
@@ -227,7 +289,7 @@ def main():
             px = r["exit_price"]
             if not opened or not closed or not px or closed <= opened:
                 continue
-            if r["hit_or_miss"] not in ("hit_sl", "hit_tp1", "hit_tp2"):
+            if r["hit_or_miss"] not in EXIT_LABELS:
                 continue
             ks = klines(r["ticker"], int(opened.timestamp() * 1000),
                         int(closed.timestamp() * 1000) + 60_000, interval="1m")
@@ -258,7 +320,7 @@ def main():
         # ── 4. Poziom wyjścia osiągalny dopiero PO wejściu ────────────────
         print("[4] SL/TP nie trafiony świecą sprzed wejścia (powrót sl_rescan_bug)")
         for r in rows:
-            if r["hit_or_miss"] not in ("hit_sl", "hit_tp1", "hit_tp2"):
+            if r["hit_or_miss"] not in EXIT_LABELS:
                 continue
             opened = parse_ts(r["opened_at"])
             closed = parse_ts(r["exit_date"]) or parse_ts(r["closed_at"])
@@ -273,7 +335,7 @@ def main():
             lo = min(float(k[3]) for k in before)
             hi = max(float(k[2]) for k in before)
             long_ = (r["direction"] or "long").lower() == "long"
-            sl_hit = r["hit_or_miss"] == "hit_sl"
+            sl_hit = r["hit_or_miss"] in SL_LABELS
             # Poziom osiągalny PRZED wejściem to podejrzenie, nie dowód — stąd ostrzeżenie.
             reachable = (lo <= px) if (long_ == sl_hit) else (hi >= px)
             # Ale samo "był w zasięgu" nic nie znaczy przy poziomie tuż obok ceny
@@ -311,7 +373,7 @@ def main():
             px = r["exit_price"]
             if not opened or not closed or not px or closed <= opened:
                 continue
-            if r["hit_or_miss"] not in ("hit_sl", "hit_tp1", "hit_tp2"):
+            if r["hit_or_miss"] not in EXIT_LABELS:
                 continue
             # Okno do +10 min po zapisanym wyjściu, nie +1 min. Powód: bot sprawdza
             # świece 5-minutowe i zapisuje czas wykrycia, więc dotknięcie poziomu

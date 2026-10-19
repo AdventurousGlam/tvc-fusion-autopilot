@@ -34,6 +34,10 @@ jobs:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       OPENMARKET_API_KEY: ${{ secrets.OPENMARKET_API_KEY }}
+      # v4.4 — tryb edukacyjny: żadnych sygnałów/picków/alertów na kanałach publicznych
+      # (paper_bot, auto_picks, pump_radar). Kanał FREE dostaje tylko omówienie po
+      # zamknięciu transakcji. "0" = stare zachowanie (nie zalecane).
+      TVC_EDUCATION_ONLY: "1"
     steps:
       - name: Checkout repo (standard path)
         uses: actions/checkout@v7

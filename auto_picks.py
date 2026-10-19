@@ -685,12 +685,18 @@ def generate(force=False, telegram=False):
 
 
 # ─── Telegram (dual-channel) ───────────────────────────────────────────────
-TG_PRO_CHANNEL = "-1004436927192"   # TVC Fusion PRO
-TG_FREE_CHANNEL = "-1004341989751"  # TVC Fusion Signals (free)
+TG_PRO_CHANNEL = "-1004436927192"   # dawny kanał PRO — v4.4: nic tu nie wysyłamy
+TG_FREE_CHANNEL = "-1004341989751"  # kanał FREE — v4.4: bez picków/alertów
+# v4.4 (tryb edukacyjny): kanały publiczne nie dostają picków ani alertów, tylko osobisty czat.
+# Powrót do starego zachowania: TVC_EDUCATION_ONLY=0 (zmienna w workflow).
+EDUCATION_ONLY = os.environ.get("TVC_EDUCATION_ONLY", "1") != "0"
 
 def _tg_send(text, chat_id):
     token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
     if not token or not chat_id:
+        return
+    if EDUCATION_ONLY and chat_id in (TG_PRO_CHANNEL, TG_FREE_CHANNEL):
+        print(f"[picks] telegram({chat_id[-4:]}) education-only: pominięto kanał publiczny")
         return
     import urllib.parse as up
     # 2026-10-05: kanały PRO/FREE przez tg_dedupe — picks z tą samą datą nie wychodzą 2x
@@ -769,19 +775,12 @@ def _send_telegram(out):
         if top.get("risk_flag"):
             free_lines.append(f"⚠️ <i>{top['risk_flag']}</i>")
         free_lines.append("")
-        if extra_picks > 0:
-            free_lines.append(f"📊 <i>{extra_picks} more picks + S/R levels + risk flags in PRO</i>")
-        else:
-            free_lines.append(f"📊 <i>Support/resistance levels + risk flags in PRO</i>")
-        free_lines.append(f"🔓 <b>Get all picks → TVC Fusion PRO</b>")
-        free_lines.append(f"<i>$29/mo · Cancel anytime · Full access</i>")
-        free_lines.append("")
         free_lines.append("⚠️ <i>Screener pick ≠ entry signal. Always wait for confirmation (pullback, volume, key level). Not financial advice. DYOR.</i>")
         free_text = "\n".join(free_lines)
     else:
         free_text = None
     _tg_send(pro_text, chat)              # osobisty
-    _tg_send(pro_text, TG_PRO_CHANNEL)    # PRO kanał
+    _tg_send(pro_text, TG_PRO_CHANNEL)    # kanał PRO — tylko gdy TVC_EDUCATION_ONLY=0
     if free_text:
         _tg_send(free_text, TG_FREE_CHANNEL)  # FREE kanał — 1 pick
 
