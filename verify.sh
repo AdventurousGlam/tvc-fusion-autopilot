@@ -259,6 +259,48 @@ PY
   fi
 fi
 
+# ── Rejestr wykluczeń vs baza ────────────────────────────────────────────────
+# Rejestr i kod rozjechały się dwa razy: 18.10 poprawiliśmy dane w bazie, a kod
+# je nadpisywał przy każdym starcie; 19.10 rejestr miał już n=50 w nagłówku, ale
+# metryki pod spodem dalej pochodziły z 47 pozycji. Oba błędy były niewidoczne,
+# bo nikt nie porównywał tych dwóch źródeł. Od teraz porównuje to ten test.
+if [ -f REJESTR_WYKLUCZEN.md ] && [ -f paper_trades.db ]; then
+  step "Rejestr wykluczeń — zgodność z bazą"
+  python3 - <<'PY'
+import re, sqlite3, sys
+md = open("REJESTR_WYKLUCZEN.md", encoding="utf-8").read()
+c = sqlite3.connect("paper_trades.db")
+q = lambda s: c.execute(s).fetchone()[0]
+baza_n = q("SELECT COUNT(*) FROM positions WHERE status='closed' "
+           "AND COALESCE(excluded,0)=0 AND opened_at >= '2026-08-28T00:00:00'")
+baza_x = q("SELECT COUNT(*) FROM positions WHERE COALESCE(excluded,0)=1")
+bad = 0
+m = re.search(r"\*\*(\d+) pozycji · (\d+) wygranych / (\d+) stratnych", md)
+if not m:
+    print("   ❌ nie znalazłem nagłówka z liczbą pozycji"); bad = 1
+else:
+    rej_n, w, l = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if rej_n != baza_n:
+        print(f"   ❌ pozycji: rejestr {rej_n}, baza {baza_n}"); bad = 1
+    if w + l != rej_n:
+        print(f"   ❌ {w} wygranych + {l} stratnych != {rej_n}"); bad = 1
+m2 = re.search(r"\*\*Razem wykluczone: (\d+) pozycj", md)
+if not m2:
+    print("   ❌ nie znalazłem sumy wykluczonych"); bad = 1
+elif int(m2.group(1)) != baza_x:
+    print(f"   ❌ wykluczonych: rejestr {m2.group(1)}, baza {baza_x}"); bad = 1
+kier = re.findall(r"^\| (long|short) \| (\d+) \|", md, re.M)
+if len(kier) == 2:
+    suma = sum(int(n) for _, n in kier)
+    if suma != baza_n:
+        print(f"   ❌ podział na kierunki sumuje się do {suma}, a pozycji jest {baza_n}"); bad = 1
+if not bad:
+    print(f"   ✅ rejestr zgodny z bazą ({baza_n} pozycji, {baza_x} wykluczonych, kierunki się sumują)")
+sys.exit(bad)
+PY
+  [ $? -ne 0 ] && FAIL=1
+fi
+
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1;32m✅ WSZYSTKO PRZESZŁO\033[0m — dopiero teraz wolno powiedzieć "sprawdzone".\n'
