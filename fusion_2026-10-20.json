@@ -1,19 +1,19 @@
 {
   "date": "2026-10-20",
-  "version": "auto-1357",
+  "version": "auto-1402",
   "regime": "RANGING",
   "regime_details": {
-    "bull_pts": 0,
-    "bear_pts": 3,
+    "bull_pts": 1,
+    "bear_pts": 1,
     "bull_has_momentum": false,
     "bear_has_momentum": false,
     "signals": [
-      "EMA8<EMA21 + slope=-0.30% (bear cross)",
-      "2/3 red + lower highs (bear structure)"
+      "EMA8<EMA21 (bear)",
+      "2/3 green + higher lows (bull structure)"
     ],
     "version": "2.0"
   },
-  "regime_note": "Auto-generated 2026-10-20 13:57 UTC. BTC $81937 (-0.34% 24h), F&G 55 (Greed), BTC.D 59.57%. Regime v2.0: bull=0 bear=3 → RANGING. Weekday sizing ×1.0.",
+  "regime_note": "Auto-generated 2026-10-20 14:02 UTC. BTC $82334 (+0.46% 24h), F&G 55 (Greed), BTC.D 59.57%. Regime v2.0: bull=1 bear=1 → RANGING. Weekday sizing ×1.0.",
   "weights": {
     "onchain": 0.4,
     "ta": 0.4,
@@ -25,36 +25,36 @@
     {
       "rank": 1,
       "ticker": "SOL",
-      "direction": null,
-      "score": 55,
-      "action": "HOLD",
+      "direction": "long",
+      "score": 64,
+      "action": "BUY",
       "regime": "RANGING",
-      "size_pct": 0,
-      "entry_low": null,
-      "entry_high": null,
-      "sl": null,
-      "tp1": null,
-      "tp2": null,
+      "size_pct": 0.3,
+      "entry_low": 104.49,
+      "entry_high": 104.94,
+      "sl": 103.45,
+      "tp1": 106.25,
+      "tp2": 107.12,
       "sources": {
-        "onchain": 61,
-        "ta": 51,
-        "technical": 51,
+        "onchain": 65,
+        "ta": 58,
+        "technical": 58,
         "news": 50,
         "sentiment": 55,
-        "momentum": 52,
+        "momentum": 56,
         "onchain_debug": {
-          "momentum": 49.4,
-          "cvd": 82.4,
-          "cvd_ratio": 0.162,
+          "momentum": 52.0,
+          "cvd": 90,
+          "cvd_ratio": 0.2,
           "sm": 62.5,
-          "funding": 53.4,
-          "oi": 50,
+          "funding": 50.0,
+          "oi": 65,
           "liq": 50,
           "has_liq_data": null,
-          "final": 61.6
+          "final": 65.8
         }
       },
-      "momentum_score": 52,
+      "momentum_score": 56,
       "onchain_data_thin": false,
       "market_structure": {
         "1h": {
@@ -65,14 +65,97 @@
         },
         "15m": {
           "trend": "bullish",
-          "last_event": null,
-          "last_event_price": null,
-          "score": 60
+          "last_event": "BOS_UP",
+          "last_event_price": 105.85,
+          "score": 75
         }
       },
-      "levels": null,
-      "fib_position": 0.17781402936378468,
-      "entry_quality": null,
+      "levels": {
+        "rr": 1.22,
+        "atr_pct": 0.706,
+        "ema21_1h": 104.71,
+        "supports": [
+          {
+            "price": 105.58,
+            "touches": 8.5,
+            "labels": [
+              "swing1h_H",
+              "swing1h_L",
+              "Fib78.6",
+              "swingD_L"
+            ]
+          },
+          {
+            "price": 104.68,
+            "touches": 8.0,
+            "labels": [
+              "swing1h_H",
+              "swing1h_L",
+              "EMA21_1h",
+              "swingD_H"
+            ]
+          },
+          {
+            "price": 103.64,
+            "touches": 5.0,
+            "labels": [
+              "swing1h_L"
+            ]
+          },
+          {
+            "price": 102.81,
+            "touches": 3.0,
+            "labels": [
+              "swing1h_L"
+            ]
+          }
+        ],
+        "resistances": [
+          {
+            "price": 106.46,
+            "touches": 3.0,
+            "labels": [
+              "swing1h_H",
+              "swing1h_L"
+            ]
+          },
+          {
+            "price": 107.33,
+            "touches": 4.0,
+            "labels": [
+              "swing1h_L",
+              "swingD_H",
+              "swing1h_H"
+            ]
+          },
+          {
+            "price": 108.77,
+            "touches": 5.5,
+            "labels": [
+              "swing1h_H",
+              "high7d"
+            ]
+          },
+          {
+            "price": 109.64,
+            "touches": 3.0,
+            "labels": [
+              "MA50D",
+              "Fib61.8"
+            ]
+          }
+        ]
+      },
+      "fib_position": 0.21900489396411058,
+      "entry_quality": {
+        "verdict": "skip",
+        "flags": [
+          "extended",
+          "under_resistance",
+          "low_rr"
+        ],
+        "note": "R:R 1.2 · SL 1.2% pod swing1h_H+ · TP1 swing1h_H+ · ATR1h 0.71% · extended, under_resistance, low_rr"
+      },
       "layers": {
         "smart_money": {
           "long_usd": 3584414.10635,
@@ -84,53 +167,51 @@
           "verdict": "neutral"
         },
         "cvd": {
-          "read": "spot_led_up",
-          "ratio_4h": 0.162,
-          "px_4h": 0.64,
-          "oi_4h": 0.25,
-          "oi_24h": -0.88
+          "read": "confirmed_up",
+          "ratio_4h": 0.2,
+          "px_4h": 1.5,
+          "oi_4h": 2.75,
+          "oi_24h": 2.35
         },
-        "funding_h": 0.0005686,
+        "funding_h": 0.00125,
         "flush": {
-          "score": 15,
+          "score": 0,
           "level": "low",
-          "parts": {
-            "compression": 15
-          }
+          "parts": {}
         },
         "pump": {
-          "score": 20,
+          "score": 0,
           "level": "low",
-          "parts": {
-            "compression": 10,
-            "cvd_accum": 10
-          }
+          "parts": {}
         },
-        "agree": 0,
-        "confirms": [],
+        "agree": 2,
+        "confirms": [
+          "cvd",
+          "flush"
+        ],
         "veto": null,
-        "note": "SM neutral (+1.00, $4M) · CVD spot_led_up (+0.16, OI4h 0.25%) · Flush 15 low · Pump 20 low · fund +0.0006%/h"
+        "note": "SM neutral (+1.00, $4M) · CVD confirmed_up (+0.20, OI4h 2.75%) · Flush 0 low · Pump 0 low · fund +0.0013%/h · zgoda 2/3 [cvd,flush]"
       },
       "onchain_debug": {
-        "momentum": 49.4,
-        "cvd": 82.4,
-        "cvd_ratio": 0.162,
+        "momentum": 52.0,
+        "cvd": 90,
+        "cvd_ratio": 0.2,
         "sm": 62.5,
-        "funding": 53.4,
-        "oi": 50,
+        "funding": 50.0,
+        "oi": 65,
         "liq": 50,
         "has_liq_data": null,
-        "final": 61.6
+        "final": 65.8
       },
       "choch_override": false,
-      "risk_flag": "Auto-generated 13:56. TA 51/100 (daily 48 · 1h momo 52 · MS 1h:neutral · 15m:bullish). Current $104.79 (+0.33% 24h).",
-      "invalidation_note": "Not entered"
+      "risk_flag": "Auto-generated 14:02. TA 58/100 (daily 54 · 1h momo 56 · MS 1h:neutral · 15m:bullish/BOS_UP). Current $105.80 (+1.83% 24h).",
+      "invalidation_note": "SL @ $103.45 · R:R 1.2 · SL 1.2% pod swing1h_H+ · TP1 swing1h_H+ · ATR1h 0.71% · extended, under_resistance, low_rr"
     },
     {
       "rank": 2,
       "ticker": "APT",
       "direction": null,
-      "score": 55,
+      "score": 59,
       "action": "HOLD",
       "regime": "RANGING",
       "size_pct": 0,
@@ -140,14 +221,14 @@
       "tp1": null,
       "tp2": null,
       "sources": {
-        "onchain": 54,
-        "ta": 59,
-        "technical": 59,
+        "onchain": 55,
+        "ta": 68,
+        "technical": 68,
         "news": 50,
         "sentiment": 55,
-        "momentum": 61,
+        "momentum": 66,
         "onchain_debug": {
-          "momentum": 48.4,
+          "momentum": 52.6,
           "cvd": 59.3,
           "cvd_ratio": 0.047,
           "sm": 50.0,
@@ -155,27 +236,27 @@
           "oi": 65,
           "liq": 50,
           "has_liq_data": null,
-          "final": 54.3
+          "final": 55.1
         }
       },
-      "momentum_score": 61,
+      "momentum_score": 66,
       "onchain_data_thin": false,
       "market_structure": {
         "1h": {
           "trend": "bullish",
           "last_event": "BOS_UP",
-          "last_event_price": 0.7832,
+          "last_event_price": 0.795,
           "score": 75
         },
         "15m": {
           "trend": "bullish",
-          "last_event": null,
-          "last_event_price": null,
-          "score": 60
+          "last_event": "BOS_UP",
+          "last_event_price": 0.7952,
+          "score": 75
         }
       },
       "levels": null,
-      "fib_position": 0.32993445010924977,
+      "fib_position": 0.3790968681718866,
       "entry_quality": null,
       "layers": {
         "smart_money": {
@@ -190,9 +271,9 @@
         "cvd": {
           "read": "neutral",
           "ratio_4h": 0.047,
-          "px_4h": 1.73,
-          "oi_4h": 2.7,
-          "oi_24h": 1.98
+          "px_4h": 2.54,
+          "oi_4h": 4.57,
+          "oi_24h": 5.2
         },
         "funding_h": 0.00125,
         "flush": {
@@ -200,528 +281,6 @@
           "level": "low",
           "parts": {
             "compression": 15
-          }
-        },
-        "pump": {
-          "score": 10,
-          "level": "low",
-          "parts": {
-            "compression": 10
-          }
-        },
-        "agree": 0,
-        "confirms": [],
-        "veto": null,
-        "note": "SM neutral (+0.00, $0M) · CVD neutral (+0.05, OI4h 2.7%) · Flush 15 low · Pump 10 low · fund +0.0013%/h"
-      },
-      "onchain_debug": {
-        "momentum": 48.4,
-        "cvd": 59.3,
-        "cvd_ratio": 0.047,
-        "sm": 50.0,
-        "funding": 50.0,
-        "oi": 65,
-        "liq": 50,
-        "has_liq_data": null,
-        "final": 54.3
-      },
-      "choch_override": false,
-      "risk_flag": "Auto-generated 13:57. TA 59/100 (daily 46 · 1h momo 61 · MS 1h:bullish/BOS_UP · 15m:bullish). Current $0.78 (+1.55% 24h).",
-      "invalidation_note": "Not entered"
-    },
-    {
-      "rank": 3,
-      "ticker": "DOGE",
-      "direction": null,
-      "score": 52,
-      "action": "HOLD",
-      "regime": "RANGING",
-      "size_pct": 0,
-      "entry_low": null,
-      "entry_high": null,
-      "sl": null,
-      "tp1": null,
-      "tp2": null,
-      "sources": {
-        "onchain": 51,
-        "ta": 54,
-        "technical": 54,
-        "news": 50,
-        "sentiment": 55,
-        "momentum": 54,
-        "onchain_debug": {
-          "momentum": 47.8,
-          "cvd": 58.5,
-          "cvd_ratio": 0.042,
-          "sm": 50.0,
-          "funding": 50.0,
-          "oi": 50,
-          "liq": 50,
-          "has_liq_data": null,
-          "final": 51.7
-        }
-      },
-      "momentum_score": 54,
-      "onchain_data_thin": false,
-      "market_structure": {
-        "1h": {
-          "trend": "neutral",
-          "last_event": null,
-          "last_event_price": null,
-          "score": 50
-        },
-        "15m": {
-          "trend": "bullish",
-          "last_event": "BOS_UP",
-          "last_event_price": 0.07974,
-          "score": 75
-        }
-      },
-      "levels": null,
-      "fib_position": 0.12441314553990628,
-      "entry_quality": null,
-      "layers": {
-        "smart_money": {
-          "long_usd": 0.0,
-          "short_usd": 0.0,
-          "n_long": 0,
-          "n_short": 0,
-          "net": 0.0,
-          "total_usd": 0,
-          "verdict": "neutral"
-        },
-        "cvd": {
-          "read": "neutral",
-          "ratio_4h": 0.042,
-          "px_4h": 0.91,
-          "oi_4h": 0.85,
-          "oi_24h": 1.08
-        },
-        "funding_h": 0.00125,
-        "flush": {
-          "score": 15,
-          "level": "low",
-          "parts": {
-            "compression": 15
-          }
-        },
-        "pump": {
-          "score": 10,
-          "level": "low",
-          "parts": {
-            "compression": 10
-          }
-        },
-        "agree": 0,
-        "confirms": [],
-        "veto": null,
-        "note": "SM neutral (+0.00, $0M) · CVD neutral (+0.04, OI4h 0.85%) · Flush 15 low · Pump 10 low · fund +0.0013%/h"
-      },
-      "onchain_debug": {
-        "momentum": 47.8,
-        "cvd": 58.5,
-        "cvd_ratio": 0.042,
-        "sm": 50.0,
-        "funding": 50.0,
-        "oi": 50,
-        "liq": 50,
-        "has_liq_data": null,
-        "final": 51.7
-      },
-      "choch_override": false,
-      "risk_flag": "Auto-generated 13:56. TA 54/100 (daily 47 · 1h momo 54 · MS 1h:neutral · 15m:bullish/BOS_UP). Current $0.08 (+0.66% 24h).",
-      "invalidation_note": "Not entered"
-    },
-    {
-      "rank": 4,
-      "ticker": "LINK",
-      "direction": null,
-      "score": 52,
-      "action": "HOLD",
-      "regime": "RANGING",
-      "size_pct": 0,
-      "entry_low": null,
-      "entry_high": null,
-      "sl": null,
-      "tp1": null,
-      "tp2": null,
-      "sources": {
-        "onchain": 55,
-        "ta": 50,
-        "technical": 50,
-        "news": 50,
-        "sentiment": 55,
-        "momentum": 54,
-        "onchain_debug": {
-          "momentum": 46.8,
-          "cvd": 75.7,
-          "cvd_ratio": 0.128,
-          "sm": 50.0,
-          "funding": 50.0,
-          "oi": 50,
-          "liq": 50,
-          "has_liq_data": null,
-          "final": 55.8
-        }
-      },
-      "momentum_score": 54,
-      "onchain_data_thin": false,
-      "market_structure": {
-        "1h": {
-          "trend": "bullish",
-          "last_event": null,
-          "last_event_price": null,
-          "score": 60
-        },
-        "15m": {
-          "trend": "neutral",
-          "last_event": null,
-          "last_event_price": null,
-          "score": 50
-        }
-      },
-      "levels": null,
-      "fib_position": 0.12176165803108799,
-      "entry_quality": null,
-      "layers": {
-        "smart_money": {
-          "long_usd": 0.0,
-          "short_usd": 0.0,
-          "n_long": 0,
-          "n_short": 0,
-          "net": 0.0,
-          "total_usd": 0,
-          "verdict": "neutral"
-        },
-        "cvd": {
-          "read": "spot_led_up",
-          "ratio_4h": 0.128,
-          "px_4h": 0.96,
-          "oi_4h": 1.14,
-          "oi_24h": 1.32
-        },
-        "funding_h": 0.00125,
-        "flush": {
-          "score": 15,
-          "level": "low",
-          "parts": {
-            "compression": 15
-          }
-        },
-        "pump": {
-          "score": 20,
-          "level": "low",
-          "parts": {
-            "compression": 10,
-            "cvd_accum": 10
-          }
-        },
-        "agree": 0,
-        "confirms": [],
-        "veto": null,
-        "note": "SM neutral (+0.00, $0M) · CVD spot_led_up (+0.13, OI4h 1.14%) · Flush 15 low · Pump 20 low · fund +0.0013%/h"
-      },
-      "onchain_debug": {
-        "momentum": 46.8,
-        "cvd": 75.7,
-        "cvd_ratio": 0.128,
-        "sm": 50.0,
-        "funding": 50.0,
-        "oi": 50,
-        "liq": 50,
-        "has_liq_data": null,
-        "final": 55.8
-      },
-      "choch_override": false,
-      "risk_flag": "Auto-generated 13:56. TA 50/100 (daily 43 · 1h momo 54 · MS 1h:bullish · 15m:neutral). Current $12.05 (+0.34% 24h).",
-      "invalidation_note": "Not entered"
-    },
-    {
-      "rank": 5,
-      "ticker": "SUI",
-      "direction": null,
-      "score": 51,
-      "action": "HOLD",
-      "regime": "RANGING",
-      "size_pct": 0,
-      "entry_low": null,
-      "entry_high": null,
-      "sl": null,
-      "tp1": null,
-      "tp2": null,
-      "sources": {
-        "onchain": 53,
-        "ta": 50,
-        "technical": 50,
-        "news": 50,
-        "sentiment": 55,
-        "momentum": 59,
-        "onchain_debug": {
-          "momentum": 49.5,
-          "cvd": 55.3,
-          "cvd_ratio": 0.026,
-          "sm": 50.0,
-          "funding": 50.0,
-          "oi": 65,
-          "liq": 50,
-          "has_liq_data": null,
-          "final": 53.5
-        }
-      },
-      "momentum_score": 59,
-      "onchain_data_thin": false,
-      "market_structure": {
-        "1h": {
-          "trend": "neutral",
-          "last_event": null,
-          "last_event_price": null,
-          "score": 50
-        },
-        "15m": {
-          "trend": "neutral",
-          "last_event": null,
-          "last_event_price": null,
-          "score": 50
-        }
-      },
-      "levels": null,
-      "fib_position": 0.2803410230692077,
-      "entry_quality": null,
-      "layers": {
-        "smart_money": {
-          "long_usd": 0.0,
-          "short_usd": 0.0,
-          "n_long": 0,
-          "n_short": 0,
-          "net": 0.0,
-          "total_usd": 0,
-          "verdict": "neutral"
-        },
-        "cvd": {
-          "read": "lev_pump",
-          "ratio_4h": 0.026,
-          "px_4h": 1.79,
-          "oi_4h": 3.06,
-          "oi_24h": -2.25
-        },
-        "funding_h": 0.00125,
-        "flush": {
-          "score": 40,
-          "level": "elevated",
-          "parts": {
-            "compression": 15,
-            "sfp_bear": 15,
-            "cvd_lev_pump": 10
-          }
-        },
-        "pump": {
-          "score": 10,
-          "level": "low",
-          "parts": {
-            "compression": 10
-          }
-        },
-        "agree": 0,
-        "confirms": [],
-        "veto": null,
-        "note": "SM neutral (+0.00, $0M) · CVD lev_pump (+0.03, OI4h 3.06%) · Flush 40 elevated · Pump 10 low · fund +0.0013%/h"
-      },
-      "onchain_debug": {
-        "momentum": 49.5,
-        "cvd": 55.3,
-        "cvd_ratio": 0.026,
-        "sm": 50.0,
-        "funding": 50.0,
-        "oi": 65,
-        "liq": 50,
-        "has_liq_data": null,
-        "final": 53.5
-      },
-      "choch_override": false,
-      "risk_flag": "Auto-generated 13:56. TA 50/100 (daily 45 · 1h momo 59 · MS 1h:neutral · 15m:neutral). Current $1.01 (+1.21% 24h).",
-      "invalidation_note": "Not entered"
-    },
-    {
-      "rank": 6,
-      "ticker": "BCH",
-      "direction": null,
-      "score": 51,
-      "action": "HOLD",
-      "regime": "RANGING",
-      "size_pct": 0,
-      "entry_low": null,
-      "entry_high": null,
-      "sl": null,
-      "tp1": null,
-      "tp2": null,
-      "sources": {
-        "onchain": 55,
-        "ta": 47,
-        "technical": 47,
-        "news": 50,
-        "sentiment": 55,
-        "momentum": 48,
-        "onchain_debug": {
-          "momentum": 48.2,
-          "cvd": 72.1,
-          "cvd_ratio": 0.111,
-          "sm": 50.0,
-          "funding": 51.6,
-          "oi": 50,
-          "liq": 50,
-          "has_liq_data": null,
-          "final": 55.4
-        }
-      },
-      "momentum_score": 48,
-      "onchain_data_thin": false,
-      "market_structure": {
-        "1h": {
-          "trend": "neutral",
-          "last_event": null,
-          "last_event_price": null,
-          "score": 50
-        },
-        "15m": {
-          "trend": "neutral",
-          "last_event": null,
-          "last_event_price": null,
-          "score": 50
-        }
-      },
-      "levels": null,
-      "fib_position": 0.20790378006872848,
-      "entry_quality": null,
-      "layers": {
-        "smart_money": {
-          "long_usd": 0.0,
-          "short_usd": 0.0,
-          "n_long": 0,
-          "n_short": 0,
-          "net": 0.0,
-          "total_usd": 0,
-          "verdict": "neutral"
-        },
-        "cvd": {
-          "read": "flat_spot_accum",
-          "ratio_4h": 0.111,
-          "px_4h": 0.4,
-          "oi_4h": -0.5,
-          "oi_24h": -3.59
-        },
-        "funding_h": 0.00093154,
-        "flush": {
-          "score": 30,
-          "level": "elevated",
-          "parts": {
-            "compression": 15,
-            "sfp_bear": 15
-          }
-        },
-        "pump": {
-          "score": 20,
-          "level": "low",
-          "parts": {
-            "compression": 10,
-            "cvd_accum": 10
-          }
-        },
-        "agree": 0,
-        "confirms": [],
-        "veto": null,
-        "note": "SM neutral (+0.00, $0M) · CVD flat_spot_accum (+0.11, OI4h -0.5%) · Flush 30 elevated · Pump 20 low · fund +0.0009%/h"
-      },
-      "onchain_debug": {
-        "momentum": 48.2,
-        "cvd": 72.1,
-        "cvd_ratio": 0.111,
-        "sm": 50.0,
-        "funding": 51.6,
-        "oi": 50,
-        "liq": 50,
-        "has_liq_data": null,
-        "final": 55.4
-      },
-      "choch_override": false,
-      "risk_flag": "Auto-generated 13:57. TA 47/100 (daily 48 · 1h momo 48 · MS 1h:neutral · 15m:neutral). Current $274.20 (-1.30% 24h).",
-      "invalidation_note": "Not entered"
-    },
-    {
-      "rank": 7,
-      "ticker": "BTC",
-      "direction": null,
-      "score": 50,
-      "action": "HOLD",
-      "regime": "RANGING",
-      "size_pct": 0,
-      "entry_low": null,
-      "entry_high": null,
-      "sl": null,
-      "tp1": null,
-      "tp2": null,
-      "sources": {
-        "onchain": 45,
-        "ta": 55,
-        "technical": 55,
-        "news": 50,
-        "sentiment": 55,
-        "momentum": 52,
-        "onchain_debug": {
-          "momentum": 48.7,
-          "cvd": 83.3,
-          "cvd_ratio": 0.166,
-          "sm": 12.5,
-          "funding": 50.0,
-          "oi": 28,
-          "liq": 50,
-          "has_liq_data": null,
-          "final": 45.4
-        }
-      },
-      "momentum_score": 52,
-      "onchain_data_thin": false,
-      "market_structure": {
-        "1h": {
-          "trend": "bullish",
-          "last_event": null,
-          "last_event_price": null,
-          "score": 60
-        },
-        "15m": {
-          "trend": "neutral",
-          "last_event": null,
-          "last_event_price": null,
-          "score": 50
-        }
-      },
-      "levels": null,
-      "fib_position": 0.28132212168248516,
-      "entry_quality": null,
-      "layers": {
-        "smart_money": {
-          "long_usd": 0.0,
-          "short_usd": 76240040.95438,
-          "n_long": 0,
-          "n_short": 2,
-          "net": -1.0,
-          "total_usd": 76240041,
-          "verdict": "short"
-        },
-        "cvd": {
-          "read": "confirmed_up",
-          "ratio_4h": 0.166,
-          "px_4h": 0.51,
-          "oi_4h": 5.44,
-          "oi_24h": 5.5
-        },
-        "funding_h": 0.00125,
-        "flush": {
-          "score": 45,
-          "level": "elevated",
-          "parts": {
-            "oi_divergence": 20,
-            "compression": 15,
-            "whales_short": 10
           }
         },
         "pump": {
@@ -735,28 +294,28 @@
         "agree": 0,
         "confirms": [],
         "veto": null,
-        "note": "SM short (-1.00, $76M) · CVD confirmed_up (+0.17, OI4h 5.44%) · Flush 45 elevated · Pump 25 low · fund +0.0013%/h"
+        "note": "SM neutral (+0.00, $0M) · CVD neutral (+0.05, OI4h 4.57%) · Flush 15 low · Pump 25 low · fund +0.0013%/h"
       },
       "onchain_debug": {
-        "momentum": 48.7,
-        "cvd": 83.3,
-        "cvd_ratio": 0.166,
-        "sm": 12.5,
+        "momentum": 52.6,
+        "cvd": 59.3,
+        "cvd_ratio": 0.047,
+        "sm": 50.0,
         "funding": 50.0,
-        "oi": 28,
+        "oi": 65,
         "liq": 50,
         "has_liq_data": null,
-        "final": 45.4
+        "final": 55.1
       },
       "choch_override": false,
-      "risk_flag": "Auto-generated 13:56. TA 55/100 (daily 55 · 1h momo 52 · MS 1h:bullish · 15m:neutral). Current $81936.83 (-0.34% 24h).",
+      "risk_flag": "Auto-generated 14:02. TA 68/100 (daily 51 · 1h momo 66 · MS 1h:bullish/BOS_UP · 15m:bullish/BOS_UP). Current $0.80 (+3.87% 24h).",
       "invalidation_note": "Not entered"
     },
     {
-      "rank": 8,
-      "ticker": "XRP",
+      "rank": 3,
+      "ticker": "LINK",
       "direction": null,
-      "score": 50,
+      "score": 58,
       "action": "HOLD",
       "regime": "RANGING",
       "size_pct": 0,
@@ -766,25 +325,129 @@
       "tp1": null,
       "tp2": null,
       "sources": {
-        "onchain": 48,
-        "ta": 52,
-        "technical": 52,
+        "onchain": 57,
+        "ta": 62,
+        "technical": 62,
         "news": 50,
         "sentiment": 55,
-        "momentum": 54,
+        "momentum": 59,
         "onchain_debug": {
-          "momentum": 47.8,
-          "cvd": 58.2,
-          "cvd_ratio": 0.041,
-          "sm": 37.5,
-          "funding": 52.7,
-          "oi": 50,
+          "momentum": 49.5,
+          "cvd": 70.9,
+          "cvd_ratio": 0.104,
+          "sm": 50.0,
+          "funding": 50.0,
+          "oi": 65,
           "liq": 50,
           "has_liq_data": null,
-          "final": 48.9
+          "final": 57.4
         }
       },
-      "momentum_score": 54,
+      "momentum_score": 59,
+      "onchain_data_thin": false,
+      "market_structure": {
+        "1h": {
+          "trend": "bullish",
+          "last_event": "BOS_UP",
+          "last_event_price": 12.162,
+          "score": 75
+        },
+        "15m": {
+          "trend": "bullish",
+          "last_event": "BOS_UP",
+          "last_event_price": 12.17,
+          "score": 75
+        }
+      },
+      "levels": null,
+      "fib_position": 0.1469618464437115,
+      "entry_quality": null,
+      "layers": {
+        "smart_money": {
+          "long_usd": 0.0,
+          "short_usd": 0.0,
+          "n_long": 0,
+          "n_short": 0,
+          "net": 0.0,
+          "total_usd": 0,
+          "verdict": "neutral"
+        },
+        "cvd": {
+          "read": "confirmed_up",
+          "ratio_4h": 0.104,
+          "px_4h": 1.94,
+          "oi_4h": 2.4,
+          "oi_24h": 3.45
+        },
+        "funding_h": 0.00125,
+        "flush": {
+          "score": 15,
+          "level": "low",
+          "parts": {
+            "compression": 15
+          }
+        },
+        "pump": {
+          "score": 25,
+          "level": "low",
+          "parts": {
+            "oi_build": 15,
+            "compression": 10
+          }
+        },
+        "agree": 0,
+        "confirms": [],
+        "veto": null,
+        "note": "SM neutral (+0.00, $0M) · CVD confirmed_up (+0.10, OI4h 2.4%) · Flush 15 low · Pump 25 low · fund +0.0013%/h"
+      },
+      "onchain_debug": {
+        "momentum": 49.5,
+        "cvd": 70.9,
+        "cvd_ratio": 0.104,
+        "sm": 50.0,
+        "funding": 50.0,
+        "oi": 65,
+        "liq": 50,
+        "has_liq_data": null,
+        "final": 57.4
+      },
+      "choch_override": false,
+      "risk_flag": "Auto-generated 14:02. TA 62/100 (daily 45 · 1h momo 59 · MS 1h:bullish/BOS_UP · 15m:bullish/BOS_UP). Current $12.15 (+1.90% 24h).",
+      "invalidation_note": "Not entered"
+    },
+    {
+      "rank": 4,
+      "ticker": "SUI",
+      "direction": null,
+      "score": 55,
+      "action": "HOLD",
+      "regime": "RANGING",
+      "size_pct": 0,
+      "entry_low": null,
+      "entry_high": null,
+      "sl": null,
+      "tp1": null,
+      "tp2": null,
+      "sources": {
+        "onchain": 57,
+        "ta": 55,
+        "technical": 55,
+        "news": 50,
+        "sentiment": 55,
+        "momentum": 61,
+        "onchain_debug": {
+          "momentum": 52.4,
+          "cvd": 67.5,
+          "cvd_ratio": 0.087,
+          "sm": 50.0,
+          "funding": 50.0,
+          "oi": 65,
+          "liq": 50,
+          "has_liq_data": null,
+          "final": 57.1
+        }
+      },
+      "momentum_score": 61,
       "onchain_data_thin": false,
       "market_structure": {
         "1h": {
@@ -796,12 +459,111 @@
         "15m": {
           "trend": "bullish",
           "last_event": "BOS_UP",
-          "last_event_price": 1.3055,
+          "last_event_price": 1.0155,
           "score": 75
         }
       },
       "levels": null,
-      "fib_position": 0.12316496640955489,
+      "fib_position": 0.304663991975928,
+      "entry_quality": null,
+      "layers": {
+        "smart_money": {
+          "long_usd": 0.0,
+          "short_usd": 0.0,
+          "n_long": 0,
+          "n_short": 0,
+          "net": 0.0,
+          "total_usd": 0,
+          "verdict": "neutral"
+        },
+        "cvd": {
+          "read": "confirmed_up",
+          "ratio_4h": 0.087,
+          "px_4h": 2.28,
+          "oi_4h": 4.8,
+          "oi_24h": 0.93
+        },
+        "funding_h": 0.00125,
+        "flush": {
+          "score": 0,
+          "level": "low",
+          "parts": {}
+        },
+        "pump": {
+          "score": 0,
+          "level": "low",
+          "parts": {}
+        },
+        "agree": 0,
+        "confirms": [],
+        "veto": null,
+        "note": "SM neutral (+0.00, $0M) · CVD confirmed_up (+0.09, OI4h 4.8%) · Flush 0 low · Pump 0 low · fund +0.0013%/h"
+      },
+      "onchain_debug": {
+        "momentum": 52.4,
+        "cvd": 67.5,
+        "cvd_ratio": 0.087,
+        "sm": 50.0,
+        "funding": 50.0,
+        "oi": 65,
+        "liq": 50,
+        "has_liq_data": null,
+        "final": 57.1
+      },
+      "choch_override": false,
+      "risk_flag": "Auto-generated 14:02. TA 55/100 (daily 46 · 1h momo 61 · MS 1h:neutral · 15m:bullish/BOS_UP). Current $1.02 (+2.84% 24h).",
+      "invalidation_note": "Not entered"
+    },
+    {
+      "rank": 5,
+      "ticker": "XRP",
+      "direction": null,
+      "score": 54,
+      "action": "HOLD",
+      "regime": "RANGING",
+      "size_pct": 0,
+      "entry_low": null,
+      "entry_high": null,
+      "sl": null,
+      "tp1": null,
+      "tp2": null,
+      "sources": {
+        "onchain": 55,
+        "ta": 54,
+        "technical": 54,
+        "news": 50,
+        "sentiment": 55,
+        "momentum": 58,
+        "onchain_debug": {
+          "momentum": 49.8,
+          "cvd": 84.7,
+          "cvd_ratio": 0.173,
+          "sm": 37.5,
+          "funding": 50.0,
+          "oi": 50,
+          "liq": 50,
+          "has_liq_data": null,
+          "final": 55.5
+        }
+      },
+      "momentum_score": 58,
+      "onchain_data_thin": false,
+      "market_structure": {
+        "1h": {
+          "trend": "neutral",
+          "last_event": null,
+          "last_event_price": null,
+          "score": 50
+        },
+        "15m": {
+          "trend": "bullish",
+          "last_event": "BOS_UP",
+          "last_event_price": 1.3157,
+          "score": 75
+        }
+      },
+      "levels": null,
+      "fib_position": 0.14879323214730053,
       "entry_quality": null,
       "layers": {
         "smart_money": {
@@ -814,157 +576,51 @@
           "verdict": "neutral"
         },
         "cvd": {
-          "read": "neutral",
-          "ratio_4h": 0.041,
-          "px_4h": 0.91,
-          "oi_4h": 0.88,
-          "oi_24h": 5.37
+          "read": "spot_led_up",
+          "ratio_4h": 0.173,
+          "px_4h": 1.65,
+          "oi_4h": 1.66,
+          "oi_24h": 6.89
         },
-        "funding_h": 0.00071644,
+        "funding_h": 0.00125,
         "flush": {
-          "score": 27,
+          "score": 0,
           "level": "low",
-          "parts": {
-            "oi_divergence": 12,
-            "compression": 15
-          }
+          "parts": {}
         },
         "pump": {
           "score": 25,
           "level": "low",
           "parts": {
             "oi_build": 15,
-            "compression": 10
+            "cvd_accum": 10
           }
         },
         "agree": 0,
         "confirms": [],
         "veto": null,
-        "note": "SM neutral (-1.00, $2M) · CVD neutral (+0.04, OI4h 0.88%) · Flush 27 low · Pump 25 low · fund +0.0007%/h"
+        "note": "SM neutral (-1.00, $2M) · CVD spot_led_up (+0.17, OI4h 1.66%) · Flush 0 low · Pump 25 low · fund +0.0013%/h"
       },
       "onchain_debug": {
-        "momentum": 47.8,
-        "cvd": 58.2,
-        "cvd_ratio": 0.041,
+        "momentum": 49.8,
+        "cvd": 84.7,
+        "cvd_ratio": 0.173,
         "sm": 37.5,
-        "funding": 52.7,
-        "oi": 50,
-        "liq": 50,
-        "has_liq_data": null,
-        "final": 48.9
-      },
-      "choch_override": false,
-      "risk_flag": "Auto-generated 13:56. TA 52/100 (daily 45 · 1h momo 54 · MS 1h:neutral · 15m:bullish/BOS_UP). Current $1.31 (+0.21% 24h).",
-      "invalidation_note": "Not entered"
-    },
-    {
-      "rank": 9,
-      "ticker": "DOT",
-      "direction": null,
-      "score": 50,
-      "action": "HOLD",
-      "regime": "RANGING",
-      "size_pct": 0,
-      "entry_low": null,
-      "entry_high": null,
-      "sl": null,
-      "tp1": null,
-      "tp2": null,
-      "sources": {
-        "onchain": 48,
-        "ta": 51,
-        "technical": 51,
-        "news": 50,
-        "sentiment": 55,
-        "momentum": 54,
-        "onchain_debug": {
-          "momentum": 51.4,
-          "cvd": 43.8,
-          "cvd_ratio": -0.031,
-          "sm": 50.0,
-          "funding": 50.0,
-          "oi": 50,
-          "liq": 50,
-          "has_liq_data": null,
-          "final": 48.7
-        }
-      },
-      "momentum_score": 54,
-      "onchain_data_thin": false,
-      "market_structure": {
-        "1h": {
-          "trend": "bearish",
-          "last_event": null,
-          "last_event_price": null,
-          "score": 40
-        },
-        "15m": {
-          "trend": "bullish",
-          "last_event": null,
-          "last_event_price": null,
-          "score": 60
-        }
-      },
-      "levels": null,
-      "fib_position": 0.46127946127946107,
-      "entry_quality": null,
-      "layers": {
-        "smart_money": {
-          "long_usd": 0.0,
-          "short_usd": 0.0,
-          "n_long": 0,
-          "n_short": 0,
-          "net": 0.0,
-          "total_usd": 0,
-          "verdict": "neutral"
-        },
-        "cvd": {
-          "read": "neutral",
-          "ratio_4h": -0.031,
-          "px_4h": 0.79,
-          "oi_4h": -0.65,
-          "oi_24h": -3.08
-        },
-        "funding_h": 0.00125,
-        "flush": {
-          "score": 15,
-          "level": "low",
-          "parts": {
-            "compression": 15
-          }
-        },
-        "pump": {
-          "score": 10,
-          "level": "low",
-          "parts": {
-            "compression": 10
-          }
-        },
-        "agree": 0,
-        "confirms": [],
-        "veto": null,
-        "note": "SM neutral (+0.00, $0M) · CVD neutral (-0.03, OI4h -0.65%) · Flush 15 low · Pump 10 low · fund +0.0013%/h"
-      },
-      "onchain_debug": {
-        "momentum": 51.4,
-        "cvd": 43.8,
-        "cvd_ratio": -0.031,
-        "sm": 50.0,
         "funding": 50.0,
         "oi": 50,
         "liq": 50,
         "has_liq_data": null,
-        "final": 48.7
+        "final": 55.5
       },
       "choch_override": false,
-      "risk_flag": "Auto-generated 13:57. TA 51/100 (daily 53 · 1h momo 54 · MS 1h:bearish · 15m:bullish). Current $1.15 (+1.51% 24h).",
+      "risk_flag": "Auto-generated 14:02. TA 54/100 (daily 46 · 1h momo 58 · MS 1h:neutral · 15m:bullish/BOS_UP). Current $1.32 (+1.35% 24h).",
       "invalidation_note": "Not entered"
     },
     {
-      "rank": 10,
-      "ticker": "LTC",
+      "rank": 6,
+      "ticker": "DOGE",
       "direction": null,
-      "score": 50,
+      "score": 54,
       "action": "HOLD",
       "regime": "RANGING",
       "size_pct": 0,
@@ -974,25 +630,25 @@
       "tp1": null,
       "tp2": null,
       "sources": {
-        "onchain": 46,
+        "onchain": 56,
         "ta": 54,
         "technical": 54,
         "news": 50,
         "sentiment": 55,
-        "momentum": 49,
+        "momentum": 59,
         "onchain_debug": {
-          "momentum": 46.2,
-          "cvd": 37.8,
-          "cvd_ratio": -0.061,
+          "momentum": 50.1,
+          "cvd": 67.2,
+          "cvd_ratio": 0.086,
           "sm": 50.0,
           "funding": 50.0,
-          "oi": 50,
+          "oi": 65,
           "liq": 50,
           "has_liq_data": null,
-          "final": 46.2
+          "final": 56.6
         }
       },
-      "momentum_score": 49,
+      "momentum_score": 59,
       "onchain_data_thin": false,
       "market_structure": {
         "1h": {
@@ -1003,13 +659,13 @@
         },
         "15m": {
           "trend": "bullish",
-          "last_event": "CHOCH_BULL",
-          "last_event_price": 59.17,
-          "score": 90
+          "last_event": "BOS_UP",
+          "last_event_price": 0.08049,
+          "score": 75
         }
       },
       "levels": null,
-      "fib_position": 0.1339529797703661,
+      "fib_position": 0.14822266934943015,
       "entry_quality": null,
       "layers": {
         "smart_money": {
@@ -1022,52 +678,48 @@
           "verdict": "neutral"
         },
         "cvd": {
-          "read": "neutral",
-          "ratio_4h": -0.061,
-          "px_4h": 0.12,
-          "oi_4h": 0.05,
-          "oi_24h": -3.63
+          "read": "confirmed_up",
+          "ratio_4h": 0.086,
+          "px_4h": 1.82,
+          "oi_4h": 2.04,
+          "oi_24h": 2.89
         },
         "funding_h": 0.00125,
         "flush": {
-          "score": 15,
+          "score": 0,
           "level": "low",
-          "parts": {
-            "compression": 15
-          }
+          "parts": {}
         },
         "pump": {
-          "score": 10,
+          "score": 0,
           "level": "low",
-          "parts": {
-            "compression": 10
-          }
+          "parts": {}
         },
         "agree": 0,
         "confirms": [],
         "veto": null,
-        "note": "SM neutral (+0.00, $0M) · CVD neutral (-0.06, OI4h 0.05%) · Flush 15 low · Pump 10 low · fund +0.0013%/h"
+        "note": "SM neutral (+0.00, $0M) · CVD confirmed_up (+0.09, OI4h 2.04%) · Flush 0 low · Pump 0 low · fund +0.0013%/h"
       },
       "onchain_debug": {
-        "momentum": 46.2,
-        "cvd": 37.8,
-        "cvd_ratio": -0.061,
+        "momentum": 50.1,
+        "cvd": 67.2,
+        "cvd_ratio": 0.086,
         "sm": 50.0,
         "funding": 50.0,
-        "oi": 50,
+        "oi": 65,
         "liq": 50,
         "has_liq_data": null,
-        "final": 46.2
+        "final": 56.6
       },
       "choch_override": false,
-      "risk_flag": "Auto-generated 13:57. TA 54/100 (daily 46 · 1h momo 49 · MS 1h:neutral · 15m:bullish/CHOCH_BULL). Current $59.16 (-1.35% 24h).",
+      "risk_flag": "Auto-generated 14:02. TA 54/100 (daily 44 · 1h momo 59 · MS 1h:neutral · 15m:bullish/BOS_UP). Current $0.08 (+1.94% 24h).",
       "invalidation_note": "Not entered"
     },
     {
-      "rank": 11,
+      "rank": 7,
       "ticker": "AVAX",
       "direction": null,
-      "score": 48,
+      "score": 53,
       "action": "HOLD",
       "regime": "RANGING",
       "size_pct": 0,
@@ -1077,25 +729,25 @@
       "tp1": null,
       "tp2": null,
       "sources": {
-        "onchain": 54,
-        "ta": 41,
-        "technical": 41,
+        "onchain": 57,
+        "ta": 50,
+        "technical": 50,
         "news": 50,
         "sentiment": 55,
-        "momentum": 53,
+        "momentum": 59,
         "onchain_debug": {
-          "momentum": 44.1,
-          "cvd": 72.3,
-          "cvd_ratio": 0.112,
+          "momentum": 46.8,
+          "cvd": 81.1,
+          "cvd_ratio": 0.156,
           "sm": 50.0,
-          "funding": 53.9,
+          "funding": 50.0,
           "oi": 50,
           "liq": 50,
           "has_liq_data": null,
-          "final": 55.0
+          "final": 57.1
         }
       },
-      "momentum_score": 53,
+      "momentum_score": 59,
       "onchain_data_thin": false,
       "market_structure": {
         "1h": {
@@ -1105,14 +757,14 @@
           "score": 40
         },
         "15m": {
-          "trend": "neutral",
-          "last_event": null,
-          "last_event_price": null,
-          "score": 50
+          "trend": "bullish",
+          "last_event": "BOS_UP",
+          "last_event_price": 9.633,
+          "score": 75
         }
       },
       "levels": null,
-      "fib_position": 0.09475218658892122,
+      "fib_position": 0.13338192419825126,
       "entry_quality": null,
       "layers": {
         "smart_money": {
@@ -1126,12 +778,12 @@
         },
         "cvd": {
           "read": "spot_led_up",
-          "ratio_4h": 0.112,
-          "px_4h": 0.92,
-          "oi_4h": 1.1,
-          "oi_24h": -2.2
+          "ratio_4h": 0.156,
+          "px_4h": 2.14,
+          "oi_4h": 1.8,
+          "oi_24h": -0.9
         },
-        "funding_h": 0.00046815,
+        "funding_h": 0.00125,
         "flush": {
           "score": 15,
           "level": "low",
@@ -1151,28 +803,28 @@
         "agree": 0,
         "confirms": [],
         "veto": null,
-        "note": "SM neutral (+0.00, $0M) · CVD spot_led_up (+0.11, OI4h 1.1%) · Flush 15 low · Pump 35 elevated · fund +0.0005%/h"
+        "note": "SM neutral (+0.00, $0M) · CVD spot_led_up (+0.16, OI4h 1.8%) · Flush 15 low · Pump 35 elevated · fund +0.0013%/h"
       },
       "onchain_debug": {
-        "momentum": 44.1,
-        "cvd": 72.3,
-        "cvd_ratio": 0.112,
+        "momentum": 46.8,
+        "cvd": 81.1,
+        "cvd_ratio": 0.156,
         "sm": 50.0,
-        "funding": 53.9,
+        "funding": 50.0,
         "oi": 50,
         "liq": 50,
         "has_liq_data": null,
-        "final": 55.0
+        "final": 57.1
       },
       "choch_override": false,
-      "risk_flag": "Auto-generated 13:56. TA 41/100 (daily 40 · 1h momo 53 · MS 1h:bearish · 15m:neutral). Current $9.52 (-1.45% 24h).",
+      "risk_flag": "Auto-generated 14:02. TA 50/100 (daily 41 · 1h momo 59 · MS 1h:bearish · 15m:bullish/BOS_UP). Current $9.63 (+0.07% 24h).",
       "invalidation_note": "Not entered"
     },
     {
-      "rank": 12,
-      "ticker": "ADA",
+      "rank": 8,
+      "ticker": "BTC",
       "direction": null,
-      "score": 47,
+      "score": 52,
       "action": "HOLD",
       "regime": "RANGING",
       "size_pct": 0,
@@ -1182,22 +834,129 @@
       "tp1": null,
       "tp2": null,
       "sources": {
-        "onchain": 45,
-        "ta": 47,
-        "technical": 47,
+        "onchain": 48,
+        "ta": 57,
+        "technical": 57,
         "news": 50,
         "sentiment": 55,
         "momentum": 54,
         "onchain_debug": {
-          "momentum": 46.0,
-          "cvd": 36.9,
-          "cvd_ratio": -0.066,
+          "momentum": 50.1,
+          "cvd": 86.7,
+          "cvd_ratio": 0.184,
+          "sm": 12.5,
+          "funding": 50.0,
+          "oi": 38,
+          "liq": 50,
+          "has_liq_data": null,
+          "final": 48.0
+        }
+      },
+      "momentum_score": 54,
+      "onchain_data_thin": false,
+      "market_structure": {
+        "1h": {
+          "trend": "bullish",
+          "last_event": null,
+          "last_event_price": null,
+          "score": 60
+        },
+        "15m": {
+          "trend": "neutral",
+          "last_event": null,
+          "last_event_price": null,
+          "score": 50
+        }
+      },
+      "levels": null,
+      "fib_position": 0.33366905091980076,
+      "entry_quality": null,
+      "layers": {
+        "smart_money": {
+          "long_usd": 0.0,
+          "short_usd": 76240040.95438,
+          "n_long": 0,
+          "n_short": 2,
+          "net": -1.0,
+          "total_usd": 76240041,
+          "verdict": "short"
+        },
+        "cvd": {
+          "read": "confirmed_up",
+          "ratio_4h": 0.184,
+          "px_4h": 0.88,
+          "oi_4h": 4.9,
+          "oi_24h": 5.78
+        },
+        "funding_h": 0.00125,
+        "flush": {
+          "score": 52,
+          "level": "elevated",
+          "parts": {
+            "oi_divergence": 12,
+            "compression": 15,
+            "sfp_bear": 15,
+            "whales_short": 10
+          }
+        },
+        "pump": {
+          "score": 25,
+          "level": "low",
+          "parts": {
+            "oi_build": 15,
+            "compression": 10
+          }
+        },
+        "agree": 0,
+        "confirms": [],
+        "veto": null,
+        "note": "SM short (-1.00, $76M) · CVD confirmed_up (+0.18, OI4h 4.9%) · Flush 52 elevated · Pump 25 low · fund +0.0013%/h"
+      },
+      "onchain_debug": {
+        "momentum": 50.1,
+        "cvd": 86.7,
+        "cvd_ratio": 0.184,
+        "sm": 12.5,
+        "funding": 50.0,
+        "oi": 38,
+        "liq": 50,
+        "has_liq_data": null,
+        "final": 48.0
+      },
+      "choch_override": false,
+      "risk_flag": "Auto-generated 14:02. TA 57/100 (daily 55 · 1h momo 54 · MS 1h:bullish · 15m:neutral). Current $82334.44 (+0.46% 24h).",
+      "invalidation_note": "Not entered"
+    },
+    {
+      "rank": 9,
+      "ticker": "BCH",
+      "direction": null,
+      "score": 51,
+      "action": "HOLD",
+      "regime": "RANGING",
+      "size_pct": 0,
+      "entry_low": null,
+      "entry_high": null,
+      "sl": null,
+      "tp1": null,
+      "tp2": null,
+      "sources": {
+        "onchain": 53,
+        "ta": 50,
+        "technical": 50,
+        "news": 50,
+        "sentiment": 55,
+        "momentum": 54,
+        "onchain_debug": {
+          "momentum": 50.8,
+          "cvd": 65.3,
+          "cvd_ratio": 0.077,
           "sm": 50.0,
           "funding": 50.0,
           "oi": 50,
           "liq": 50,
           "has_liq_data": null,
-          "final": 45.9
+          "final": 54.0
         }
       },
       "momentum_score": 54,
@@ -1210,14 +969,14 @@
           "score": 50
         },
         "15m": {
-          "trend": "bullish",
+          "trend": "neutral",
           "last_event": null,
           "last_event_price": null,
-          "score": 60
+          "score": 50
         }
       },
       "levels": null,
-      "fib_position": 0.09677419354838698,
+      "fib_position": 0.23367697594501713,
       "entry_quality": null,
       "layers": {
         "smart_money": {
@@ -1231,10 +990,219 @@
         },
         "cvd": {
           "read": "neutral",
-          "ratio_4h": -0.066,
-          "px_4h": 1.07,
-          "oi_4h": 0.28,
-          "oi_24h": 0.97
+          "ratio_4h": 0.077,
+          "px_4h": 1.24,
+          "oi_4h": 0.42,
+          "oi_24h": -2.18
+        },
+        "funding_h": 0.00125,
+        "flush": {
+          "score": 30,
+          "level": "elevated",
+          "parts": {
+            "compression": 15,
+            "sfp_bear": 15
+          }
+        },
+        "pump": {
+          "score": 10,
+          "level": "low",
+          "parts": {
+            "compression": 10
+          }
+        },
+        "agree": 0,
+        "confirms": [],
+        "veto": null,
+        "note": "SM neutral (+0.00, $0M) · CVD neutral (+0.08, OI4h 0.42%) · Flush 30 elevated · Pump 10 low · fund +0.0013%/h"
+      },
+      "onchain_debug": {
+        "momentum": 50.8,
+        "cvd": 65.3,
+        "cvd_ratio": 0.077,
+        "sm": 50.0,
+        "funding": 50.0,
+        "oi": 50,
+        "liq": 50,
+        "has_liq_data": null,
+        "final": 54.0
+      },
+      "choch_override": false,
+      "risk_flag": "Auto-generated 14:02. TA 50/100 (daily 49 · 1h momo 54 · MS 1h:neutral · 15m:neutral). Current $277.20 (+0.14% 24h).",
+      "invalidation_note": "Not entered"
+    },
+    {
+      "rank": 10,
+      "ticker": "ETH",
+      "direction": null,
+      "score": 49,
+      "action": "HOLD",
+      "regime": "RANGING",
+      "size_pct": 0,
+      "entry_low": null,
+      "entry_high": null,
+      "sl": null,
+      "tp1": null,
+      "tp2": null,
+      "sources": {
+        "onchain": 41,
+        "ta": 57,
+        "technical": 57,
+        "news": 50,
+        "sentiment": 55,
+        "momentum": 56,
+        "onchain_debug": {
+          "momentum": 49.7,
+          "cvd": 55.6,
+          "cvd_ratio": 0.028,
+          "sm": 12.5,
+          "funding": 50.0,
+          "oi": 50,
+          "liq": 50,
+          "has_liq_data": null,
+          "final": 42.0
+        }
+      },
+      "momentum_score": 56,
+      "onchain_data_thin": false,
+      "market_structure": {
+        "1h": {
+          "trend": "neutral",
+          "last_event": null,
+          "last_event_price": null,
+          "score": 50
+        },
+        "15m": {
+          "trend": "bullish",
+          "last_event": "BOS_UP",
+          "last_event_price": 2417.39,
+          "score": 75
+        }
+      },
+      "levels": null,
+      "fib_position": 0.20562390158172203,
+      "entry_quality": null,
+      "layers": {
+        "smart_money": {
+          "long_usd": 0.0,
+          "short_usd": 58071846.830736004,
+          "n_long": 0,
+          "n_short": 3,
+          "net": -1.0,
+          "total_usd": 58071847,
+          "verdict": "short"
+        },
+        "cvd": {
+          "read": "neutral",
+          "ratio_4h": 0.028,
+          "px_4h": 1.26,
+          "oi_4h": 0.38,
+          "oi_24h": -0.36
+        },
+        "funding_h": 0.00125,
+        "flush": {
+          "score": 40,
+          "level": "elevated",
+          "parts": {
+            "compression": 15,
+            "sfp_bear": 15,
+            "whales_short": 10
+          }
+        },
+        "pump": {
+          "score": 10,
+          "level": "low",
+          "parts": {
+            "compression": 10
+          }
+        },
+        "agree": 0,
+        "confirms": [],
+        "veto": null,
+        "note": "SM short (-1.00, $58M) · CVD neutral (+0.03, OI4h 0.38%) · Flush 40 elevated · Pump 10 low · fund +0.0013%/h"
+      },
+      "onchain_debug": {
+        "momentum": 49.7,
+        "cvd": 55.6,
+        "cvd_ratio": 0.028,
+        "sm": 12.5,
+        "funding": 50.0,
+        "oi": 50,
+        "liq": 50,
+        "has_liq_data": null,
+        "final": 42.0
+      },
+      "choch_override": false,
+      "risk_flag": "Auto-generated 14:02. TA 57/100 (daily 52 · 1h momo 56 · MS 1h:neutral · 15m:bullish/BOS_UP). Current $2418.62 (+1.07% 24h).",
+      "invalidation_note": "Not entered"
+    },
+    {
+      "rank": 11,
+      "ticker": "DOT",
+      "direction": null,
+      "score": 49,
+      "action": "HOLD",
+      "regime": "RANGING",
+      "size_pct": 0,
+      "entry_low": null,
+      "entry_high": null,
+      "sl": null,
+      "tp1": null,
+      "tp2": null,
+      "sources": {
+        "onchain": 43,
+        "ta": 55,
+        "technical": 55,
+        "news": 50,
+        "sentiment": 55,
+        "momentum": 57,
+        "onchain_debug": {
+          "momentum": 53.6,
+          "cvd": 21.4,
+          "cvd_ratio": -0.143,
+          "sm": 50.0,
+          "funding": 50.0,
+          "oi": 50,
+          "liq": 50,
+          "has_liq_data": null,
+          "final": 43.6
+        }
+      },
+      "momentum_score": 57,
+      "onchain_data_thin": false,
+      "market_structure": {
+        "1h": {
+          "trend": "bearish",
+          "last_event": null,
+          "last_event_price": null,
+          "score": 40
+        },
+        "15m": {
+          "trend": "bullish",
+          "last_event": "BOS_UP",
+          "last_event_price": 1.158,
+          "score": 75
+        }
+      },
+      "levels": null,
+      "fib_position": 0.4983164983164985,
+      "entry_quality": null,
+      "layers": {
+        "smart_money": {
+          "long_usd": 0.0,
+          "short_usd": 0.0,
+          "n_long": 0,
+          "n_short": 0,
+          "net": 0.0,
+          "total_usd": 0,
+          "verdict": "neutral"
+        },
+        "cvd": {
+          "read": "spot_distrib",
+          "ratio_4h": -0.143,
+          "px_4h": 1.67,
+          "oi_4h": 0.55,
+          "oi_24h": -4.42
         },
         "funding_h": 0.00125,
         "flush": {
@@ -1254,28 +1222,28 @@
         "agree": 0,
         "confirms": [],
         "veto": null,
-        "note": "SM neutral (+0.00, $0M) · CVD neutral (-0.07, OI4h 0.28%) · Flush 15 low · Pump 10 low · fund +0.0013%/h"
+        "note": "SM neutral (+0.00, $0M) · CVD spot_distrib (-0.14, OI4h 0.55%) · Flush 15 low · Pump 10 low · fund +0.0013%/h"
       },
       "onchain_debug": {
-        "momentum": 46.0,
-        "cvd": 36.9,
-        "cvd_ratio": -0.066,
+        "momentum": 53.6,
+        "cvd": 21.4,
+        "cvd_ratio": -0.143,
         "sm": 50.0,
         "funding": 50.0,
         "oi": 50,
         "liq": 50,
         "has_liq_data": null,
-        "final": 45.9
+        "final": 43.6
       },
       "choch_override": false,
-      "risk_flag": "Auto-generated 13:56. TA 47/100 (daily 39 · 1h momo 54 · MS 1h:neutral · 15m:bullish). Current $0.22 (+0.18% 24h).",
+      "risk_flag": "Auto-generated 14:02. TA 55/100 (daily 54 · 1h momo 57 · MS 1h:bearish · 15m:bullish/BOS_UP). Current $1.16 (+2.66% 24h).",
       "invalidation_note": "Not entered"
     },
     {
-      "rank": 13,
-      "ticker": "ETH",
+      "rank": 12,
+      "ticker": "ADA",
       "direction": null,
-      "score": 46,
+      "score": 48,
       "action": "HOLD",
       "regime": "RANGING",
       "size_pct": 0,
@@ -1285,25 +1253,25 @@
       "tp1": null,
       "tp2": null,
       "sources": {
-        "onchain": 39,
-        "ta": 50,
-        "technical": 50,
+        "onchain": 47,
+        "ta": 47,
+        "technical": 47,
         "news": 50,
         "sentiment": 55,
-        "momentum": 53,
+        "momentum": 58,
         "onchain_debug": {
-          "momentum": 47.8,
-          "cvd": 47.5,
-          "cvd_ratio": -0.013,
-          "sm": 12.5,
+          "momentum": 48.8,
+          "cvd": 42.9,
+          "cvd_ratio": -0.036,
+          "sm": 50.0,
           "funding": 50.0,
           "oi": 50,
           "liq": 50,
           "has_liq_data": null,
-          "final": 39.6
+          "final": 48.0
         }
       },
-      "momentum_score": 53,
+      "momentum_score": 58,
       "onchain_data_thin": false,
       "market_structure": {
         "1h": {
@@ -1320,32 +1288,130 @@
         }
       },
       "levels": null,
-      "fib_position": 0.17582866718437065,
+      "fib_position": 0.129032258064516,
       "entry_quality": null,
       "layers": {
         "smart_money": {
           "long_usd": 0.0,
-          "short_usd": 58071846.830736004,
+          "short_usd": 0.0,
           "n_long": 0,
-          "n_short": 3,
-          "net": -1.0,
-          "total_usd": 58071847,
-          "verdict": "short"
+          "n_short": 0,
+          "net": 0.0,
+          "total_usd": 0,
+          "verdict": "neutral"
         },
         "cvd": {
           "read": "neutral",
-          "ratio_4h": -0.013,
-          "px_4h": 0.75,
-          "oi_4h": -0.32,
-          "oi_24h": -1.73
+          "ratio_4h": -0.036,
+          "px_4h": 1.76,
+          "oi_4h": 1.42,
+          "oi_24h": 2.47
         },
         "funding_h": 0.00125,
         "flush": {
-          "score": 25,
+          "score": 0,
+          "level": "low",
+          "parts": {}
+        },
+        "pump": {
+          "score": 0,
+          "level": "low",
+          "parts": {}
+        },
+        "agree": 0,
+        "confirms": [],
+        "veto": null,
+        "note": "SM neutral (+0.00, $0M) · CVD neutral (-0.04, OI4h 1.42%) · Flush 0 low · Pump 0 low · fund +0.0013%/h"
+      },
+      "onchain_debug": {
+        "momentum": 48.8,
+        "cvd": 42.9,
+        "cvd_ratio": -0.036,
+        "sm": 50.0,
+        "funding": 50.0,
+        "oi": 50,
+        "liq": 50,
+        "has_liq_data": null,
+        "final": 48.0
+      },
+      "choch_override": false,
+      "risk_flag": "Auto-generated 14:02. TA 47/100 (daily 40 · 1h momo 58 · MS 1h:neutral · 15m:neutral). Current $0.22 (+1.85% 24h).",
+      "invalidation_note": "Not entered"
+    },
+    {
+      "rank": 13,
+      "ticker": "LTC",
+      "direction": null,
+      "score": 48,
+      "action": "HOLD",
+      "regime": "RANGING",
+      "size_pct": 0,
+      "entry_low": null,
+      "entry_high": null,
+      "sl": null,
+      "tp1": null,
+      "tp2": null,
+      "sources": {
+        "onchain": 46,
+        "ta": 48,
+        "technical": 48,
+        "news": 50,
+        "sentiment": 55,
+        "momentum": 54,
+        "onchain_debug": {
+          "momentum": 48.3,
+          "cvd": 38.5,
+          "cvd_ratio": -0.058,
+          "sm": 50.0,
+          "funding": 50.0,
+          "oi": 50,
+          "liq": 50,
+          "has_liq_data": null,
+          "final": 46.8
+        }
+      },
+      "momentum_score": 54,
+      "onchain_data_thin": false,
+      "market_structure": {
+        "1h": {
+          "trend": "neutral",
+          "last_event": null,
+          "last_event_price": null,
+          "score": 50
+        },
+        "15m": {
+          "trend": "neutral",
+          "last_event": null,
+          "last_event_price": null,
+          "score": 50
+        }
+      },
+      "levels": null,
+      "fib_position": 0.160196828868234,
+      "entry_quality": null,
+      "layers": {
+        "smart_money": {
+          "long_usd": 0.0,
+          "short_usd": 0.0,
+          "n_long": 0,
+          "n_short": 0,
+          "net": 0.0,
+          "total_usd": 0,
+          "verdict": "neutral"
+        },
+        "cvd": {
+          "read": "neutral",
+          "ratio_4h": -0.058,
+          "px_4h": 1.05,
+          "oi_4h": 0.98,
+          "oi_24h": -2.17
+        },
+        "funding_h": 0.00125,
+        "flush": {
+          "score": 15,
           "level": "low",
           "parts": {
-            "compression": 15,
-            "whales_short": 10
+            "compression": 15
           }
         },
         "pump": {
@@ -1358,25 +1424,131 @@
         "agree": 0,
         "confirms": [],
         "veto": null,
-        "note": "SM short (-1.00, $58M) · CVD neutral (-0.01, OI4h -0.32%) · Flush 25 low · Pump 10 low · fund +0.0013%/h"
+        "note": "SM neutral (+0.00, $0M) · CVD neutral (-0.06, OI4h 0.98%) · Flush 15 low · Pump 10 low · fund +0.0013%/h"
       },
       "onchain_debug": {
-        "momentum": 47.8,
-        "cvd": 47.5,
-        "cvd_ratio": -0.013,
-        "sm": 12.5,
+        "momentum": 48.3,
+        "cvd": 38.5,
+        "cvd_ratio": -0.058,
+        "sm": 50.0,
         "funding": 50.0,
         "oi": 50,
         "liq": 50,
         "has_liq_data": null,
-        "final": 39.6
+        "final": 46.8
       },
       "choch_override": false,
-      "risk_flag": "Auto-generated 13:56. TA 50/100 (daily 50 · 1h momo 53 · MS 1h:neutral · 15m:neutral). Current $2404.04 (-0.07% 24h).",
+      "risk_flag": "Auto-generated 14:02. TA 48/100 (daily 47 · 1h momo 54 · MS 1h:neutral · 15m:neutral). Current $59.64 (-0.18% 24h).",
       "invalidation_note": "Not entered"
     },
     {
       "rank": 14,
+      "ticker": "NEAR",
+      "direction": null,
+      "score": 44,
+      "action": "HOLD",
+      "regime": "RANGING",
+      "size_pct": 0,
+      "entry_low": null,
+      "entry_high": null,
+      "sl": null,
+      "tp1": null,
+      "tp2": null,
+      "sources": {
+        "onchain": 38,
+        "ta": 47,
+        "technical": 47,
+        "news": 50,
+        "sentiment": 55,
+        "momentum": 57,
+        "onchain_debug": {
+          "momentum": 44.0,
+          "cvd": 38.6,
+          "cvd_ratio": -0.057,
+          "sm": 34.0,
+          "funding": 50.0,
+          "oi": 28,
+          "liq": 50,
+          "has_liq_data": null,
+          "final": 38.7
+        }
+      },
+      "momentum_score": 57,
+      "onchain_data_thin": false,
+      "market_structure": {
+        "1h": {
+          "trend": "bearish",
+          "last_event": null,
+          "last_event_price": null,
+          "score": 40
+        },
+        "15m": {
+          "trend": "neutral",
+          "last_event": null,
+          "last_event_price": null,
+          "score": 50
+        }
+      },
+      "levels": null,
+      "fib_position": 0.4203454894433781,
+      "entry_quality": null,
+      "layers": {
+        "smart_money": {
+          "long_usd": 0.0,
+          "short_usd": 6388650.34512,
+          "n_long": 0,
+          "n_short": 2,
+          "net": -1.0,
+          "total_usd": 6388650,
+          "verdict": "short"
+        },
+        "cvd": {
+          "read": "lev_pump",
+          "ratio_4h": -0.057,
+          "px_4h": 2.33,
+          "oi_4h": 6.37,
+          "oi_24h": 0.85
+        },
+        "funding_h": 0.00125,
+        "flush": {
+          "score": 35,
+          "level": "elevated",
+          "parts": {
+            "compression": 15,
+            "whales_short": 10,
+            "cvd_lev_pump": 10
+          }
+        },
+        "pump": {
+          "score": 25,
+          "level": "low",
+          "parts": {
+            "compression": 10,
+            "sfp_bull": 15
+          }
+        },
+        "agree": 0,
+        "confirms": [],
+        "veto": null,
+        "note": "SM short (-1.00, $6M) · CVD lev_pump (-0.06, OI4h 6.37%) · Flush 35 elevated · Pump 25 low · fund +0.0013%/h"
+      },
+      "onchain_debug": {
+        "momentum": 44.0,
+        "cvd": 38.6,
+        "cvd_ratio": -0.057,
+        "sm": 34.0,
+        "funding": 50.0,
+        "oi": 28,
+        "liq": 50,
+        "has_liq_data": null,
+        "final": 38.7
+      },
+      "choch_override": false,
+      "risk_flag": "Auto-generated 14:02. TA 47/100 (daily 48 · 1h momo 57 · MS 1h:bearish · 15m:neutral). Current $4.79 (-2.32% 24h).",
+      "invalidation_note": "Not entered"
+    },
+    {
+      "rank": 15,
       "ticker": "TRX",
       "direction": null,
       "score": 43,
@@ -1396,15 +1568,15 @@
         "sentiment": 55,
         "momentum": 47,
         "onchain_debug": {
-          "momentum": 49.8,
+          "momentum": 49.9,
           "cvd": 10,
-          "cvd_ratio": -0.413,
+          "cvd_ratio": -0.498,
           "sm": 50.0,
-          "funding": 50.0,
+          "funding": 52.2,
           "oi": 45,
           "liq": 50,
           "has_liq_data": null,
-          "final": 39.2
+          "final": 39.6
         }
       },
       "momentum_score": 47,
@@ -1419,12 +1591,12 @@
         "15m": {
           "trend": "bearish",
           "last_event": "BOS_DOWN",
-          "last_event_price": 0.3306,
+          "last_event_price": 0.3307,
           "score": 25
         }
       },
       "levels": null,
-      "fib_position": 0.16143497757847508,
+      "fib_position": 0.16591928251121002,
       "entry_quality": null,
       "layers": {
         "smart_money": {
@@ -1437,13 +1609,13 @@
           "verdict": "neutral"
         },
         "cvd": {
-          "read": "spot_led_down",
-          "ratio_4h": -0.413,
-          "px_4h": -0.54,
+          "read": "spot_distrib",
+          "ratio_4h": -0.498,
+          "px_4h": -0.45,
           "oi_4h": -2.16,
           "oi_24h": -6.55
         },
-        "funding_h": 0.00125,
+        "funding_h": 0.0008194599999999999,
         "flush": {
           "score": 15,
           "level": "low",
@@ -1459,130 +1631,25 @@
         "agree": 0,
         "confirms": [],
         "veto": null,
-        "note": "SM neutral (+0.00, $0M) · CVD spot_led_down (-0.41, OI4h -2.16%) · Flush 15 low · Pump 0 low · fund +0.0013%/h"
+        "note": "SM neutral (+0.00, $0M) · CVD spot_distrib (-0.50, OI4h -2.16%) · Flush 15 low · Pump 0 low · fund +0.0008%/h"
       },
       "onchain_debug": {
-        "momentum": 49.8,
+        "momentum": 49.9,
         "cvd": 10,
-        "cvd_ratio": -0.413,
+        "cvd_ratio": -0.498,
         "sm": 50.0,
-        "funding": 50.0,
+        "funding": 52.2,
         "oi": 45,
         "liq": 50,
         "has_liq_data": null,
-        "final": 39.2
+        "final": 39.6
       },
       "choch_override": false,
-      "risk_flag": "Auto-generated 13:57. TA 43/100 (daily 50 · 1h momo 47 · MS 1h:neutral · 15m:bearish/BOS_DOWN). Current $0.33 (-0.51% 24h).",
-      "invalidation_note": "Not entered"
-    },
-    {
-      "rank": 15,
-      "ticker": "NEAR",
-      "direction": null,
-      "score": 43,
-      "action": "HOLD",
-      "regime": "RANGING",
-      "size_pct": 0,
-      "entry_low": null,
-      "entry_high": null,
-      "sl": null,
-      "tp1": null,
-      "tp2": null,
-      "sources": {
-        "onchain": 38,
-        "ta": 43,
-        "technical": 43,
-        "news": 50,
-        "sentiment": 55,
-        "momentum": 46,
-        "onchain_debug": {
-          "momentum": 40.2,
-          "cvd": 39.5,
-          "cvd_ratio": -0.052,
-          "sm": 34.0,
-          "funding": 50.0,
-          "oi": 28,
-          "liq": 50,
-          "has_liq_data": null,
-          "final": 38.1
-        }
-      },
-      "momentum_score": 46,
-      "onchain_data_thin": false,
-      "market_structure": {
-        "1h": {
-          "trend": "bearish",
-          "last_event": null,
-          "last_event_price": null,
-          "score": 40
-        },
-        "15m": {
-          "trend": "neutral",
-          "last_event": null,
-          "last_event_price": null,
-          "score": 50
-        }
-      },
-      "levels": null,
-      "fib_position": 0.3905950095969292,
-      "entry_quality": null,
-      "layers": {
-        "smart_money": {
-          "long_usd": 0.0,
-          "short_usd": 6388650.34512,
-          "n_long": 0,
-          "n_short": 2,
-          "net": -1.0,
-          "total_usd": 6388650,
-          "verdict": "short"
-        },
-        "cvd": {
-          "read": "neutral",
-          "ratio_4h": -0.052,
-          "px_4h": 0.36,
-          "oi_4h": 4.42,
-          "oi_24h": -2.3
-        },
-        "funding_h": 0.00125,
-        "flush": {
-          "score": 25,
-          "level": "low",
-          "parts": {
-            "compression": 15,
-            "whales_short": 10
-          }
-        },
-        "pump": {
-          "score": 25,
-          "level": "low",
-          "parts": {
-            "compression": 10,
-            "sfp_bull": 15
-          }
-        },
-        "agree": 0,
-        "confirms": [],
-        "veto": null,
-        "note": "SM short (-1.00, $6M) · CVD neutral (-0.05, OI4h 4.42%) · Flush 25 low · Pump 25 low · fund +0.0013%/h"
-      },
-      "onchain_debug": {
-        "momentum": 40.2,
-        "cvd": 39.5,
-        "cvd_ratio": -0.052,
-        "sm": 34.0,
-        "funding": 50.0,
-        "oi": 28,
-        "liq": 50,
-        "has_liq_data": null,
-        "final": 38.1
-      },
-      "choch_override": false,
-      "risk_flag": "Auto-generated 13:57. TA 43/100 (daily 47 · 1h momo 46 · MS 1h:bearish · 15m:neutral). Current $4.73 (-4.52% 24h).",
+      "risk_flag": "Auto-generated 14:02. TA 43/100 (daily 50 · 1h momo 47 · MS 1h:neutral · 15m:bearish/BOS_DOWN). Current $0.33 (-0.48% 24h).",
       "invalidation_note": "Not entered"
     }
   ],
-  "aggregate_long_risk_pct": 0,
+  "aggregate_long_risk_pct": 0.3,
   "aggregate_short_risk_pct": 0,
   "correlation_warnings": [
     "Auto-fusion nie zawiera qualitative context (news, catalysts). Traktuj jako baseline — Claude fusion daje szerszy context."
@@ -1656,7 +1723,7 @@
     "age_days": 0
   },
   "crypto_picks_history": {
-    "generated_at": "2026-10-20T13:55:53+00:00",
+    "generated_at": "2026-10-20T14:01:21+00:00",
     "horizon_days": 7,
     "screener_v2_since": "2026-10-07",
     "note": "Główna miara to zwrot po 7 dniach od ceny z momentu picka. Hit rate liczony tylko dla celów oddalonych o ≥3.0% od wejścia — bliższe były dotykane w dniu zerowym i zawyżały wynik. Gdy cel i invalidation padną w tej samej świecy, liczone jako invalidated.",
@@ -2621,8 +2688,8 @@
     ]
   },
   "pump_radar": {
-    "generated_at": "2026-10-20T13:56:08.099038+00:00",
-    "universe_n": 71,
+    "generated_at": "2026-10-20T14:01:35.678403+00:00",
+    "universe_n": 70,
     "top": [],
     "near": [
       {
@@ -2634,14 +2701,14 @@
           "funding": 35
         },
         "tags": [],
-        "price": 1.6814,
-        "r24": -4.02,
-        "px_1h": -1.88,
-        "oi_1h": 0.3,
-        "oi_4h": 13.6,
-        "funding_8h": -0.2974,
-        "vol24": 36355902,
-        "oi_usd": 15541685,
+        "price": 1.6721,
+        "r24": -4.56,
+        "px_1h": -2.85,
+        "oi_1h": -1.4,
+        "oi_4h": 12.8,
+        "funding_8h": -0.2953,
+        "vol24": 35040951,
+        "oi_usd": 15431476,
         "whale_net_1h": 0,
         "whale_wallets": 0
       },
@@ -2654,35 +2721,34 @@
           "funding": 35
         },
         "tags": [],
-        "price": 0.05739,
-        "r24": -2.95,
-        "px_1h": 0.65,
-        "oi_1h": 1.1,
-        "oi_4h": 5.9,
-        "funding_8h": -0.1788,
-        "vol24": 5370539,
-        "oi_usd": 6050901,
+        "price": 0.05786,
+        "r24": -2.16,
+        "px_1h": 1.62,
+        "oi_1h": 1.7,
+        "oi_4h": 6.9,
+        "funding_8h": -0.1777,
+        "vol24": 5052726,
+        "oi_usd": 6108030,
         "whale_net_1h": 0,
         "whale_wallets": 0
       },
       {
         "ticker": "BR",
         "src": "MEXC",
-        "score": 30,
+        "score": 25,
         "level": "none",
         "parts": {
-          "funding": 25,
-          "oi_surge": 5
+          "funding": 25
         },
         "tags": [],
-        "price": 0.6702,
-        "r24": 8.79,
-        "px_1h": -0.9,
-        "oi_1h": 9.2,
-        "oi_4h": 100.7,
-        "funding_8h": -0.0378,
-        "vol24": 51949881,
-        "oi_usd": 15745102,
+        "price": 0.66449,
+        "r24": 7.87,
+        "px_1h": -2.11,
+        "oi_1h": 8.3,
+        "oi_4h": 99.8,
+        "funding_8h": -0.0369,
+        "vol24": 50021894,
+        "oi_usd": 15677226,
         "whale_net_1h": 0,
         "whale_wallets": 0
       }
@@ -2856,11 +2922,11 @@
     "errors": [
       "listings.upbit: HTTP Error 403: Forbidden"
     ],
-    "elapsed_s": 12.6,
+    "elapsed_s": 13.0,
     "hit_def": "+2.0% w 1h / +3.0% w 4h"
   },
   "correlation_matrix": {
-    "generated_at": "2026-10-20T13:56:16.563125+00:00",
+    "generated_at": "2026-10-20T14:01:43.250547+00:00",
     "7d": {
       "assets": [
         "BTC",
@@ -3843,7 +3909,7 @@
     }
   },
   "market_predictions": {
-    "generated_at": "2026-10-20T13:56:18.654886+00:00",
+    "generated_at": "2026-10-20T14:01:44.433733+00:00",
     "current": {
       "BTC": {
         "direction": "NEUTRAL",
@@ -3851,28 +3917,28 @@
         "up_pct": 50,
         "down_pct": 50,
         "interval": "5m",
-        "market_question": "Bitcoin Up or Down - October 20, 9:55AM-10:00AM ET",
-        "slug": "btc-updown-5m-1792504500",
+        "market_question": "Bitcoin Up or Down - October 20, 10:00AM-10:05AM ET",
+        "slug": "btc-updown-5m-1792504800",
         "source": "slug",
-        "price_at_snapshot": 81936.84,
-        "snapshot_time": "2026-10-20T13:56:18.168826+00:00",
+        "price_at_snapshot": 82334.45,
+        "snapshot_time": "2026-10-20T14:01:43.952649+00:00",
         "active": false,
-        "live_price": 81936.84,
+        "live_price": 82334.45,
         "live_change_pct": 0.0
       },
       "ETH": {
-        "direction": "NEUTRAL",
-        "pct": 50,
-        "up_pct": 50,
-        "down_pct": 50,
+        "direction": "UP",
+        "pct": 59,
+        "up_pct": 59,
+        "down_pct": 41,
         "interval": "5m",
-        "market_question": "Ethereum Up or Down - October 20, 9:55AM-10:00AM ET",
-        "slug": "eth-updown-5m-1792504500",
+        "market_question": "Ethereum Up or Down - October 20, 10:00AM-10:05AM ET",
+        "slug": "eth-updown-5m-1792504800",
         "source": "slug",
-        "price_at_snapshot": 2404.12,
-        "snapshot_time": "2026-10-20T13:56:18.654770+00:00",
-        "active": false,
-        "live_price": 2404.12,
+        "price_at_snapshot": 2418.77,
+        "snapshot_time": "2026-10-20T14:01:44.433574+00:00",
+        "active": true,
+        "live_price": 2418.77,
         "live_change_pct": 0.0
       }
     },
@@ -3893,26 +3959,11 @@
       },
       "stats_ready": true,
       "min_sample": 30,
-      "flat_count": 143,
-      "pending_count": 0,
+      "flat_count": 142,
+      "pending_count": 1,
       "baseline_note": "Punktem odniesienia jest 50% — rzut monetą. Poniżej tego prognozy szkodzą."
     },
     "log": [
-      {
-        "date": "2026-10-17",
-        "asset": "ETH",
-        "direction": "DOWN",
-        "pct": 55,
-        "up_pct": 45,
-        "down_pct": 55,
-        "interval": "5m",
-        "price_start": 2435.97,
-        "price_end": 2434.76,
-        "price_change_pct": -0.05,
-        "outcome": "flat",
-        "snapshot_time": "2026-10-17T07:41:18.654207+00:00",
-        "dead_zone_pct": 0.15
-      },
       {
         "date": "2026-10-17",
         "asset": "BTC",
@@ -6897,6 +6948,20 @@
         "outcome": "wrong",
         "snapshot_time": "2026-10-20T13:41:20.717634+00:00",
         "dead_zone_pct": 0.15
+      },
+      {
+        "date": "2026-10-20",
+        "asset": "ETH",
+        "direction": "UP",
+        "pct": 59,
+        "up_pct": 59,
+        "down_pct": 41,
+        "interval": "5m",
+        "price_start": 2418.77,
+        "price_end": null,
+        "price_change_pct": null,
+        "outcome": "pending",
+        "snapshot_time": "2026-10-20T14:01:44.433607+00:00"
       }
     ],
     "version": "2.0"
@@ -7526,5 +7591,5 @@
     "macro.stooq.GC=F: ValueError: stooq xauusd: 0 wierszy",
     "macro.GOLD: HTTPError: HTTP Error 429: Too Many Requests"
   ],
-  "conclusion": "Regime RANGING. Long risk 0.0% · Short risk 0.0% capital. Top pick: SOL score 55 (HOLD)."
+  "conclusion": "Regime RANGING. Long risk 0.3% · Short risk 0.0% capital. Top pick: SOL score 64 (BUY)."
 }
