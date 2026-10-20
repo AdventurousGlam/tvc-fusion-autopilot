@@ -58,6 +58,9 @@ const ALLOWED = new Set([
   'webkitAudioContext', 'ClipboardItem', 'Path2D', 'OffscreenCanvas', 'createImageBitmap',
   // z CDN
   'Chart',
+  // wczytywane lokalnie z /terminal/lightweight-charts.standalone.production.js
+  // (osobny <script src> w <head>, przed całym kodem terminala).
+  'LightweightCharts',
 ]);
 
 const files = process.argv.slice(2);

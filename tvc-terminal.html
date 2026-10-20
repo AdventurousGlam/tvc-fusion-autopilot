@@ -14,6 +14,8 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src https://api.allorigins.win https://api.alternative.me https://api.binance.com https://api.blockchain.info https://api.blocknative.com https://api.bybit.com https://api.coingecko.com https://api.github.com https://api.hyperliquid.xyz https://api.llama.fi https://api.xrpscan.com https://corsproxy.org https://data-api.binance.vision https://etf-proxy.nerdygets.workers.dev https://eth.drpc.org https://1rpc.io https://rpc.flashbots.net https://rpc-mainnet.suiscan.xyz https://ethereum-rpc.publicnode.com https://fapi.binance.com https://gist.githubusercontent.com https://mempool.space https://publicreporting.cftc.gov https://query1.finance.yahoo.com https://r.jina.ai https://solana-rpc.publicnode.com https://stablecoins.llama.fi https://stats-data.hyperliquid.xyz https://sui-rpc.publicnode.com https://www.deribit.com https://xrplcluster.com https://www.coindesk.com https://cointelegraph.com https://decrypt.co https://farside.co.uk wss://fstream.binance.com wss://stream.binance.com wss://stream.binance.com:9443; base-uri 'none'; form-action 'none'; object-src 'none'">
 <title>TVC Fusion Terminal</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
+<!-- TradingView Lightweight Charts™ v5.2.1 — Apache 2.0, © TradingView, Inc. https://www.tradingview.com/ (NOTICE + LICENSE obok w /terminal/) -->
+<script src="/terminal/lightweight-charts.standalone.production.js?v=5.2.1"></script>
 <!-- TVC Brand font — Fraunces (matches tradingventureclub.com serif italic style) -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -507,6 +509,35 @@
     content: attr(data-error); position: absolute; inset: 0;
     display: grid; place-items: center; color: var(--red); font-size: 11px;
     padding: 20px; text-align: center; white-space: pre-wrap;
+  }
+
+  /* ── Wykres TradingView Lightweight Charts (20.10.2026) ── nadpisuje reguły powyżej */
+  .td-chart-wrap { height: clamp(480px, 66vh, 860px); min-height: 360px; padding: 0; cursor: default; }
+  .td-lwc { position: absolute; inset: 0; }
+  .td-lwc a#tv-attr-logo { opacity: .55; }
+  .td-chart-wrap .ohlc-readout { top: 6px; left: 8px; right: 150px; z-index: 4; }
+  .td-chart-wrap .zoom-hint { top: 32px; left: 8px; z-index: 4; animation: tvcHintFade .6s ease 9s forwards; }
+  @keyframes tvcHintFade { to { opacity: 0; visibility: hidden; } }
+  .td-chart-wrap .zoom-reset-btn { top: 6px; right: 72px; z-index: 5; }
+  .td-chart-wrap::after { z-index: 4; }
+  .td-chart-wrap.loading::before, .td-chart-wrap.error::before { z-index: 6; background: rgba(10,14,26,0.72); }
+  .td-volume-wrap { height: auto; display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 5px 10px; margin-bottom: 4px; }
+  .td-volume-wrap .vol-label, .td-volume-wrap .vol-stats { position: static; }
+  .td-chart-credit { font-size: 9px; color: var(--text-dim); text-align: right; margin: 0 2px 10px; }
+  .td-chart-credit a { color: var(--text-dim); text-decoration: underline; text-decoration-color: rgba(125,139,171,0.4); }
+  .td-chart-credit a:hover { color: var(--gold); }
+  .token-detail.fs .td-chart-wrap { height: calc(100vh - 170px); }
+  @media (max-width: 768px) {
+    .td-chart-wrap { height: clamp(380px, 62vh, 620px); min-height: 340px; padding: 0; }
+    .td-chart-wrap .ohlc-readout { left: 4px; flex-wrap: nowrap; overflow: hidden; white-space: nowrap; font-size: 9.5px; gap: 6px; padding: 2px 6px; }
+    .td-chart-wrap .ohlc-readout .ohlc-vol { display: none; }
+    .td-chart-wrap .zoom-reset-btn { padding: 3px 6px; font-size: 9px; }
+    .td-volume-wrap { height: auto; }
+    .td-volume-wrap .vol-stats { text-align: left; }
+    .token-detail.fs .td-chart-wrap { height: calc(100vh - 140px); }
+  }
+  @media (max-height: 520px) and (orientation: landscape) {
+    .token-detail.fs .td-chart-wrap { height: calc(100vh - 90px); }
   }
 
   /* Pressure indicator */
@@ -1252,10 +1283,14 @@ const I18N = {
   journal_no_filter:  { pl: 'Brak wpisów dla',                     en: 'No entries for' },
   journal_change:     { pl: 'Zmień filtr.',                         en: 'Change filter.' },
   // ─── CHART ───
-  zoom_hint:          { pl: 'scroll · zoom Y · shift+scroll · zoom X · ciągnij · pan X+Y · ciągnij oś Y (prawa krawędź) · skaluj Y jak TradingView · EMA21 blue / EMA50 purple', en: 'wheel · zoom Y · shift+wheel · zoom X · drag · pan X+Y · drag on Y-axis (right edge) · scale Y like TradingView · EMA21 blue / EMA50 purple' },
+  zoom_hint:          { pl: 'kółko / pinch · zoom · przeciągnij · przesuń · ciągnij oś ceny lub czasu · skaluj · 2× klik na osi · auto · EMA21 niebieska / EMA50 fiolet', en: 'wheel / pinch · zoom · drag · pan · drag price or time axis · scale · double-click axis · auto · EMA21 blue / EMA50 purple' },
   vol_label:          { pl: 'Wolumen spot · Agresywne Buy vs Sell (dane Binance taker)', en: 'Spot volume · Aggressive Buy vs Sell (from Binance taker data)' },
   fs_btn:             { pl: '⛶ Pełny ekran', en: '⛶ Full screen' },
   fs_exit:            { pl: '⛶ Zamknij pełny ekran', en: '⛶ Exit full screen' },
+  chart_reset:        { pl: 'Reset ⟲', en: 'Reset ⟲' },
+  chart_reset_title:  { pl: 'Przywróć widok: wszystkie świece i autoskala ceny (to samo: 2× klik na wykresie)', en: 'Reset view: all candles and price auto-scale (same as double-click on the chart)' },
+  chart_attr:         { pl: 'Wykres: TradingView Lightweight Charts™', en: 'Chart: TradingView Lightweight Charts™' },
+  chart_lib_missing:  { pl: 'Nie wczytała się biblioteka wykresu (lightweight-charts.standalone.production.js). Sprawdź, czy plik jest w /terminal/.', en: 'Chart library failed to load (lightweight-charts.standalone.production.js). Check that the file is in /terminal/.' },
   labels_full:        { pl: '🏷 Etykiety: pełne', en: '🏷 Labels: full' },
   labels_min:         { pl: '🏷 Etykiety: min', en: '🏷 Labels: min' },
   labels_off:         { pl: '🏷 Etykiety: brak', en: '🏷 Labels: off' },
@@ -3245,6 +3280,7 @@ function closeTokenDetail(ticker) {
   if (row) row.classList.remove('expanded');
   if (tokenLiveRefresh[ticker]) { clearInterval(tokenLiveRefresh[ticker]); delete tokenLiveRefresh[ticker]; }
   stopHeatmapPolling(ticker);  // stop REST depth polling (only runs for expanded token)
+  destroyTokenChart(ticker);   // wykres LWC + strumień świec live (20.10.2026)
   // NOTE: nie zamykamy WS przy collapse — background monitoring wszystkich tokenów
   // WS zamykane tylko na page unload. Alerts + journal działają dla wszystkich fusion tickers.
   expandedToken = null;
@@ -9128,16 +9164,16 @@ function renderTokenDetailShell(ticker) {
     </div>
 
     <div class="td-chart-wrap" id="chart-wrap-${ticker}">
+      <div class="td-lwc" id="td-lwc-${ticker}"></div>
       <div class="ohlc-readout" id="ohlc-readout-${ticker}"></div>
       <div class="zoom-hint">${t('zoom_hint')}</div>
-      <button class="zoom-reset-btn" onclick="resetZoom('${ticker}')">Reset ⟲</button>
-      <canvas id="td-chart-${ticker}"></canvas>
+      <button class="zoom-reset-btn" id="zoom-reset-${ticker}" onclick="resetZoom('${ticker}')" title="${t('chart_reset_title')}">${t('chart_reset')}</button>
     </div>
     <div class="td-volume-wrap" id="vol-wrap-${ticker}">
       <div class="vol-label">${t('vol_label')}</div>
       <div class="vol-stats" id="vol-stats-${ticker}"></div>
-      <canvas id="td-vol-${ticker}"></canvas>
     </div>
+    <div class="td-chart-credit"><a href="https://www.tradingview.com/" target="_blank" rel="noopener">${t('chart_attr')}</a></div>
 
     <div id="interp-slot-${ticker}"></div>
     <div id="pressure-slot-${ticker}"></div>
@@ -9350,13 +9386,304 @@ async function changeTimeframe(ticker, tf) {
 }
 
 /* ============================================================
-   RENDER TOKEN CHART with overlays
+   RENDER TOKEN CHART — TradingView Lightweight Charts™ v5.2.1
+   (Apache 2.0, © TradingView, Inc. — https://www.tradingview.com/)
+   20.10.2026: zamiast Chart.js + własnego zoomu. Biblioteka daje płynny zoom
+   kółkiem/pinch, przeciąganie, crosshair z ceną i czasem na osiach,
+   autoskalę + ręczne skalowanie osi (ciągnij oś, 2× klik = auto).
+   Logika TA (detect*, computePressure, predZones, heatmapa, ściany) — BEZ ZMIAN;
+   zmienił się tylko sposób rysowania:
+     • świece, EMA21/EMA50, wolumen (histogram, osobna skala) → natywne serie,
+     • poziomy (S/R, LIQ, ENTRY/SL/TP, EMA200D/MA200D/MA200W, BRK, Pred, ściany) → price lines,
+     • strefy (S/R, OB, FVG, Pred, pas ścian, strefa wejścia), SFP, BRK-trójkąty,
+       heatmapa i etykiety bez kolizji → własny primitive (canvas) na współrzędnych wykresu.
    ============================================================ */
-const tokenCharts = {};
+const tokenCharts = {};   // { [ticker]: kontroler } — ma .update() .resize() .destroy() (zgodność z wywołaniami z WS / fullscreen)
+const volumeCharts = {};  // wolumen jest teraz w tym samym wykresie; obiekt zostaje pusty dla zgodności (?.resize())
+const _lwcWarned = {};
+function _lwcWarnOnce(key, e) { if (_lwcWarned[key]) return; _lwcWarned[key] = 1; console.warn(`[chart] ${key}`, e); }
+function _lwcLocale() { return _lang === 'en' ? 'en-US' : 'pl-PL'; }
+function _lwcCssVar(name, fb) {
+  try { const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim(); return v || fb; } catch (e) { return fb; }
+}
+function _lwcPrecision(p) {
+  p = Math.abs(p || 0);
+  if (p >= 10) return 2;
+  if (p >= 1) return 4;
+  if (p >= 0.01) return 5;
+  return 7;
+}
+const _LS = { solid: 0, dotted: 1, dashed: 2, large: 3, sparse: 4 }; // LightweightCharts.LineStyle
+
+// Primitive: dwie warstwy — 'bottom' (heatmapa, pod świecami) i 'top' (strefy, znaczniki, etykiety).
+class TvcOverlayPrimitive {
+  constructor(ctrl) {
+    this._ctrl = ctrl; this._req = null;
+    const mk = (z, fnName) => ({
+      zOrder: () => z,
+      renderer: () => ({
+        draw: (target) => target.useMediaCoordinateSpace(scope => {
+          const fn = ctrl[fnName];
+          if (!fn) return;
+          try { scope.context.save(); fn(scope.context, scope.mediaSize); }
+          catch (e) { _lwcWarnOnce(fnName, e); }
+          finally { scope.context.restore(); }
+        })
+      })
+    });
+    this._views = [mk('bottom', 'drawBottom'), mk('top', 'drawTop')];
+  }
+  attached(p) { this._req = p.requestUpdate; }
+  detached() { this._req = null; }
+  updateAllViews() {}
+  paneViews() { return this._views; }
+  requestUpdate() { if (this._req) this._req(); }
+}
+
+function _lwcTickFormatter(time, type) {
+  const d = new Date(time * 1000), loc = _lwcLocale();
+  // TickMarkType: 0 Year, 1 Month, 2 DayOfMonth, 3 Time, 4 TimeWithSeconds
+  if (type === 0) return String(d.getFullYear());
+  if (type === 1) return d.toLocaleDateString(loc, { month: 'short' });
+  if (type === 2) return d.toLocaleDateString(loc, { day: '2-digit', month: '2-digit' });
+  return d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit', hour12: false });
+}
+function _lwcTimeLabel(ctrl, time) {
+  const d = new Date(time * 1000), loc = _lwcLocale();
+  const date = d.toLocaleDateString(loc, { day: '2-digit', month: '2-digit', year: '2-digit' });
+  return ctrl && ctrl.intraday ? `${date} ${d.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit', hour12: false })}` : date;
+}
+
+function ensureTokenChart(ticker) {
+  const host = document.getElementById(`td-lwc-${ticker}`);
+  const wrap = document.getElementById(`chart-wrap-${ticker}`);
+  if (!host) return null;
+  const prev = tokenCharts[ticker];
+  if (prev && prev.host === host) return prev;
+  if (prev) prev.destroy();
+  if (typeof LightweightCharts === 'undefined' || !LightweightCharts.createChart) {
+    wrap?.classList.add('error');
+    wrap?.setAttribute('data-error', t('chart_lib_missing'));
+    return null;
+  }
+  const L = LightweightCharts;
+  const isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  const ctrl = { ticker, host, wrap, L, priceLines: { static: [], walls: [], live: null }, barByTime: new Map(), tsToIndex: new Map(), hmLabels: [], hovering: false, lastTime: 0 };
+  const bg = _lwcCssVar('--bg-elev', '#0f1526');
+  const chart = L.createChart(host, {
+    autoSize: true,
+    layout: { background: { type: 'solid', color: bg }, textColor: '#7d8bab', fontSize: 11, fontFamily: 'SF Mono, Menlo, Consolas, monospace', attributionLogo: true, panes: { enableResize: false } },
+    grid: { vertLines: { color: 'rgba(30,42,68,0.35)' }, horzLines: { color: 'rgba(30,42,68,0.35)' } },
+    crosshair: {
+      mode: L.CrosshairMode.Normal,
+      vertLine: { color: 'rgba(226,232,240,0.45)', width: 1, style: _LS.dashed, labelBackgroundColor: '#2a3654' },
+      horzLine: { color: 'rgba(226,232,240,0.45)', width: 1, style: _LS.dashed, labelBackgroundColor: '#2a3654' }
+    },
+    rightPriceScale: { borderColor: '#1e2a44', scaleMargins: { top: 0.08, bottom: 0.22 }, alignLabels: true, entireTextOnly: true },
+    timeScale: { borderColor: '#1e2a44', timeVisible: true, secondsVisible: false, rightOffset: 4, barSpacing: 8, minBarSpacing: 0.5, tickMarkFormatter: _lwcTickFormatter },
+    localization: { locale: _lwcLocale(), timeFormatter: (tm) => _lwcTimeLabel(ctrl, tm) },
+    handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: !isTouch },
+    handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true }, axisDoubleClickReset: { time: true, price: true } },
+    kineticScroll: { touch: true, mouse: false }
+  });
+  ctrl.chart = chart;
+  // Wolumen: dwie nakładające się kolumny na osobnej (niewidocznej) skali w dolnych ~20% —
+  // czerwona = całość, zielona = agresywny buy (taker) → wygląda jak dawny stos Buy/Sell.
+  ctrl.volTotal = chart.addSeries(L.HistogramSeries, { priceScaleId: 'vol', priceFormat: { type: 'volume' }, color: 'rgba(248,113,113,0.45)', lastValueVisible: false, priceLineVisible: false });
+  ctrl.volBuy = chart.addSeries(L.HistogramSeries, { priceScaleId: 'vol', priceFormat: { type: 'volume' }, color: 'rgba(52,211,153,0.55)', lastValueVisible: false, priceLineVisible: false });
+  chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+  ctrl.candles = chart.addSeries(L.CandlestickSeries, {
+    upColor: 'rgba(52,211,153,0.9)', downColor: 'rgba(248,113,113,0.9)',
+    borderUpColor: '#34D399', borderDownColor: '#F87171',
+    wickUpColor: 'rgba(52,211,153,0.85)', wickDownColor: 'rgba(248,113,113,0.85)',
+    priceLineVisible: true, lastValueVisible: true,
+    // Autoskala: świece + poziomy setupu/ceny live, jeśli są blisko (≤60% zakresu świec poza nim) —
+    // daleki TP2 nie zgniata świec. Dalsze poziomy widać po przeciągnięciu osi ceny.
+    autoscaleInfoProvider: (orig) => {
+      const r = orig();
+      if (!r || !r.priceRange || !ctrl.autoExtra || !ctrl.autoExtra.length) return r;
+      let { minValue, maxValue } = r.priceRange;
+      const span = Math.max(1e-9, maxValue - minValue), lo = minValue - span * 0.6, hi = maxValue + span * 0.6;
+      for (const p of ctrl.autoExtra) if (p >= lo && p <= hi) { minValue = Math.min(minValue, p); maxValue = Math.max(maxValue, p); }
+      return { priceRange: { minValue, maxValue }, margins: r.margins };
+    }
+  });
+  ctrl.ema21 = chart.addSeries(L.LineSeries, { color: 'rgba(96,165,250,0.85)', lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  ctrl.ema50 = chart.addSeries(L.LineSeries, { color: 'rgba(167,139,250,0.85)', lineWidth: 1, lineStyle: _LS.dashed, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  ctrl.primitive = new TvcOverlayPrimitive(ctrl);
+  ctrl.candles.attachPrimitive(ctrl.primitive);
+
+  // OHLC + wolumen pod kursorem (pasek u góry), bez kursora → ostatnia świeca
+  chart.subscribeCrosshairMove(param => {
+    ctrl.hovering = !!(param && param.time && param.point);
+    lwcUpdateReadout(ticker, ctrl.hovering ? param.time : null);
+  });
+  // Zapamiętaj widok (zakres świec + ręczna skala ceny) per ticker i interwał
+  let saveT = null;
+  const persist = () => {
+    clearTimeout(saveT);
+    saveT = setTimeout(() => {
+      if (!tokenCharts[ticker] || tokenCharts[ticker] !== ctrl || ctrl._restoring) return;
+      const lr = chart.timeScale().getVisibleLogicalRange();
+      if (!lr) return;
+      const ps = chart.priceScale('right');
+      const manual = ps.options().autoScale === false;
+      const pr = manual ? ps.getVisibleRange() : null;
+      userZoom[ticker] = { tf: ctrl.tf, v: 2, lFrom: lr.from, lTo: lr.to, pFrom: pr ? pr.from : null, pTo: pr ? pr.to : null };
+      saveZoom();
+    }, 400);
+  };
+  chart.timeScale().subscribeVisibleLogicalRangeChange(persist);
+  ctrl.persist = persist;
+  // Przyciski nad wykresem nie mogą wjeżdżać na oś ceny
+  ctrl.placeButtons = () => {
+    try {
+      const w = chart.priceScale('right').width() || 60;
+      const btn = document.getElementById(`zoom-reset-${ticker}`);
+      if (btn) btn.style.right = (w + 8) + 'px';
+      const ro = document.getElementById(`ohlc-readout-${ticker}`);
+      if (ro) ro.style.right = (w + 16 + (btn ? btn.offsetWidth : 70)) + 'px';
+    } catch (e) {}
+  };
+  // 2× klik w obszarze świec = reset widoku (jak dawniej); 2× klik na osi resetuje tylko tę oś (biblioteka)
+  chart.subscribeDblClick(param => { if (param && param.point) resetZoom(ticker); });
+
+  ctrl.resetView = () => {
+    const ps = chart.priceScale('right');
+    ps.setAutoScale(true);
+    chart.timeScale().fitContent();
+  };
+  ctrl.resize = () => { /* autoSize: true — biblioteka sama śledzi rozmiar kontenera */ ctrl.placeButtons(); };
+  ctrl.update = () => {
+    if (!ctrl.host.isConnected) { ctrl.destroy(); return; }
+    lwcSyncWallLines(ctrl);
+    lwcSyncLivePriceLine(ctrl);
+    ctrl.primitive.requestUpdate();
+  };
+  ctrl.destroy = () => {
+    lwcStopLiveKline(ctrl);
+    clearTimeout(saveT);
+    try { chart.remove(); } catch (e) {}
+    if (tokenCharts[ticker] === ctrl) delete tokenCharts[ticker];
+  };
+  tokenCharts[ticker] = ctrl;
+  return ctrl;
+}
+
+function destroyTokenChart(ticker) { tokenCharts[ticker]?.destroy(); }
+
+// Jeden zestaw price lines (reuse istniejących zamiast tworzyć 10×/s przy WS)
+function _lwcSyncLines(ctrl, store, specs) {
+  const s = ctrl.candles, arr = ctrl.priceLines[store];
+  specs.forEach((spec, i) => {
+    const opts = { price: spec.price, color: spec.color, lineWidth: spec.width || 1, lineStyle: spec.style ?? _LS.dashed,
+      axisLabelVisible: spec.axis !== false, title: spec.title || '', lineVisible: true };
+    if (arr[i]) arr[i].applyOptions(opts); else arr[i] = s.createPriceLine(opts);
+  });
+  while (arr.length > specs.length) { const pl = arr.pop(); try { s.removePriceLine(pl); } catch (e) {} }
+}
+function _lwcAxisFor(prio) {
+  const mode = overlays.labels || 'full';
+  if (mode === 'off') return prio >= 3;
+  if (mode === 'min') return prio >= 3;
+  return prio >= 2;
+}
+function lwcSyncWallLines(ctrl) {
+  const specs = [];
+  const w = overlays.walls ? orderbookWalls[ctrl.ticker] : null;
+  if (w) {
+    for (const wall of (w.buyWalls || [])) specs.push({ price: wall.price, color: '#38BDF8', width: 2, style: _LS.solid, axis: _lwcAxisFor(3) });
+    for (const wall of (w.sellWalls || [])) specs.push({ price: wall.price, color: '#FB923C', width: 2, style: _LS.solid, axis: _lwcAxisFor(3) });
+  }
+  _lwcSyncLines(ctrl, 'walls', specs);
+}
+// Gdy strumień świec live nie działa (np. dane z CoinGecko), cena live z orderbooka jako osobna linia
+function lwcSyncLivePriceLine(ctrl) {
+  const live = livePrices[ctrl.ticker];
+  const klineOk = ctrl.klineWS && ctrl.klineWS.readyState === 1 && ctrl.klineMsgAt && Date.now() - ctrl.klineMsgAt < 15000;
+  if (!live || klineOk) {
+    if (ctrl.priceLines.live) { try { ctrl.candles.removePriceLine(ctrl.priceLines.live); } catch (e) {} ctrl.priceLines.live = null; }
+    return;
+  }
+  const opts = { price: live.price, color: live.change24h > 0 ? '#34D399' : '#F87171', lineWidth: 1, lineStyle: _LS.dotted, axisLabelVisible: true, title: 'LIVE' };
+  if (ctrl.priceLines.live) ctrl.priceLines.live.applyOptions(opts); else ctrl.priceLines.live = ctrl.candles.createPriceLine(opts);
+}
+
+// Strumień świec live z Binance (tylko podgląd na wykresie — nie zmienia ohlcCache ani detektorów TA)
+function lwcStartLiveKline(ctrl) {
+  lwcStopLiveKline(ctrl);
+  const cfg = TF_MAP[ctrl.tf] || TF_MAP['7D'];
+  const sym = BINANCE_SYMBOLS[ctrl.ticker];
+  if (!sym || !ctrl.fromBinance) return;
+  const gen = (ctrl.klineGen = (ctrl.klineGen || 0) + 1);
+  let tries = 0;
+  const open = () => {
+    if (gen !== ctrl.klineGen || tokenCharts[ctrl.ticker] !== ctrl) return;
+    let ws;
+    try { ws = new WebSocket(`wss://stream.binance.com:9443/ws/${sym.toLowerCase()}@kline_${cfg.interval}`); }
+    catch (e) { return; }
+    ctrl.klineWS = ws;
+    ws.onmessage = (ev) => {
+      try {
+        const k = JSON.parse(ev.data).k;
+        if (!k) return;
+        const time = Math.floor(k.t / 1000);
+        if (time < ctrl.lastTime) return;
+        const bar = { time, open: +k.o, high: +k.h, low: +k.l, close: +k.c };
+        const total = +k.v, buy = +k.V;
+        ctrl.candles.update(bar);
+        ctrl.volTotal.update({ time, value: total });
+        ctrl.volBuy.update({ time, value: buy });
+        ctrl.lastTime = time;
+        ctrl.barByTime.set(time, { o: bar.open, h: bar.high, l: bar.low, c: bar.close, v: total, bv: buy });
+        ctrl.klineMsgAt = Date.now(); tries = 0;
+        if (!ctrl.hovering) lwcUpdateReadout(ctrl.ticker, null);
+      } catch (e) { _lwcWarnOnce('kline parse', e); }
+    };
+    ws.onerror = () => {};
+    ws.onclose = () => {
+      if (gen !== ctrl.klineGen || tokenCharts[ctrl.ticker] !== ctrl) return;
+      if (++tries <= 5) setTimeout(open, 3000 * tries);
+    };
+  };
+  open();
+}
+function lwcStopLiveKline(ctrl) {
+  if (!ctrl) return;
+  ctrl.klineGen = (ctrl.klineGen || 0) + 1;
+  if (ctrl.klineWS) { try { ctrl.klineWS.onclose = null; ctrl.klineWS.close(); } catch (e) {} }
+  ctrl.klineWS = null; ctrl.klineMsgAt = 0;
+}
+
+function lwcUpdateReadout(ticker, time) {
+  const el = document.getElementById(`ohlc-readout-${ticker}`);
+  const ctrl = tokenCharts[ticker];
+  if (!el || !ctrl) return;
+  let tm = time;
+  if (tm == null) tm = ctrl.lastTime;
+  const b = ctrl.barByTime.get(tm);
+  if (!b) { el.innerHTML = ''; return; }
+  const chg = b.o !== 0 ? ((b.c - b.o) / b.o * 100) : 0;
+  const up = chg >= 0;
+  const color = up ? 'var(--green)' : 'var(--red)';
+  const volTxt = b.v != null && b.v > 0
+    ? `<span class="ohlc-item ohlc-vol">Vol <b style="color:var(--text-muted)">${fmtVol(b.v)}</b>${b.bv != null ? ` <span style="color:var(--green)">B ${(b.bv / b.v * 100).toFixed(0)}%</span>` : ''}</span>` : '';
+  el.innerHTML = `
+    <span class="ohlc-date">${_lwcTimeLabel(ctrl, tm)}</span>
+    <span class="ohlc-item">O <b style="color:${color}">$${fmt(b.o)}</b></span>
+    <span class="ohlc-item">H <b style="color:${color}">$${fmt(b.h)}</b></span>
+    <span class="ohlc-item">L <b style="color:${color}">$${fmt(b.l)}</b></span>
+    <span class="ohlc-item">C <b style="color:${color}">$${fmt(b.c)}</b></span>
+    <span class="ohlc-item ohlc-chg" style="color:${color}">${up ? '+' : ''}${chg.toFixed(2)}%</span>
+    ${volTxt}
+  `;
+}
+
 function renderTokenChart(ticker, ohlc) {
-  const canvas = document.getElementById(`td-chart-${ticker}`);
-  if (!canvas) return;
-  if (tokenCharts[ticker]) tokenCharts[ticker].destroy();
+  const ctrl = ensureTokenChart(ticker);
+  if (!ctrl || !Array.isArray(ohlc) || !ohlc.length) return;
+  const { chart, candles } = ctrl;
+  const L = ctrl.L;
 
   const currentDays = window[`__tf_${ticker}`] || 7;
   const labels = ohlc.map(c => {
@@ -9366,21 +9693,15 @@ function renderTokenChart(ticker, ohlc) {
       : d.toLocaleDateString(_lang === 'en' ? 'en-US' : 'pl-PL', { day: '2-digit', month: '2-digit' });
   });
   const closes = ohlc.map(c => c[4]);
-  // Candlestick data: floating-bar dataset for wicks
-  const wickData = ohlc.map(c => [c[3], c[2]]);                    // [low, high]
-  const wickColors = ohlc.map(c => c[4] >= c[1] ? 'rgba(52,211,153,0.85)' : 'rgba(248,113,113,0.85)');
   // EMA overlays
   const ema21 = computeEMA(closes, 21);
   const ema50 = computeEMA(closes, 50);
-  // Map ts → index for overlay plugin (category scale)
-  const tsToIndex = new Map(ohlc.map((c, i) => [c[0], i]));
   const dec = (lastFusion.decisions || []).find(d => d.ticker === ticker) || {};
 
-  // Backing data for the top-of-chart OHLC readout bar (TradingView/MEXC-style)
+  // Dane zapasowe (zgodność ze starszym kodem korzystającym z tokenChartData)
   tokenChartData[ticker] = { ohlc, labels };
-  updateOhlcReadout(ticker);
 
-  // TA calculations — cap output to reduce label clutter on tight ranges
+  // TA calculations — cap output to reduce label clutter on tight ranges  (BEZ ZMIAN)
   const tfForSFP = window[`__tf_${ticker}`] || '7D';
   const srZones = overlays.sr ? detectSupportResistance(ohlc).sort((a,b) => b.touches - a.touches).slice(0, 3) : [];
   const orderBlocks = overlays.ob ? detectOrderBlocks(ohlc).slice(-2) : [];
@@ -9396,26 +9717,6 @@ function renderTokenChart(ticker, ohlc) {
   // Render text-based Pred Zones summary (mobile-friendly, always visible)
   renderPredZonesSummary(ticker, predZones, tfForSFP);
 
-  // Y-axis: prefer user's saved zoom for this ticker, else auto-scale
-  const savedZoom = userZoom[ticker];
-  const currentTf = window[`__tf_${ticker}`] || '7D';
-  const useUserZoom = savedZoom && savedZoom.tf === currentTf;
-  let yMin, yMax;
-  if (useUserZoom) {
-    yMin = savedZoom.yMin;
-    yMax = savedZoom.yMax;
-  } else {
-    const allLows = ohlc.map(c => c[3]);
-    const allHighs = ohlc.map(c => c[2]);
-    const setupPrices = [dec.sl, dec.tp1, dec.tp2, dec.entry_low, dec.entry_high, livePrices[ticker]?.price]
-      .map(v => parseFloat(v)).filter(v => !isNaN(v) && v > 0);
-    const dataMin = Math.min(...allLows, ...setupPrices);
-    const dataMax = Math.max(...allHighs, ...setupPrices);
-    const range = Math.max(0.001, dataMax - dataMin);
-    yMin = dataMin - range * 0.05;
-    yMax = dataMax + range * 0.05;
-  }
-
   // Render pressure gauge
   if (overlays.pressure) {
     const slot = document.getElementById(`pressure-slot-${ticker}`);
@@ -9425,7 +9726,64 @@ function renderTokenChart(ticker, ohlc) {
     if (slot) slot.innerHTML = '';
   }
 
-  // ─── REJESTR ETYKIET ────────────────────────────────────────────────────
+  // ─── DANE ŚWIEC (tylko gdy zmieniły się dane / interwał — przełączanie nakładek nie resetuje widoku) ───
+  const dataChanged = ctrl.ohlcRef !== ohlc || ctrl.tf !== tfForSFP;
+  if (dataChanged) {
+    ctrl.tf = tfForSFP;
+    ctrl.ohlcRef = ohlc;
+    ctrl.fromBinance = ohlc[0] && ohlc[0].length >= 7;
+    const ivl = (TF_MAP[tfForSFP] || TF_MAP['7D']).interval;
+    ctrl.intraday = !/d|w|M/.test(ivl) || !ctrl.fromBinance;
+    ctrl.barByTime = new Map(); ctrl.tsToIndex = new Map();
+    const bars = [], vt = [], vb = [], e21 = [], e50 = [];
+    let lastT = -Infinity;
+    ohlc.forEach((c, i) => {
+      const time = Math.floor(c[0] / 1000);
+      if (!(time > lastT)) return;   // biblioteka wymaga rosnących, unikalnych czasów
+      lastT = time;
+      ctrl.tsToIndex.set(c[0], bars.length);
+      bars.push({ time, open: c[1], high: c[2], low: c[3], close: c[4] });
+      const v = c[5], bv = c[6];
+      if (v != null) { vt.push({ time, value: v }); vb.push({ time, value: bv || 0 }); }
+      e21.push(ema21[i] == null ? { time } : { time, value: ema21[i] });
+      e50.push(ema50[i] == null ? { time } : { time, value: ema50[i] });
+      ctrl.barByTime.set(time, { o: c[1], h: c[2], l: c[3], c: c[4], v: v ?? null, bv: bv ?? null });
+    });
+    ctrl.lastTime = lastT;
+    const prec = _lwcPrecision(bars.length ? bars[bars.length - 1].close : 1);
+    candles.applyOptions({ priceFormat: { type: 'price', precision: prec, minMove: Math.pow(10, -prec) } });
+    ctrl.ema21.applyOptions({ priceFormat: { type: 'price', precision: prec, minMove: Math.pow(10, -prec) } });
+    ctrl.ema50.applyOptions({ priceFormat: { type: 'price', precision: prec, minMove: Math.pow(10, -prec) } });
+    candles.setData(bars);
+    ctrl.volTotal.setData(vt);
+    ctrl.volBuy.setData(vb);
+    ctrl.ema21.setData(e21);
+    ctrl.ema50.setData(e50);
+    chart.applyOptions({ timeScale: { timeVisible: ctrl.intraday }, localization: { locale: _lwcLocale() } });
+    // Widok: zapisany przez użytkownika (ten sam interwał) albo wszystkie świece
+    const z = userZoom[ticker];
+    ctrl._restoring = true;
+    if (z && z.v === 2 && z.tf === tfForSFP && isFinite(z.lFrom) && isFinite(z.lTo)) {
+      chart.timeScale().setVisibleLogicalRange({ from: z.lFrom, to: z.lTo });
+      if (z.pFrom != null && z.pTo != null) { const ps = chart.priceScale('right'); ps.setAutoScale(false); ps.setVisibleRange({ from: z.pFrom, to: z.pTo }); }
+      else chart.priceScale('right').setAutoScale(true);
+    } else {
+      ctrl.resetView();
+    }
+    setTimeout(() => { ctrl._restoring = false; }, 500);
+    lwcStartLiveKline(ctrl);
+  }
+  ctrl.autoExtra = [dec.sl, dec.tp1, dec.tp2, dec.entry_low, dec.entry_high, livePrices[ticker]?.price]
+    .map(v => parseFloat(v)).filter(v => !isNaN(v) && v > 0);
+
+  // Ręczne skalowanie osi ceny → zapisz widok (biblioteka nie ma zdarzenia dla osi Y)
+  if (!ctrl._ptrHooked) {
+    ctrl._ptrHooked = true;
+    ctrl.host.addEventListener('pointerup', () => ctrl.persist(), { passive: true });
+    ctrl.host.addEventListener('wheel', () => ctrl.persist(), { passive: true });
+  }
+
+  // ─── REJESTR ETYKIET ────────────────────────────────────────────────────  (BEZ ZMIAN)
   // Overlay'e NIE rysują tekstu same. Zgłaszają etykietę {y, text, color, side,
   // prio, bold, box, short}, a flushLabels() układa wszystkie na końcu tak, żeby
   // żadna nie nachodziła na inną (przesuwa w górę/dół, dorysowuje kreskę do poziomu,
@@ -9433,16 +9791,18 @@ function renderTokenChart(ticker, ohlc) {
   // i skrócone teksty, 'off' = same linie/strefy. Na telefonie domyślnie 'min'.
   const LABEL_MODE = overlays.labels || 'full';
   const labelQ = [];
+  let labelSink = labelQ;
   const addLabel = (o) => {
     if (LABEL_MODE === 'off') return;
     if (LABEL_MODE === 'min' && (o.prio || 1) < 2) return;
-    labelQ.push(o);
+    labelSink.push(o);
   };
   const flushLabels = (ctx, chartArea) => {
     const placed = [];
     const H = 13;
     const bySide = side => labelQ.filter(l => (l.side || 'left') === side).sort((a, b) => (b.prio || 1) - (a.prio || 1) || a.y - b.y);
     for (const l of [...bySide('right'), ...bySide('left'), ...bySide('x')]) {
+      if (!isFinite(l.y)) continue;
       ctx.font = l.font || (l.bold ? 'bold 10px SF Mono, Menlo, monospace' : '9px SF Mono, Menlo, monospace');
       const text = (LABEL_MODE === 'min' && l.short) ? l.short : l.text;
       const w = Math.ceil(ctx.measureText(text).width) + 8;
@@ -9475,17 +9835,41 @@ function renderTokenChart(ticker, ohlc) {
     labelQ.length = 0;
   };
 
-  // Custom plugin: draw zones and markers on canvas
-  const overlayPlugin = {
-    id: 'tvcOverlays',
-    // Liquidity Heatmap rysowana w beforeDatasetsDraw — czyli PRZED wickami,
-    // EMA i ciałami świec. Efekt: heatmap jest tłem, świece zawsze na wierzchu.
-    beforeDatasetsDraw(chart) {
-      const { ctx, chartArea, scales } = chart;
-      const yScale = scales.y;
-      labelQ.length = 0;
-      if (!overlays.heatmap) return;
-      ctx.save();
+  // Adaptery: te same nazwy co w dawnym pluginie Chart.js, więc kod rysujący zostaje prawie 1:1
+  const yScale = { getPixelForValue: (p) => { const v = candles.priceToCoordinate(p); return v == null ? NaN : v; } };
+  const xScale = { getPixelForValue: (i) => { const v = chart.timeScale().logicalToCoordinate(i); return v == null ? NaN : v; } };
+  const tsToIndex = ctrl.tsToIndex;
+  const areaOf = (size) => ({ left: 0, top: 0, right: size.width, bottom: size.height });
+
+  // ─── POZIOMY jako natywne price lines (oś ceny dostaje kolorowy znacznik) ───
+  const lines = [];
+  const addLine = (price, color, style, width, prio) => { const p = parseFloat(price); if (p > 0) lines.push({ price: p, color, style, width, axis: _lwcAxisFor(prio) }); };
+  srZones.forEach(z => addLine((z.low + z.high) / 2, z.type === 'support' ? 'rgba(52,211,153,0.6)' : 'rgba(248,113,113,0.6)', _LS.dashed, 1, 2));
+  liqZones.forEach(lz => addLine(lz.price, '#A78BFA', _LS.large, 1, 1));
+  if (dec.entry_low && dec.entry_high) addLine(dec.entry_high, '#F5B841', _LS.dotted, 2, 3);
+  addLine(dec.sl, '#F87171', _LS.dotted, 2, 3);
+  addLine(dec.tp1, '#34D399', _LS.dotted, 2, 3);
+  addLine(dec.tp2, '#34D399', _LS.dotted, 2, 3);
+  const cy = overlays.ma ? cycleData.tokens[ticker] : null;
+  if (cy && !cy.error) {
+    addLine(cy.ema200d, '#C084FC', _LS.dashed, 1, 2);
+    addLine(cy.ma200d, '#A78BFA', _LS.dotted, 1, 2);
+    addLine(cy.ma200w || cy.ma200wPartial, '#F472B6', _LS.large, 1, 2);
+  }
+  breakouts.forEach(br => addLine(br.price, '#FB923C', _LS.dashed, 1, 2));
+  if (overlays.pred) {
+    (predZones.buyZones || []).forEach(z => addLine(z.priceHigh, '#34D399', _LS.dashed, 2, 2));
+    (predZones.sellZones || []).forEach(z => addLine(z.priceLow, '#F87171', _LS.dashed, 2, 2));
+  }
+  _lwcSyncLines(ctrl, 'static', lines);
+
+  // ─── WARSTWA DOLNA: Liquidity Heatmap (pod świecami) ───
+  ctrl.drawBottom = (ctx, size) => {
+    const chartArea = areaOf(size);
+    ctrl.hmLabels = [];
+    if (!overlays.heatmap) return;
+    labelSink = ctrl.hmLabels;
+    try {
       const heatmapWinMs = heatmapWindowForTf(tfForSFP);
       const heatmapNow = Date.now();
       const hist = (depthHistory[ticker] || []).filter(s => heatmapNow - s.ts < heatmapWinMs);
@@ -9494,14 +9878,7 @@ function renderTokenChart(ticker, ohlc) {
         const rowPx = 2;
         const chartH = chartArea.bottom - chartArea.top;
         const maxBarWidth = (chartArea.right - chartArea.left) * 0.32;
-        // ── Skala heatmapy ──
-        // Głębokość orderbooka to zwykle ±1–2% od ceny. Na 1D/7D/30D to kilka pikseli
-        // na osi Y wykresu → "heatmapa nie działa". Jeśli zakres głębokości ma na
-        // wykresie < 140px, rysujemy ją we WŁASNEJ skali: ramka ±p% wycentrowana na
-        // bieżącej cenie, stała wysokość. Na 5m/15m/1h (gdzie pasuje) — jak dotąd,
-        // wprost na skali wykresu (linie stref biegną przez cały wykres).
-        // Zakres ramki: najmniejsze ±p%, które obejmuje 85% notionalu po każdej stronie
-        // (a nie skrajne, rzadkie poziomy ±3%) — wtedy ramka pokazuje to, co jest blisko ceny.
+        // ── Skala heatmapy ── (bez zmian: gdy zakres głębokości < 140px → własna ramka ±p%)
         const coverPct = (map) => {
           const rows = Object.entries(map).map(([k, v]) => [Math.abs(parseFloat(k)), v]).sort((a, b) => a[0] - b[0]);
           const total = rows.reduce((a, r) => a + r[1], 0); let acc = 0;
@@ -9545,7 +9922,6 @@ function renderTokenChart(ticker, ohlc) {
           if (askRows[i] > topAskVal) { topAskVal = askRows[i]; topAskIdx = i; }
         }
         if (!aligned) {
-          // Ramka własnej skali + podpis ±% — żeby było jasne, że to nie skala wykresu
           ctx.fillStyle = 'rgba(10,14,26,0.55)';
           ctx.fillRect(chartArea.right - maxBarWidth - 2, yTop - 1, maxBarWidth + 2, yBot - yTop + 2);
           ctx.strokeStyle = 'rgba(255,107,53,0.55)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
@@ -9553,7 +9929,6 @@ function renderTokenChart(ticker, ohlc) {
           ctx.setLineDash([]);
           ctx.fillStyle = 'rgba(255,107,53,0.9)'; ctx.font = 'bold 8px SF Mono, Menlo, monospace'; ctx.textAlign = 'right';
           ctx.fillText(t('hm_strip').replace('{p}', maxPct.toFixed(1)), chartArea.right - 4, yTop - 3 > chartArea.top + 8 ? yTop - 3 : yBot + 10);
-          // Znacznik bieżącej ceny wewnątrz ramki
           ctx.strokeStyle = 'rgba(226,232,240,0.7)'; ctx.beginPath(); ctx.moveTo(chartArea.right - maxBarWidth - 2, stripMidY); ctx.lineTo(chartArea.right, stripMidY); ctx.stroke();
         }
         for (let i = 0; i < numRows; i++) {
@@ -9578,7 +9953,6 @@ function renderTokenChart(ticker, ohlc) {
         };
         drawTopCluster(topBidIdx, true);
         drawTopCluster(topAskIdx, false);
-
         // Trwałe strefy — #1 po każdej stronie pełna etykieta, #2/#3 kompaktowe.
         const heatmapZonesChart = getHeatmapZones(ticker, tfForSFP);
         const drawPersistentZone = (z, isBid, idx) => {
@@ -9592,7 +9966,6 @@ function renderTokenChart(ticker, ohlc) {
           ctx.globalAlpha = isTop ? 1 : 0.6;
           ctx.setLineDash(isTop ? [3, 2] : [2, 3]);
           ctx.beginPath();
-          // W trybie własnej skali linia tylko w obrębie ramki (nie ma sensu ciągnąć jej przez wykres)
           ctx.moveTo(aligned ? chartArea.left : chartArea.right - maxBarWidth - 2, y);
           ctx.lineTo(chartArea.right, y);
           ctx.stroke();
@@ -9608,392 +9981,184 @@ function renderTokenChart(ticker, ohlc) {
         (heatmapZonesChart.buyZones || []).forEach((z, idx) => drawPersistentZone(z, true, idx));
         (heatmapZonesChart.sellZones || []).forEach((z, idx) => drawPersistentZone(z, false, idx));
       }
-      ctx.restore();
-    },
-    afterDatasetsDraw(chart) {
-      const { ctx, chartArea, scales } = chart;
-      const xScale = scales.x, yScale = scales.y;
-      ctx.save();
+    } finally { labelSink = labelQ; }
+  };
 
-      // Support/Resistance zones
-      srZones.forEach(z => {
-        const yLow = yScale.getPixelForValue(z.low);
-        const yHigh = yScale.getPixelForValue(z.high);
-        const color = z.type === 'support' ? 'rgba(52,211,153,0.15)' : 'rgba(248,113,113,0.15)';
-        const borderColor = z.type === 'support' ? 'rgba(52,211,153,0.6)' : 'rgba(248,113,113,0.6)';
-        ctx.fillStyle = color;
-        ctx.fillRect(chartArea.left, yHigh, chartArea.right - chartArea.left, yLow - yHigh);
-        ctx.strokeStyle = borderColor;
-        ctx.lineWidth = 1;
-        ctx.setLineDash([3, 3]);
-        ctx.beginPath();
-        ctx.moveTo(chartArea.left, (yLow + yHigh) / 2);
-        ctx.lineTo(chartArea.right, (yLow + yHigh) / 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        addLabel({ y: (yLow + yHigh) / 2, side: 'right', prio: 2, color: z.type === 'support' ? '#34D399' : '#F87171',
-          text: `${z.type === 'support' ? 'S' : 'R'} ${fmt(z.price)} (${z.touches}x)`, short: `${z.type === 'support' ? 'S' : 'R'} ${fmt(z.price)}` });
-      });
+  // ─── WARSTWA GÓRNA: strefy, znaczniki, etykiety ───
+  ctrl.drawTop = (ctx, size) => {
+    const chartArea = areaOf(size);
+    labelQ.length = 0;
+    labelSink = labelQ;
+    for (const l of (ctrl.hmLabels || [])) labelQ.push(l);
+    const inArea = y => !isNaN(y) && y >= chartArea.top && y <= chartArea.bottom;
 
-      // Order blocks
-      orderBlocks.forEach(ob => {
-        const idx = tsToIndex.get(ob.ts);
-        if (idx == null) return;
-        const xStart = xScale.getPixelForValue(idx);
-        const yLow = yScale.getPixelForValue(ob.low);
-        const yHigh = yScale.getPixelForValue(ob.high);
-        ctx.fillStyle = 'rgba(34,211,238,0.18)';
-        ctx.fillRect(xStart, yHigh, chartArea.right - xStart, yLow - yHigh);
-        ctx.strokeStyle = '#22D3EE';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(xStart, yHigh, chartArea.right - xStart, yLow - yHigh);
-        addLabel({ y: yHigh, x: xStart + 2, side: 'x', below: true, prio: 1, color: '#22D3EE', bold: true, text: `OB ${ob.type[0].toUpperCase()}` });
-      });
+    // Support/Resistance zones (linia środkowa = price line)
+    srZones.forEach(z => {
+      const yLow = yScale.getPixelForValue(z.low);
+      const yHigh = yScale.getPixelForValue(z.high);
+      ctx.fillStyle = z.type === 'support' ? 'rgba(52,211,153,0.15)' : 'rgba(248,113,113,0.15)';
+      ctx.fillRect(chartArea.left, yHigh, chartArea.right - chartArea.left, yLow - yHigh);
+      addLabel({ y: (yLow + yHigh) / 2, side: 'right', prio: 2, color: z.type === 'support' ? '#34D399' : '#F87171',
+        text: `${z.type === 'support' ? 'S' : 'R'} ${fmt(z.price)} (${z.touches}x)`, short: `${z.type === 'support' ? 'S' : 'R'} ${fmt(z.price)}` });
+    });
 
-      // Fair Value Gaps
-      fvgZones.forEach(g => {
-        const idx = tsToIndex.get(g.ts);
-        if (idx == null) return;
-        const xStart = xScale.getPixelForValue(idx);
-        const yTop = yScale.getPixelForValue(g.top);
-        const yBottom = yScale.getPixelForValue(g.bottom);
-        ctx.fillStyle = g.type === 'bullish' ? 'rgba(251,191,36,0.16)' : 'rgba(251,191,36,0.10)';
-        ctx.fillRect(xStart, yTop, chartArea.right - xStart, yBottom - yTop);
-        ctx.strokeStyle = '#FBBF24';
-        ctx.lineWidth = 1;
-        ctx.setLineDash(g.touched ? [4, 3] : []);
-        ctx.strokeRect(xStart, yTop, chartArea.right - xStart, yBottom - yTop);
-        ctx.setLineDash([]);
-        addLabel({ y: yBottom, x: xStart + 2, side: 'x', prio: 1, color: '#FBBF24', bold: true, text: `FVG ${g.type === 'bullish' ? '↑' : '↓'}` });
-      });
+    // Order blocks — prostokąt od świecy OB do prawej krawędzi
+    orderBlocks.forEach(ob => {
+      const idx = tsToIndex.get(ob.ts);
+      if (idx == null) return;
+      const xStart = xScale.getPixelForValue(idx);
+      if (isNaN(xStart)) return;
+      const yLow = yScale.getPixelForValue(ob.low);
+      const yHigh = yScale.getPixelForValue(ob.high);
+      ctx.fillStyle = 'rgba(34,211,238,0.18)';
+      ctx.fillRect(xStart, yHigh, chartArea.right - xStart, yLow - yHigh);
+      ctx.strokeStyle = '#22D3EE';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(xStart, yHigh, chartArea.right - xStart, yLow - yHigh);
+      addLabel({ y: yHigh, x: xStart + 2, side: 'x', below: true, prio: 1, color: '#22D3EE', bold: true, text: `OB ${ob.type[0].toUpperCase()}` });
+    });
 
-      // Liquidity zones
-      liqZones.forEach(lz => {
-        const y = yScale.getPixelForValue(lz.price);
-        ctx.strokeStyle = '#A78BFA';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([6, 3]);
-        ctx.beginPath();
-        ctx.moveTo(chartArea.left, y);
-        ctx.lineTo(chartArea.right, y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        addLabel({ y, side: 'left', prio: 1, color: '#A78BFA', text: `LIQ ${fmt(lz.price)} (${lz.count}x ${lz.type === 'sell-liq' ? '↑' : '↓'})` });
-      });
+    // Fair Value Gaps
+    fvgZones.forEach(g => {
+      const idx = tsToIndex.get(g.ts);
+      if (idx == null) return;
+      const xStart = xScale.getPixelForValue(idx);
+      if (isNaN(xStart)) return;
+      const yTop = yScale.getPixelForValue(g.top);
+      const yBottom = yScale.getPixelForValue(g.bottom);
+      ctx.fillStyle = g.type === 'bullish' ? 'rgba(251,191,36,0.16)' : 'rgba(251,191,36,0.10)';
+      ctx.fillRect(xStart, yTop, chartArea.right - xStart, yBottom - yTop);
+      ctx.strokeStyle = '#FBBF24';
+      ctx.lineWidth = 1;
+      ctx.setLineDash(g.touched ? [4, 3] : []);
+      ctx.strokeRect(xStart, yTop, chartArea.right - xStart, yBottom - yTop);
+      ctx.setLineDash([]);
+      addLabel({ y: yBottom, x: xStart + 2, side: 'x', prio: 1, color: '#FBBF24', bold: true, text: `FVG ${g.type === 'bullish' ? '↑' : '↓'}` });
+    });
 
-      // SFP markers — kropka zawsze, tekst przez rejestr (prio 1 → znika w trybie min)
-      sfpPatterns.forEach(sfp => {
-        const idx = tsToIndex.get(sfp.ts);
-        if (idx == null) return;
-        const x = xScale.getPixelForValue(idx);
-        const y = yScale.getPixelForValue(sfp.price);
-        const isBull = sfp.type === 'bullish';
-        ctx.fillStyle = isBull ? '#34D399' : '#F87171';
-        ctx.beginPath();
-        ctx.arc(x, y, 4.5, 0, 2 * Math.PI);
-        ctx.fill();
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        addLabel({ y, x: x - 26, side: 'x', below: isBull, prio: 1, color: isBull ? '#34D399' : '#F87171', bold: true, text: isBull ? 'SFP↑ Bull' : 'SFP↓ Bear' });
-      });
+    // Liquidity zones (linia = price line)
+    liqZones.forEach(lz => {
+      const y = yScale.getPixelForValue(lz.price);
+      addLabel({ y, side: 'left', prio: 1, color: '#A78BFA', text: `LIQ ${fmt(lz.price)} (${lz.count}x ${lz.type === 'sell-liq' ? '↑' : '↓'})` });
+    });
 
-      // Setup levels (entry, SL, TP1, TP2) from fusion — najważniejsze etykiety (prio 3)
-      const drawLevel = (price, color, label) => {
+    // SFP markers
+    sfpPatterns.forEach(sfp => {
+      const idx = tsToIndex.get(sfp.ts);
+      if (idx == null) return;
+      const x = xScale.getPixelForValue(idx);
+      const y = yScale.getPixelForValue(sfp.price);
+      if (isNaN(x) || isNaN(y)) return;
+      const isBull = sfp.type === 'bullish';
+      ctx.fillStyle = isBull ? '#34D399' : '#F87171';
+      ctx.beginPath();
+      ctx.arc(x, y, 4.5, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      addLabel({ y, x: x - 26, side: 'x', below: isBull, prio: 1, color: isBull ? '#34D399' : '#F87171', bold: true, text: isBull ? 'SFP↑ Bull' : 'SFP↓ Bear' });
+    });
+
+    // Setup levels (entry, SL, TP1, TP2) — linie = price lines, tu etykiety i strefa wejścia
+    const levelLabel = (price, color, label) => {
+      if (!price) return;
+      const y = yScale.getPixelForValue(price);
+      if (!inArea(y)) return;
+      addLabel({ y, side: 'left', prio: 3, color, bold: true, text: `${label} ${fmt(price)}` });
+    };
+    if (dec.entry_low && dec.entry_high) {
+      const yZl = yScale.getPixelForValue(dec.entry_low), yZh = yScale.getPixelForValue(dec.entry_high);
+      if (!isNaN(yZl) && !isNaN(yZh)) {
+        ctx.fillStyle = 'rgba(245,184,65,0.13)';
+        ctx.fillRect(chartArea.left, Math.min(yZl, yZh), chartArea.right - chartArea.left, Math.abs(yZl - yZh));
+      }
+      levelLabel(dec.entry_high, '#F5B841', dec.entry_quality?.verdict === 'wait' ? '⏳ ENTRY' : 'ENTRY');
+    }
+    levelLabel(dec.sl, '#F87171', 'SL');
+    levelLabel(dec.tp1, '#34D399', 'TP1');
+    levelLabel(dec.tp2, '#34D399', 'TP2');
+
+    // Długoterminowe średnie z panelu Cykl (overlay "MA") — etykiety
+    if (cy && !cy.error) {
+      const maLabel = (price, color, label) => {
         if (!price) return;
         const y = yScale.getPixelForValue(price);
-        if (y < chartArea.top || y > chartArea.bottom) return;
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([2, 2]);
-        ctx.beginPath();
-        ctx.moveTo(chartArea.left, y);
-        ctx.lineTo(chartArea.right, y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        addLabel({ y, side: 'left', prio: 3, color, bold: true, text: `${label} ${fmt(price)}` });
+        if (!inArea(y)) return;
+        addLabel({ y, side: 'right', prio: 2, color, bold: true, text: `${label} ${fmt(price)}`, short: label });
       };
-      if (dec.entry_low && dec.entry_high) {
-        // v0.4: strefa wejścia ze struktury — pasek + etykieta na górnej krawędzi
-        const yZl = yScale.getPixelForValue(dec.entry_low), yZh = yScale.getPixelForValue(dec.entry_high);
-        if (!isNaN(yZl) && !isNaN(yZh)) {
-          ctx.fillStyle = 'rgba(245,184,65,0.13)';
-          ctx.fillRect(chartArea.left, Math.min(yZl, yZh), chartArea.right - chartArea.left, Math.abs(yZl - yZh));
-        }
-        drawLevel(dec.entry_high, '#F5B841', dec.entry_quality?.verdict === 'wait' ? '⏳ ENTRY' : 'ENTRY');
-      }
-      drawLevel(dec.sl, '#F87171', 'SL');
-      drawLevel(dec.tp1, '#34D399', 'TP1');
-      drawLevel(dec.tp2, '#34D399', 'TP2');
+      maLabel(cy.ema200d, '#C084FC', 'EMA200D');
+      maLabel(cy.ma200d, '#A78BFA', 'MA200D');
+      maLabel(cy.ma200w || cy.ma200wPartial, '#F472B6', cy.ma200w ? 'MA200W' : `MA${cy.weeks}W`);
+    }
 
-      // Długoterminowe średnie z panelu Cykl (overlay "MA")
-      if (overlays.ma) {
-        const cy = cycleData.tokens[ticker];
-        if (cy && !cy.error) {
-          const drawMa = (price, color, label, dash) => {
-            if (!price) return;
-            const y = yScale.getPixelForValue(price);
-            if (y < chartArea.top || y > chartArea.bottom) return;
-            ctx.strokeStyle = color; ctx.lineWidth = 1.2; ctx.setLineDash(dash);
-            ctx.beginPath(); ctx.moveTo(chartArea.left, y); ctx.lineTo(chartArea.right, y); ctx.stroke();
-            ctx.setLineDash([]);
-            addLabel({ y, side: 'right', prio: 2, color, bold: true, text: `${label} ${fmt(price)}`, short: label });
-          };
-          drawMa(cy.ema200d, '#C084FC', 'EMA200D', [6, 3]);
-          drawMa(cy.ma200d, '#A78BFA', 'MA200D', [2, 3]);
-          drawMa(cy.ma200w || cy.ma200wPartial, '#F472B6', cy.ma200w ? 'MA200W' : `MA${cy.weeks}W`, [10, 4]);
-        }
-      }
+    // Breakout markers
+    breakouts.forEach(br => {
+      const idx = tsToIndex.get(br.ts);
+      if (idx == null) return;
+      const x = xScale.getPixelForValue(idx);
+      const y = yScale.getPixelForValue(br.price);
+      if (isNaN(x) || isNaN(y)) return;
+      const isBull = br.type === 'bullish';
+      ctx.fillStyle = '#FB923C';
+      ctx.beginPath();
+      if (isBull) { ctx.moveTo(x, y - 12); ctx.lineTo(x - 6, y - 2); ctx.lineTo(x + 6, y - 2); }
+      else { ctx.moveTo(x, y + 12); ctx.lineTo(x - 6, y + 2); ctx.lineTo(x + 6, y + 2); }
+      ctx.closePath();
+      ctx.fill();
+      addLabel({ y, side: 'left', below: !isBull, prio: 2, color: '#FB923C', bold: true, text: `BRK ${isBull ? '↑' : '↓'} ${fmt(br.price)}`, short: `BRK ${isBull ? '↑' : '↓'}` });
+    });
 
-      // Breakout markers
-      breakouts.forEach(br => {
-        const idx = tsToIndex.get(br.ts);
-        if (idx == null) return;
-        const x = xScale.getPixelForValue(idx);
-        const y = yScale.getPixelForValue(br.price);
-        const isBull = br.type === 'bullish';
-        ctx.fillStyle = '#FB923C';
-        ctx.beginPath();
-        if (isBull) { ctx.moveTo(x, y - 12); ctx.lineTo(x - 6, y - 2); ctx.lineTo(x + 6, y - 2); }
-        else { ctx.moveTo(x, y + 12); ctx.lineTo(x - 6, y + 2); ctx.lineTo(x + 6, y + 2); }
-        ctx.closePath();
-        ctx.fill();
-        ctx.strokeStyle = '#FB923C';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 3]);
-        ctx.beginPath();
-        ctx.moveTo(chartArea.left, y);
-        ctx.lineTo(chartArea.right, y);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        addLabel({ y, side: 'left', below: !isBull, prio: 2, color: '#FB923C', bold: true, text: `BRK ${isBull ? '↑' : '↓'} ${fmt(br.price)}`, short: `BRK ${isBull ? '↑' : '↓'}` });
-      });
-
-      // Current price marker — tag w gutterze osi Y (poza obszarem świec, nie koliduje)
-      const live = livePrices[ticker];
-      if (live) {
-        const y = yScale.getPixelForValue(live.price);
-        if (y > chartArea.top && y < chartArea.bottom) {
-          ctx.fillStyle = live.change24h > 0 ? '#34D399' : '#F87171';
-          const tagW = Math.max(48, Math.min(70, chart.width - chartArea.right - 2));
-          ctx.fillRect(chartArea.right, y - 8, tagW, 16);
-          ctx.strokeStyle = live.change24h > 0 ? 'rgba(52,211,153,0.35)' : 'rgba(248,113,113,0.35)';
-          ctx.lineWidth = 1;
-          ctx.setLineDash([2, 3]);
-          ctx.beginPath();
-          ctx.moveTo(chartArea.left + (chartArea.right - chartArea.left) * 0.5, y);
-          ctx.lineTo(chartArea.right, y);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          ctx.fillStyle = '#0a0e1a';
-          ctx.font = 'bold 10px SF Mono, Menlo, monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText(fmt(live.price), chartArea.right + tagW / 2, y + 3);
-        }
-      }
-
-      // Live Walls z Binance L2 — realne zlecenia TERAZ (prio 3, zawsze widoczne)
-      if (overlays.walls) {
-        const w = orderbookWalls[ticker];
-        if (w) {
-          const fmtNot = n => n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${(n / 1e3).toFixed(0)}K`;
-          const drawWall = (wall, isBuy) => {
-            const y = yScale.getPixelForValue(wall.price);
-            if (isNaN(y) || y < chartArea.top || y > chartArea.bottom) return;
-            const color = isBuy ? '#38BDF8' : '#FB923C';
-            const bandPx = Math.min(14, 3 + wall.strength * 1.5);
-            ctx.fillStyle = isBuy ? 'rgba(56,189,248,0.10)' : 'rgba(251,146,60,0.10)';
-            ctx.fillRect(chartArea.left, y - bandPx / 2, chartArea.right - chartArea.left, bandPx);
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 2;
-            ctx.setLineDash([]);
-            ctx.beginPath();
-            ctx.moveTo(chartArea.left, y);
-            ctx.lineTo(chartArea.right, y);
-            ctx.stroke();
-            addLabel({ y, side: 'left', below: isBuy, prio: 3, color, bold: true, box: true,
-              text: `${isBuy ? '🟦 BUY WALL' : '🟧 SELL WALL'} ${fmtNot(wall.notional)} @ ${fmt(wall.price)} · ${wall.distance}%`,
-              short: `${isBuy ? '🟦 BUY' : '🟧 SELL'} ${fmtNot(wall.notional)} @ ${fmt(wall.price)}` });
-          };
-          (w.buyWalls || []).forEach(wall => drawWall(wall, true));
-          (w.sellWalls || []).forEach(wall => drawWall(wall, false));
-        }
-      }
-
-      // Predictive Buy/Sell Zones — order pressure buildup
-      if (overlays.pred) {
-        const drawPredZone = (z, isBuy) => {
-          const yLow = yScale.getPixelForValue(z.priceLow);
-          const yHigh = yScale.getPixelForValue(z.priceHigh);
-          if (isNaN(yLow) || isNaN(yHigh)) return;
-          const opacity = Math.min(0.35, 0.10 + z.strength * 0.04);
-          const borderColor = isBuy ? '#34D399' : '#F87171';
-          ctx.fillStyle = isBuy ? `rgba(52, 211, 153, ${opacity})` : `rgba(248, 113, 113, ${opacity})`;
-          ctx.fillRect(chartArea.left, yHigh, chartArea.right - chartArea.left, yLow - yHigh);
-          ctx.strokeStyle = borderColor;
-          ctx.lineWidth = 1.5;
-          ctx.setLineDash([4, 3]);
-          ctx.beginPath();
-          const yEdge = isBuy ? yHigh : yLow;
-          ctx.moveTo(chartArea.left, yEdge);
-          ctx.lineTo(chartArea.right, yEdge);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          const zoneTxt = isBuy ? (_lang === 'en' ? '🟢 BUY ZONE' : '🟢 STREFA KUPNA') : (_lang === 'en' ? '🔴 SELL ZONE' : '🔴 STREFA SPRZEDAŻY');
-          addLabel({ y: yEdge, side: 'left', below: !isBuy, prio: 2, color: borderColor, bold: true,
-            text: `${zoneTxt} ${z.touches}×touch · ${z.avgVolMult}× vol`, short: `${zoneTxt} ${z.touches}×` });
-          addLabel({ y: yEdge, side: 'right', below: !isBuy, prio: 1, color: borderColor, text: `${fmt(z.priceLow)} – ${fmt(z.priceHigh)}` });
+    // Live Walls z Binance L2 — pas + etykieta (linia = price line, synchronizowana przy każdym ticku WS)
+    if (overlays.walls) {
+      const w = orderbookWalls[ticker];
+      if (w) {
+        const fmtNot = n => n >= 1e9 ? `$${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${(n / 1e3).toFixed(0)}K`;
+        const drawWall = (wall, isBuy) => {
+          const y = yScale.getPixelForValue(wall.price);
+          if (!inArea(y)) return;
+          const color = isBuy ? '#38BDF8' : '#FB923C';
+          const bandPx = Math.min(14, 3 + wall.strength * 1.5);
+          ctx.fillStyle = isBuy ? 'rgba(56,189,248,0.10)' : 'rgba(251,146,60,0.10)';
+          ctx.fillRect(chartArea.left, y - bandPx / 2, chartArea.right - chartArea.left, bandPx);
+          addLabel({ y, side: 'left', below: isBuy, prio: 3, color, bold: true, box: true,
+            text: `${isBuy ? '🟦 BUY WALL' : '🟧 SELL WALL'} ${fmtNot(wall.notional)} @ ${fmt(wall.price)} · ${wall.distance}%`,
+            short: `${isBuy ? '🟦 BUY' : '🟧 SELL'} ${fmtNot(wall.notional)} @ ${fmt(wall.price)}` });
         };
-        (predZones.buyZones || []).forEach(z => drawPredZone(z, true));
-        (predZones.sellZones || []).forEach(z => drawPredZone(z, false));
+        (w.buyWalls || []).forEach(wall => drawWall(wall, true));
+        (w.sellWalls || []).forEach(wall => drawWall(wall, false));
       }
-
-      // Wszystkie etykiety naraz, bez kolizji
-      flushLabels(ctx, chartArea);
-
-      // 🎯 Crosshair — zawsze na wierzchu
-      const hoverY = chartHoverY[ticker];
-      if (hoverY !== undefined && hoverY >= chartArea.top && hoverY <= chartArea.bottom) {
-        const hoverPrice = yScale.getValueForPixel(hoverY);
-        if (hoverPrice !== undefined && !isNaN(hoverPrice)) {
-          ctx.strokeStyle = 'rgba(226,232,240,0.55)';
-          ctx.lineWidth = 1;
-          ctx.setLineDash([4, 3]);
-          ctx.beginPath();
-          ctx.moveTo(chartArea.left, hoverY);
-          ctx.lineTo(chartArea.right, hoverY);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          const label = fmt(hoverPrice);
-          ctx.font = 'bold 11px SF Mono, Menlo, monospace';
-          ctx.textAlign = 'left';
-          const textW = ctx.measureText(label).width + 12;
-          ctx.fillStyle = '#E2E8F0';
-          ctx.fillRect(chartArea.right, hoverY - 9, textW, 18);
-          ctx.fillStyle = '#0A0E1A';
-          ctx.fillText(label, chartArea.right + 6, hoverY + 4);
-        }
-      }
-
-      ctx.restore();
     }
+
+    // Predictive Buy/Sell Zones — wypełnienie + etykiety (krawędź = price line)
+    if (overlays.pred) {
+      const drawPredZone = (z, isBuy) => {
+        const yLow = yScale.getPixelForValue(z.priceLow);
+        const yHigh = yScale.getPixelForValue(z.priceHigh);
+        if (isNaN(yLow) || isNaN(yHigh)) return;
+        const opacity = Math.min(0.35, 0.10 + z.strength * 0.04);
+        const borderColor = isBuy ? '#34D399' : '#F87171';
+        ctx.fillStyle = isBuy ? `rgba(52, 211, 153, ${opacity})` : `rgba(248, 113, 113, ${opacity})`;
+        ctx.fillRect(chartArea.left, yHigh, chartArea.right - chartArea.left, yLow - yHigh);
+        const yEdge = isBuy ? yHigh : yLow;
+        const zoneTxt = isBuy ? (_lang === 'en' ? '🟢 BUY ZONE' : '🟢 STREFA KUPNA') : (_lang === 'en' ? '🔴 SELL ZONE' : '🔴 STREFA SPRZEDAŻY');
+        addLabel({ y: yEdge, side: 'left', below: !isBuy, prio: 2, color: borderColor, bold: true,
+          text: `${zoneTxt} ${z.touches}×touch · ${z.avgVolMult}× vol`, short: `${zoneTxt} ${z.touches}×` });
+        addLabel({ y: yEdge, side: 'right', below: !isBuy, prio: 1, color: borderColor, text: `${fmt(z.priceLow)} – ${fmt(z.priceHigh)}` });
+      };
+      (predZones.buyZones || []).forEach(z => drawPredZone(z, true));
+      (predZones.sellZones || []).forEach(z => drawPredZone(z, false));
+    }
+
+    // Wszystkie etykiety naraz, bez kolizji
+    flushLabels(ctx, chartArea);
   };
 
-  // Custom plugin: draw candlestick bodies (Chart.js has no native candles;
-  // we use one thin bar dataset for wicks, then paint bodies on top per candle)
-  const candlePlugin = {
-    id: 'tvcCandles',
-    afterDatasetsDraw(chart) {
-      const { ctx, scales } = chart;
-      const xScale = scales.x, yScale = scales.y;
-      const meta = chart.getDatasetMeta(0);
-      if (!meta || !meta.data || meta.data.length === 0) return;
-      // body width = 70% of category slot
-      const slotWidth = meta.data.length > 1
-        ? Math.abs(meta.data[1].x - meta.data[0].x)
-        : (xScale.width / Math.max(1, ohlc.length));
-      const bodyW = Math.max(2, slotWidth * 0.7);
-      ohlc.forEach((candle, i) => {
-        const [_ts, o, h, l, c] = candle;
-        const bar = meta.data[i];
-        if (!bar) return;
-        const xC = bar.x;
-        const isBull = c >= o;
-        const fill = isBull ? 'rgba(52,211,153,0.9)' : 'rgba(248,113,113,0.9)';
-        const stroke = isBull ? '#34D399' : '#F87171';
-        const yO = yScale.getPixelForValue(o);
-        const yC = yScale.getPixelForValue(c);
-        const top = Math.min(yO, yC);
-        const height = Math.max(1, Math.abs(yO - yC));
-        ctx.fillStyle = fill;
-        ctx.fillRect(xC - bodyW / 2, top, bodyW, height);
-        ctx.strokeStyle = stroke;
-        ctx.lineWidth = 1;
-        ctx.strokeRect(xC - bodyW / 2, top, bodyW, height);
-      });
-    }
-  };
-
-  tokenCharts[ticker] = new Chart(canvas.getContext('2d'), {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        {
-          type: 'bar',
-          label: 'Wick',
-          data: wickData,
-          backgroundColor: wickColors,
-          borderColor: wickColors,
-          borderWidth: 0,
-          barPercentage: 0.12,
-          categoryPercentage: 0.95,
-          order: 5
-        },
-        {
-          type: 'line',
-          label: 'EMA 21',
-          data: ema21,
-          borderColor: 'rgba(96,165,250,0.8)',
-          backgroundColor: 'transparent',
-          borderWidth: 1.3,
-          pointRadius: 0,
-          tension: 0.2,
-          order: 3
-        },
-        {
-          type: 'line',
-          label: 'EMA 50',
-          data: ema50,
-          borderColor: 'rgba(167,139,250,0.8)',
-          backgroundColor: 'transparent',
-          borderWidth: 1.3,
-          pointRadius: 0,
-          borderDash: [3, 3],
-          tension: 0.2,
-          order: 4
-        }
-      ]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { display: false },
-        // Default floating tooltip disabled — replaced by the top-of-chart OHLC
-        // readout bar (updateOhlcReadout), which also fixes the old bug where
-        // this tooltip repeated the OHLC text 3x (once per dataset: Wick/EMA21/EMA50).
-        tooltip: { enabled: false }
-      },
-      scales: {
-        x: {
-          type: 'category',
-          ticks: {
-            color: '#7d8bab', font: { size: 9 }, maxRotation: 0,
-            autoSkip: true, maxTicksLimit: 8
-          },
-          grid: { color: 'rgba(30,42,68,0.35)' },
-          border: { color: '#1e2a44' }
-        },
-        y: {
-          position: 'right',
-          min: yMin,
-          max: yMax,
-          beginAtZero: false,
-          ticks: { color: '#7d8bab', font: { size: 10, family: 'SF Mono, monospace' }, callback: v => '$' + fmt(v), maxTicksLimit: 8 },
-          grid: { color: 'rgba(30,42,68,0.35)' },
-          border: { color: '#1e2a44' }
-        }
-      }
-    },
-    plugins: [candlePlugin, overlayPlugin]
-  });
-
-  // Interactive zoom + pan (Chart.js has no native zoom without plugin; we roll our own)
-  setupChartInteractions(ticker, canvas);
-
-  // Render volume subplot
-  renderVolumeSubplot(ticker, ohlc, labels);
+  ctrl.update();
+  ctrl.placeButtons();
+  requestAnimationFrame(() => ctrl.placeButtons());
+  lwcUpdateReadout(ticker, null);
+  renderVolumeStats(ticker, ohlc);
 }
 
 function computeEMA(values, period) {
@@ -10008,17 +10173,10 @@ function computeEMA(values, period) {
   return out;
 }
 
-const volumeCharts = {};
-function renderVolumeSubplot(ticker, ohlc, labels) {
-  const canvas = document.getElementById(`td-vol-${ticker}`);
-  if (!canvas) return;
-  if (volumeCharts[ticker]) volumeCharts[ticker].destroy();
-
-  // Split into aggressive buy vs sell volume per candle (from Binance taker data)
+// Pasek sum Buy/Sell pod wykresem (wolumen jako histogram jest w samym wykresie)
+function renderVolumeStats(ticker, ohlc) {
   const buyVol = ohlc.map(c => c[6] || 0);                    // taker buy
   const sellVol = ohlc.map(c => (c[5] || 0) - (c[6] || 0));   // total - taker buy
-
-  // Compute aggregates for stats bar
   const totalBuy = buyVol.reduce((a, b) => a + b, 0);
   const totalSell = sellVol.reduce((a, b) => a + b, 0);
   const total = totalBuy + totalSell;
@@ -10027,76 +10185,19 @@ function renderVolumeSubplot(ticker, ohlc, labels) {
   const buyValue = totalBuy * (livePrices[ticker]?.price || 1);
   const sellValue = totalSell * (livePrices[ticker]?.price || 1);
   const totalValue = buyValue + sellValue;
-
   const statsEl = document.getElementById(`vol-stats-${ticker}`);
   if (statsEl) {
-    statsEl.innerHTML = `
+    statsEl.innerHTML = total > 0 ? `
       <span class="buy">↑ Buy $${fmtVol(buyValue)} (${buyPct.toFixed(1)}%)</span>
       <span class="sep">·</span>
       <span class="sell">↓ Sell $${fmtVol(sellValue)} (${sellPct.toFixed(1)}%)</span>
       <span class="sep">·</span>
       <span style="color:var(--text)">Total $${fmtVol(totalValue)}</span>
-    `;
+    ` : `<span style="color:var(--text-dim)">—</span>`;
   }
-
-  volumeCharts[ticker] = new Chart(canvas.getContext('2d'), {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: 'Buy Vol',
-          data: buyVol,
-          backgroundColor: 'rgba(52,211,153,0.7)',
-          borderColor: 'rgba(52,211,153,1)',
-          borderWidth: 0,
-          stack: 'volume'
-        },
-        {
-          label: 'Sell Vol',
-          data: sellVol,
-          backgroundColor: 'rgba(248,113,113,0.7)',
-          borderColor: 'rgba(248,113,113,1)',
-          borderWidth: 0,
-          stack: 'volume'
-        }
-      ]
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#151d34',
-          titleColor: '#e8ecf7',
-          bodyColor: '#e8ecf7',
-          borderColor: '#1e2a44',
-          borderWidth: 1,
-          callbacks: {
-            title: (items) => labels[items[0].dataIndex],
-            label: (ctx) => {
-              const i = ctx.dataIndex;
-              const b = buyVol[i], s = sellVol[i], t = b + s;
-              const pct = t > 0 ? (b / t * 100).toFixed(1) : '50.0';
-              if (ctx.datasetIndex === 0) return `Buy:  ${fmtVol(b)} (${pct}%)`;
-              return `Sell: ${fmtVol(s)} (${(100 - parseFloat(pct)).toFixed(1)}%)`;
-            }
-          }
-        }
-      },
-      scales: {
-        x: { stacked: true, ticks: { display: false }, grid: { display: false }, border: { display: false } },
-        y: {
-          stacked: true, position: 'right',
-          ticks: { color: '#7d8bab', font: { size: 9, family: 'SF Mono, monospace' }, callback: v => fmtVol(v), maxTicksLimit: 3 },
-          grid: { color: 'rgba(30,42,68,0.35)' },
-          border: { color: '#1e2a44' }
-        }
-      }
-    }
-  });
 }
+// Zgodność: dawna nazwa
+function renderVolumeSubplot(ticker, ohlc) { renderVolumeStats(ticker, ohlc); }
 
 function fmtVol(v) {
   const n = Math.abs(v);
@@ -10106,220 +10207,11 @@ function fmtVol(v) {
   return v.toFixed(2);
 }
 
-function setupChartInteractions(ticker, canvas) {
-  const wrap = canvas.parentElement;
-  // Clean up prior listeners by cloning wrap contents — simplest way to prevent
-  // accumulation on re-render. Attach fresh listeners below.
-  const handlers = wrap._tvcHandlers;
-  if (handlers) {
-    canvas.removeEventListener('wheel', handlers.wheel);
-    canvas.removeEventListener('mousedown', handlers.down);
-    canvas.removeEventListener('mousemove', handlers.move);
-    canvas.removeEventListener('mouseup', handlers.up);
-    canvas.removeEventListener('mouseleave', handlers.up);
-  }
-
-  let isDragging = false;
-  let dragMode = null; // 'pan', 'yaxis' (TradingView-style Y scale)
-  let dragStart = null;
-
-  const persistZoom = () => {
-    const chart = tokenCharts[ticker]; if (!chart) return;
-    userZoom[ticker] = {
-      yMin: chart.options.scales.y.min,
-      yMax: chart.options.scales.y.max,
-      xMin: chart.options.scales.x.min,
-      xMax: chart.options.scales.x.max,
-      tf: window[`__tf_${ticker}`] || '7D'
-    };
-    saveZoom();
-  };
-
-  // WHEEL — zoom Y (or X with shift). Reduced sensitivity — was 1.15/0.87, now 1.08/0.93
-  const wheelHandler = (e) => {
-    e.preventDefault();
-    const chart = tokenCharts[ticker];
-    if (!chart) return;
-    const useX = e.shiftKey;
-    const scale = useX ? chart.scales.x : chart.scales.y;
-    const scaleKey = useX ? 'x' : 'y';
-    const currentMin = scale.min ?? 0;
-    const currentMax = scale.max ?? 100;
-    const range = currentMax - currentMin;
-    const zoomFactor = e.deltaY > 0 ? 1.08 : 0.93;
-    const newRange = range * zoomFactor;
-    const rect = canvas.getBoundingClientRect();
-    const cursorRatio = useX
-      ? (e.clientX - rect.left) / rect.width
-      : 1 - (e.clientY - rect.top) / rect.height;
-    const cursorValue = currentMin + range * cursorRatio;
-    chart.options.scales[scaleKey].min = cursorValue - newRange * cursorRatio;
-    chart.options.scales[scaleKey].max = cursorValue + newRange * (1 - cursorRatio);
-    chart.update('none');
-    persistZoom();
-  };
-
-  // Cursor hint: change cursor over Y-axis area (right 55px) and X-axis area (bottom 32px)
-  // Also drives the TradingView-style price crosshair — pokazuje cenę pod kursorem.
-  const hoverHandler = (e) => {
-    if (isDragging) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    if (rect.width - x < 55) canvas.style.cursor = 'ns-resize';       // Y-axis zone → vertical scale
-    else if (rect.height - y < 32) canvas.style.cursor = 'ew-resize'; // X-axis zone → horizontal scale
-    else canvas.style.cursor = 'crosshair';
-    chartHoverY[ticker] = y;
-    const chart = tokenCharts[ticker];
-    if (chart) {
-      chart.draw();
-      // Per-candle OHLC readout, TradingView-style: map cursor X → nearest candle index
-      const xScale = chart.scales.x;
-      const data = tokenChartData[ticker];
-      if (xScale && data && data.ohlc && data.ohlc.length) {
-        const rawIdx = xScale.getValueForPixel(x);
-        if (rawIdx !== undefined && !isNaN(rawIdx)) {
-          const idx = Math.max(0, Math.min(data.ohlc.length - 1, Math.round(rawIdx)));
-          updateOhlcReadout(ticker, idx);
-        }
-      }
-    }
-  };
-  const clearHover = () => {
-    if (chartHoverY[ticker] === undefined) return;
-    delete chartHoverY[ticker];
-    const chart = tokenCharts[ticker];
-    if (chart) chart.draw();
-    updateOhlcReadout(ticker); // reset to last/current candle
-  };
-
-  const downHandler = (e) => {
-    if (e.button !== 0) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    isDragging = true;
-    dragStart = { y: e.clientY, x: e.clientX };
-    // TradingView-style zones:
-    //   - right 55px (Y-axis) → scale Y (vertical stretch/compress)
-    //   - bottom 32px (X-axis / time axis) → scale X (horizontal stretch/compress)
-    //   - everywhere else → pan (move chart in both directions)
-    if (rect.width - x < 55) dragMode = 'yaxis';
-    else if (rect.height - y < 32) dragMode = 'xaxis';
-    else dragMode = 'pan';
-    canvas.style.cursor = dragMode === 'yaxis' ? 'ns-resize'
-                        : dragMode === 'xaxis' ? 'ew-resize'
-                        : 'grabbing';
-  };
-  const moveHandler = (e) => {
-    if (!isDragging) return hoverHandler(e);
-    const chart = tokenCharts[ticker]; if (!chart) return;
-    const yScale = chart.scales.y;
-    const xScale = chart.scales.x;
-    const yMin = yScale.min ?? 0;
-    const yMax = yScale.max ?? 100;
-    const rangeY = yMax - yMin;
-    const xMin = xScale.min ?? 0;
-    const xMax = xScale.max ?? (chart.data.labels.length - 1);
-    const rangeX = xMax - xMin;
-
-    if (dragMode === 'yaxis') {
-      // Drag on Y-axis: compress/expand scale around center. Down = zoom in, up = zoom out.
-      const deltaY = e.clientY - dragStart.y;
-      const factor = 1 + deltaY * 0.005;
-      const center = (yMin + yMax) / 2;
-      const newRange = Math.max(0.001, rangeY * factor);
-      chart.options.scales.y.min = center - newRange / 2;
-      chart.options.scales.y.max = center + newRange / 2;
-    } else if (dragMode === 'xaxis') {
-      // TradingView-style X-axis drag: compress/expand horizontal candle spacing.
-      // Drag LEFT = zoom in (fewer candles visible, każda szersza)
-      // Drag RIGHT = zoom out (więcej candles visible, każda węższa)
-      // Anchor to right edge (most recent candle) so newest data stays visible during scale.
-      const deltaX = e.clientX - dragStart.x;
-      const factor = 1 - deltaX * 0.004;  // negative because drag right = zoom out
-      const newRangeX = Math.max(3, Math.min(chart.data.labels.length - 1, rangeX * factor));
-      const anchor = xMax;  // keep right edge fixed
-      chart.options.scales.x.min = anchor - newRangeX;
-      chart.options.scales.x.max = anchor;
-    } else {
-      // Standard pan — move both X and Y
-      const deltaY = e.clientY - dragStart.y;
-      const deltaX = e.clientX - dragStart.x;
-      const pricePerPixel = rangeY / yScale.height;
-      chart.options.scales.y.min = yMin + deltaY * pricePerPixel;
-      chart.options.scales.y.max = yMax + deltaY * pricePerPixel;
-      const catsPerPixel = rangeX / xScale.width;
-      chart.options.scales.x.min = xMin - deltaX * catsPerPixel;
-      chart.options.scales.x.max = xMax - deltaX * catsPerPixel;
-    }
-    chart.update('none');
-    dragStart = { y: e.clientY, x: e.clientX };
-  };
-  const upHandler = () => {
-    if (isDragging) persistZoom();
-    isDragging = false; dragMode = null;
-    canvas.style.cursor = 'crosshair';
-  };
-
-  // Pointer events unify mouse + touch (works on phones/tablets too)
-  // Also prevent page scroll while dragging chart on mobile
-  const touchPreventScroll = (e) => { if (isDragging) e.preventDefault(); };
-
-  canvas.addEventListener('wheel', wheelHandler, { passive: false });
-  canvas.addEventListener('pointerdown', (e) => { canvas.setPointerCapture(e.pointerId); downHandler(e); });
-  canvas.addEventListener('pointermove', moveHandler);
-  canvas.addEventListener('pointerup', upHandler);
-  canvas.addEventListener('pointercancel', upHandler);
-  canvas.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') { upHandler(); clearHover(); } });
-  canvas.addEventListener('dblclick', () => resetZoom(ticker));
-  canvas.addEventListener('touchmove', touchPreventScroll, { passive: false });
-
-  // Pinch-zoom for mobile: 2-finger pinch = zoom in/out (like TradingView mobile)
-  let pinchActive = false, pinchStartDist = 0, pinchStartRange = 0;
-  canvas.addEventListener('touchstart', (e) => {
-    if (e.touches.length === 2) {
-      pinchActive = true;
-      isDragging = false;  // cancel any drag
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      pinchStartDist = Math.hypot(dx, dy);
-      const chart = tokenCharts[ticker];
-      if (chart) {
-        const xs = chart.scales.x;
-        pinchStartRange = (xs.max ?? chart.data.labels.length - 1) - (xs.min ?? 0);
-      }
-    }
-  }, { passive: true });
-  canvas.addEventListener('touchmove', (e) => {
-    if (!pinchActive || e.touches.length !== 2) return;
-    e.preventDefault();
-    const dx = e.touches[0].clientX - e.touches[1].clientX;
-    const dy = e.touches[0].clientY - e.touches[1].clientY;
-    const dist = Math.hypot(dx, dy);
-    const factor = pinchStartDist / dist;  // closer fingers = zoom out
-    const chart = tokenCharts[ticker];
-    if (!chart) return;
-    const xs = chart.scales.x;
-    const xMax = xs.max ?? (chart.data.labels.length - 1);
-    const newRange = Math.max(3, Math.min(chart.data.labels.length - 1, pinchStartRange * factor));
-    chart.options.scales.x.min = xMax - newRange;
-    chart.options.scales.x.max = xMax;
-    chart.update('none');
-  }, { passive: false });
-  canvas.addEventListener('touchend', (e) => {
-    if (e.touches.length < 2) {
-      if (pinchActive) persistZoom();
-      pinchActive = false;
-    }
-  }, { passive: true });
-
-  wrap._tvcHandlers = { wheel: wheelHandler, down: downHandler, move: moveHandler, up: upHandler };
-}
-
 function resetZoom(ticker) {
   delete userZoom[ticker];
   saveZoom();
+  const ctrl = tokenCharts[ticker];
+  if (ctrl) { ctrl._restoring = true; ctrl.resetView(); setTimeout(() => { ctrl._restoring = false; }, 500); return; }
   const tf = window[`__tf_${ticker}`] || '7D';
   const cached = ohlcCache[`${ticker}_${tf}`];
   if (cached) renderTokenChart(ticker, cached);
