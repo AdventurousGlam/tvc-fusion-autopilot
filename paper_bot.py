@@ -447,15 +447,51 @@ def _migrate_flag_out_of_range(conn):
     cols = [r[1] for r in conn.execute("PRAGMA table_info(positions)")]
     if "excluded" not in cols:
         return
-    ids = (14, 64, 65, 68)
+    # v4.4.1 (20.10.2026) — ZAWĘŻONE z (14, 64, 65, 68) do (64,).
+    #
+    # Pierwotna czwórka pochodziła z detektora „wyjście spoza zakresu", który
+    # 18.10 okazał się zepsuty: klines() pobierał max 1000 świec (16 h 40 min),
+    # więc każda pozycja trzymana dłużej miała „wyjście spoza zakresu" tylko
+    # dlatego, że właściwej świecy nie było w pobranym oknie.
+    #
+    # Po naprawieniu stronicowania każda z czterech została sprawdzona osobno,
+    # po objawie defektu, a nie po werdykcie detektora:
+    #   #64 SUI  hit_sl przy pnl +2,23% — SL powyżej wejścia. DEFEKT, zostaje.
+    #   #14 SOL  hit_sl, −5,14% — zwykła stratna pozycja, wyjście w zakresie.
+    #   #65 SOL  hit_sl, −5,67% — j.w.
+    #   #68 ETH  hit_sl, −1,93% — j.w.
+    #
+    # Przywrócenie #14, #65 i #68 POGARSZA publikowany wynik
+    # (47 → 50 pozycji, WR 29,8% → 28,0%, suma +55,80 → +37,25 $).
+    # To jest powód, dla którego trzeba to zrobić, a nie powód, żeby odpuścić.
+    # Uwaga: f"IN {ids}" dla jednoelementowej krotki daje "IN (64,)", czego
+    # SQLite nie przyjmuje. Dlatego parametry wiązane, a nie interpolacja.
+    ids = (64,)
     cur = conn.execute(
-        f"UPDATE positions SET excluded = 1 "
-        f"WHERE id IN {ids} AND COALESCE(excluded, 0) = 0"
+        "UPDATE positions SET excluded = 1 "
+        f"WHERE id IN ({','.join('?' * len(ids))}) AND COALESCE(excluded, 0) = 0",
+        ids
     )
     if cur.rowcount:
         conn.commit()
         print(f"[migrate] v4.3.3 — oznaczono {cur.rowcount} pozycji jako wykluczone "
               f"(wyjście spoza zakresu, rejestr pkt 2b): {', '.join(f'#{i}' for i in ids)}")
+
+    # v4.4.1 — jednorazowe zdjęcie flagi z trzech pozycji wykluczonych przez
+    # zepsuty detektor. Idempotentne przez znacznik w `meta`: wykonuje się raz
+    # na każdej kopii bazy, niezależnie od tego, która wersja pliku .db trafi
+    # do repozytorium. Ręczny UPDATE tego nie załatwiał — migracja powyżej
+    # nadpisywała go przy każdym starcie bota.
+    if _meta_get(conn, "migr_unflag_false_oor_v441") != "done":
+        cur3 = conn.execute(
+            "UPDATE positions SET excluded = 0 "
+            "WHERE id IN (14, 65, 68) AND COALESCE(excluded, 0) = 1"
+        )
+        if cur3.rowcount:
+            conn.commit()
+            print(f"[migrate] v4.4.1 — przywrócono {cur3.rowcount} pozycji do statystyk "
+                  f"(#14, #65, #68 — fałszywe wykluczenie przez zepsuty detektor)")
+        _meta_set(conn, "migr_unflag_false_oor_v441", "done")
 
     # v4.3.4 (14.10.2026) — ERA PRZED 28.08, rejestr pkt 2a.
     # Pierwsza wersja tej migracji oznaczyła tylko klasę „wyjście spoza zakresu"

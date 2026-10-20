@@ -83,6 +83,17 @@ jobs:
         working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: python3 picks_tracker.py
 
+      # Publiczne wyniki paper tradingu -> results.json dla results.html.
+      # Skrypt SAM blokuje zapis do STATS_PUBLIC_FROM (12.11.2026, rejestr pkt 6):
+      # do tego dnia tylko wypisuje policzone liczby i kończy bez pliku. Od 12.11
+      # zacznie go generować, a strona wypełni się bez niczyjego udziału.
+      # Jak picks — awaria nie przerywa cyklu, to warstwa publikacyjna.
+      - name: Eksport wyników (results.json, publikacja od 12.11)
+        id: export_results
+        continue-on-error: true
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
+        run: python3 export_results.py
+
       # Pump Radar — skan całego rynku perpów (HL + MEXC) pod krótkoterminowe pumpy:
       # OI surge / funding / kompresja / wieloryby HL / zapłon wolumenu / listingi.
       # radar_cache.json (serie cen/OI, fills) żyje w actions/cache, nie w repo — za duży
@@ -290,7 +301,7 @@ jobs:
           git config user.name "tvc-autopilot"
           git config user.email "autopilot@tvcfusion.local"
           git add fusion_*.json paper_trades.db
-          for f in crypto_picks.json crypto_picks_history.json layers_cache.json pump_radar.json pump_radar_alerts.json correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json tg_sent.json autopilot_health.json; do [ -e "$f" ] && git add "$f"; done; true
+          for f in results.json crypto_picks.json crypto_picks_history.json layers_cache.json pump_radar.json pump_radar_alerts.json correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json tg_sent.json autopilot_health.json; do [ -e "$f" ] && git add "$f"; done; true
           if git diff --cached --quiet; then
             echo "Brak zmian do commitu."
             exit 0
