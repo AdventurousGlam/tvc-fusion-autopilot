@@ -69,6 +69,23 @@ HORYZONT_DNI = 7
 # medianie zwrotu −6%, czyli mierzył kształt tezy, nie jakość wyboru.
 MIN_DYSTANS_CELU = 3.0
 
+# 30.10.2026 — uczciwe trafienia. Mimo progu 3% Momentum pokazywał 62,7% hit rate
+# przy medianie zwrotu 7d −8%. Trzy przyczyny i trzy poprawki:
+#  1. Świeca dzienna dnia zerowego zawiera godziny PRZED publikacją picka (05:00 UTC),
+#     więc szczyt z nocy liczył się jako "trafienie". Teraz cel/stop sprawdzamy na
+#     świecach godzinowych od godziny picka.
+#  2. "expired_up" (7 dni bez celu, lekko na plusie) wliczało się do trafień.
+#     Teraz trafienie = tylko dotknięty cel oddalony o ≥ MIN_DYSTANS_CELU.
+#     expired_up raportujemy osobno.
+#  3. Ceny < 0.01 były zapisane z obciętą precyzją (PEPE 4e-06), więc dystans do celu
+#     liczył się od złej ceny. Przy wyraźnej rozbieżności bierzemy cenę z rynku
+#     z godziny picka.
+# Stare wpisy bez "metoda" == METODA są przeliczane, najwyżej MAX_PRZELICZEN_NA_CYKL
+# na przebieg, żeby nie wydłużać 5-minutowego cyklu autopilota.
+METODA = "h1-2026-10-30"
+GODZINA_PICKA_UTC = 5
+MAX_PRZELICZEN_NA_CYKL = 40
+
 UA = "Mozilla/5.0 (compatible; TVCPicksTracker/1.0)"
 SSL_CTX = ssl.create_default_context()
 
@@ -114,6 +131,57 @@ def swiece_btc(od_ts, do_ts):
     return _BTC_CACHE[klucz]
 
 
+def swiece_godzinowe(symbol, od_ts, do_ts):
+    """Świece 1h z MEXC (publiczne API trzyma ~90 dni). Pusta lista zamiast wyjątku."""
+    try:
+        j = _get_json(
+            f"https://contract.mexc.com/api/v1/contract/kline/{symbol}"
+            f"?interval=Min60&start={int(od_ts)}&end={int(do_ts)}"
+        )
+    except Exception as e:
+        print(f"[tracker] {symbol}: klines 1h nieosiągalne ({e})")
+        return []
+    d = (j or {}).get("data") or {}
+    n = len(d.get("close") or [])
+    out, seen = [], set()
+    for i in range(n):
+        t = int(d["time"][i])
+        if t in seen:
+            continue
+        seen.add(t)
+        out.append({"t": t, "o": float(d["open"][i]), "h": float(d["high"][i]),
+                    "l": float(d["low"][i]), "c": float(d["close"][i])})
+    out.sort(key=lambda s: s["t"])
+    return out
+
+
+def moment_picka(p, h1):
+    """Unix ts początku godziny, od której liczymy pick.
+    1) generated_at zapisany przy picku (od 30.10), 2) dla starych wpisów: 05:00 UTC,
+    chyba że cena z tej godziny różni się od zapisanej o > 3% (pick generowany ręcznie
+    później) — wtedy pierwsza godzina od 05:00, której open zgadza się z zapisaną ceną."""
+    g = p.get("generated_at")
+    if g:
+        try:
+            dt = datetime.fromisoformat(str(g).replace("Z", "+00:00"))
+            return int(dt.timestamp()) // 3600 * 3600
+        except ValueError:
+            pass
+    d0 = datetime.strptime(p["date"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    t5 = int(d0.timestamp()) + GODZINA_PICKA_UTC * 3600
+    cena = p.get("price")
+    if not cena or not h1 or cena < 0.01:      # ceny < 0.01 bywały obcięte — nie dopasowujemy
+        return t5
+    po = {s["t"]: s for s in h1}
+    if t5 in po and abs(po[t5]["o"] / cena - 1) <= 0.03:
+        return t5
+    for t in range(t5, int(d0.timestamp()) + 24 * 3600, 3600):
+        s = po.get(t)
+        if s and abs(s["o"] / cena - 1) <= 0.03:
+            return t
+    return t5
+
+
 def swiece_dzienne(symbol, od_ts, do_ts):
     """Świece dzienne z MEXC w zadanym oknie. Pusta lista zamiast wyjątku."""
     try:
@@ -154,7 +222,7 @@ def zwrot_btc(data_picka, dni):
     return round((po[dni]["c"] - baza) / baza * 100.0, 2)
 
 
-def policz_wynik(p, swiece):
+def policz_wynik(p, swiece, h1=None):
     """
     Zwraca słownik z wynikiem albo None, gdy brak danych.
 
@@ -208,15 +276,24 @@ def policz_wynik(p, swiece):
     # dostaje target_mierzalny = False i wypada z liczenia trafień. Zwroty
     # liczymy mu normalnie — one są poprawne niezależnie od tego, gdzie ktoś
     # postawił opór.
+    # 30.10: od kiedy i od jakiej ceny liczymy cel/stop
+    t0 = moment_picka(p, h1) if h1 else None
+    h1_po = [s for s in (h1 or []) if t0 is not None and t0 <= s["t"] < t0 + HORYZONT_DNI * 86400]
+    entry_cel = entry
+    if h1_po and entry and abs(h1_po[0]["o"] / entry - 1) > 0.03 and entry < 0.01:
+        entry_cel = h1_po[0]["o"]          # obcięta precyzja ceny (np. PEPE 4e-06)
+
     dyst = None
-    if cel is not None and entry:
-        dyst = (entry - cel) / entry * 100.0 if short else (cel - entry) / entry * 100.0
+    if cel is not None and entry_cel:
+        dyst = (entry_cel - cel) / entry_cel * 100.0 if short else (cel - entry_cel) / entry_cel * 100.0
     mierzalny = dyst is not None and dyst >= MIN_DYSTANS_CELU
 
-    # co padło pierwsze: cel czy stop
+    # co padło pierwsze: cel czy stop — na świecach 1h od godziny picka, gdy są;
+    # inaczej (starsze niż ~90 dni) na dziennych jak dotąd.
     wynik = "open"
     dzien = None
-    for i, s in enumerate(po):
+    seria = h1_po if h1_po else po
+    for i, s in enumerate(seria):
         trafil_cel = cel is not None and (s["l"] <= cel if short else s["h"] >= cel)
         trafil_stop = stop is not None and (s["h"] >= stop if short else s["l"] <= stop)
         if trafil_stop:
@@ -228,6 +305,8 @@ def policz_wynik(p, swiece):
         if trafil_cel:
             wynik, dzien = "target_hit", i
             break
+    if h1_po and dzien is not None:
+        dzien = (seria[dzien]["t"] - t0) // 86400      # dzień liczony od godziny picka
 
     dni_minelo = len(po) - 1
     if wynik == "open" and dni_minelo >= HORYZONT_DNI:
@@ -244,6 +323,8 @@ def policz_wynik(p, swiece):
         "target_dist_pct": round(dyst, 2) if dyst is not None else None,
         "target_mierzalny": mierzalny,
         "trafiony_w_dniu_0": wynik == "target_hit" and dzien == 0,
+        "metoda": METODA if h1_po else "d1",
+        "entry_ts": t0 if h1_po else None,
         "scored_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         **btc_porownanie(p, zwroty, short),
     }
@@ -273,7 +354,7 @@ def klucz(p):
     return f"{p['date']}|{p['ticker']}"
 
 
-def zachowaj_z_picka(p, data):
+def zachowaj_z_picka(p, data, generated_at=None):
     """Tylko pola potrzebne do rozliczenia — archiwum ma nie puchnąć tezami."""
     return {
         "date": data,
@@ -296,6 +377,7 @@ def zachowaj_z_picka(p, data):
         "change_7d_pct": p.get("change_7d_pct"),
         "risk_flag": (p.get("risk_flag") or "")[:160] or None,
         "screener": "v2" if data >= WERSJA_SCREENERA else "v1",
+        "generated_at": generated_at,
     }
 
 
@@ -324,7 +406,7 @@ def backfill_z_gita():
         dni.add(data)
         for p in d.get("picks") or []:
             if p.get("ticker") and p.get("price"):
-                arch[f"{data}|{p['ticker']}"] = zachowaj_z_picka(p, data)
+                arch[f"{data}|{p['ticker']}"] = zachowaj_z_picka(p, data, d.get("generated_at"))
     print(f"[tracker] backfill z gita: {len(dni)} dni, {len(arch)} picków")
     return arch
 
@@ -354,7 +436,7 @@ def dopisz_dzisiejsze(arch):
     for p in d.get("picks") or []:
         k = f"{data}|{p.get('ticker')}"
         if p.get("ticker") and p.get("price") and k not in arch:
-            arch[k] = zachowaj_z_picka(p, data)
+            arch[k] = zachowaj_z_picka(p, data, d.get("generated_at"))
             nowe += 1
     return nowe
 
@@ -461,7 +543,7 @@ def podsumuj(arch):
     out = {}
     for (wersja, kat), s in wg.items():
         mier = s["mierzalnych"]
-        udane = s["target_hit"] + s["expired_up"]
+        udane = s["target_hit"]          # 30.10: expired_up nie jest trafieniem celu
         n7 = len(s["zwroty7"])
         out.setdefault(wersja, {})[kat] = {
             "n": s["n"],
@@ -478,6 +560,8 @@ def podsumuj(arch):
             "sample_alpha_7d": len(s["alfa7"]),
             # Miara pomocnicza, tylko na mierzalnych celach.
             "hit_rate_pct": round(udane / mier * 100, 1) if mier else None,
+            "hit_rate_incl_expired_up_pct": (round((udane + s["expired_up"]) / mier * 100, 1)
+                                             if mier else None),
             "hit_sample": mier,
             "excluded_unmeasurable": s["niemierzalnych"],
             "hits_on_day_0": s["w_dniu_0"],
@@ -510,10 +594,21 @@ def main():
     # w MEXC po 117 symbolach każdego dnia.
     dzis = datetime.now(timezone.utc).date()
     do_liczenia = []
+    wszystko = "--przelicz-wszystko" in sys.argv
+    stare = 0
     for k, e in arch.items():
         w = e.get("wynik")
-        if w and w.get("resolved"):
+        wiek_dni = (dzis - datetime.strptime(e["date"], "%Y-%m-%d").date()).days
+        if (w and w.get("resolved") and w.get("metoda") in (METODA, "d1")
+                and (w.get("return_7d_pct") is not None or wiek_dni > HORYZONT_DNI + 2)):
+            # 30.10: pick rozstrzygnięty wcześnie (cel/stop) liczymy dalej, aż będzie
+            # zwrot 7d — wcześniej zostawał bez niego i wypadał ze statystyk zwrotu.
             continue
+        if w and w.get("resolved"):
+            # rozliczony starą metodą — przeliczamy, ale porcjami
+            if not wszystko and stare >= MAX_PRZELICZEN_NA_CYKL:
+                continue
+            stare += 1
         wiek = (dzis - datetime.strptime(e["date"], "%Y-%m-%d").date()).days
         if wiek < 0:
             continue
@@ -527,8 +622,10 @@ def main():
         sw = swiece_dzienne(e["symbol"],
                             (d0 - timedelta(days=2)).timestamp(),
                             (d0 + timedelta(days=HORYZONT_DNI + 2)).timestamp())
+        h1 = swiece_godzinowe(e["symbol"], d0.timestamp(),
+                              (d0 + timedelta(days=HORYZONT_DNI + 1)).timestamp())
         p = dict(e)
-        w = policz_wynik(p, sw)
+        w = policz_wynik(p, sw, h1)
         if w:
             e["wynik"] = w
             policzone += 1
@@ -545,8 +642,9 @@ def main():
         "screener_v2_since": WERSJA_SCREENERA,
         "min_target_dist_pct": MIN_DYSTANS_CELU,
         "note": ("Główna miara to zwrot po 7 dniach od ceny z momentu picka. "
-                 f"Hit rate liczony tylko dla celów oddalonych o ≥{MIN_DYSTANS_CELU}% "
-                 "od wejścia — bliższe były dotykane w dniu zerowym i zawyżały wynik. "
+                 f"Hit rate = dotknięty cel oddalony o ≥{MIN_DYSTANS_CELU}% od wejścia, sprawdzany "
+                 "na świecach 1h od godziny picka (od 30.10.2026); bliższe cele i 'expired_up' "
+                 "nie liczą się jako trafienie. "
                  "Gdy cel i invalidation padną w tej samej świecy, liczone jako invalidated."),
         "summary": podsumuj(arch),
         # Co by było, gdyby odcinać przy kolejnych progach kapitalizacji.

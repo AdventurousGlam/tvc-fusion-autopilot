@@ -39,7 +39,13 @@ FUSION_DIR = Path.home() / "Claude" / "TVCFusion"
 OUT_PATH = FUSION_DIR / "crypto_picks.json"
 PICKS_HOUR_UTC = 5              # generuj raz dziennie po tej godzinie (07:00 PL)
 
-MIN_TURNOVER_USD = 5_000_000    # płynność — poniżej złe fille
+MIN_TURNOVER_USD = 5_000_000    # płynność — próg dla kontekstu rynku (szerokość rynku)
+# 30.10.2026: próg płynności dla samych picków (i radaru). Na 132 rozliczonych pickach
+# 77 miało obrót < $20M; dla kontekstu rynku zostaje $5M, żeby nie zmieniać miary szerokości.
+PICK_MIN_TURNOVER_USD = 20_000_000
+# 30.10.2026: ten sam token najwyżej raz na 7 dni kroczących (BTW był pickiem 9 razy, AKE 7).
+COOLDOWN_DNI = 7
+HIST_PATH = FUSION_DIR / "crypto_picks_history.json"
 MIN_MCAP_USD = 20_000_000
 NEW_LISTING_DAYS = 30
 NEW_LISTING_MIN_TURNOVER = 20_000_000
@@ -390,6 +396,7 @@ def analyze(row, k):
     e20, e50 = ema(closes, 20), ema(closes, 50) if len(closes) >= 50 else None
     last20 = done[-20:]
     hi20 = max(c["h"] for c in last20); lo20 = min(c["l"] for c in last20)
+    hi_all = max(c["h"] for c in done)   # najwyższy szczyt w całej pobranej historii (~70 dni)
     vol_avg30 = sum(vols[-31:-1]) / max(1, len(vols[-31:-1]))
     vol_ratio = (row["turnover"] / vol_avg30) if vol_avg30 else None
     # higher highs: 3 ostatnie domknięte szczyty tygodniowe rosną
@@ -409,7 +416,7 @@ def analyze(row, k):
             sfp_bull = {"day": i, "low": done[i]["l"], "level": prior_lo}
     if sfp_bull and any(c["c"] < sfp_bull["low"] for c in done[sfp_bull["day"] + 1:]):
         sfp_bull = None
-    return {"px": px, "ema20": e20, "ema50": e50, "hi20": hi20, "lo20": lo20, "lo5": lo5, "rsi": rsi(closes[:-1]), "vol_ratio": vol_ratio, "hh": hh,
+    return {"px": px, "ema20": e20, "ema50": e50, "hi20": hi20, "hi_all": hi_all, "lo20": lo20, "lo5": lo5, "rsi": rsi(closes[:-1]), "vol_ratio": vol_ratio, "hh": hh,
             "dist_lo20": (px - lo20) / px * 100 if px else None, "dist_hi20": (hi20 - px) / px * 100 if px else None,
             "range5": range5, "range20": range20, "sfp_bull": sfp_bull}
 
@@ -495,10 +502,29 @@ def score_mean_reversion(r, a, mcap):
 
 # ─── Budowa picka ────────────────────────────────────────────────────────────
 
-def fmtp(v):
+def fmtp(v, sig=5):
+    """Zaokrąglenie do cyfr znaczących (30.10.2026). Stare round(v, 6) dla v < 0.01
+    zamieniało PEPE 0.0000044797 w 4e-06 i dawało identyczne S / R / invalidation.
+    Teraz: 5 cyfr znaczących, ale nigdy mniej niż 2 miejsca po przecinku."""
     if v is None:
         return None
-    return round(v, 6 if v < 0.01 else 4 if v < 1 else 2)
+    v = float(v)
+    if v == 0 or v != v:
+        return v
+    import math
+    dec = max(2, sig - 1 - int(math.floor(math.log10(abs(v)))))
+    return round(v, dec)
+
+
+def resistance_above(px, *levels):
+    """Pierwszy poziom z listy, który leży POWYŻEJ ceny (30.10.2026).
+    Opór pod ceną to nie opór: 21 z 90 picków Momentum miało R ≤ cena wejścia,
+    bo szczyt 20d z domkniętych świec był już przebity. Gdy żaden poziom nie jest
+    nad ceną (cena na nowych maksimach w dostępnej historii) — None, bez R."""
+    for lv in levels:
+        if lv is not None and px and lv > px:
+            return lv
+    return None
 
 
 def build_pick(cat, r, a, mcap, score):
@@ -561,6 +587,10 @@ def build_pick(cat, r, a, mcap, score):
                   f"Quality large-cap at support{' — first green candle' if r['r24'] > 0 else ' — no confirmation yet'}. Target: reversion to EMA20 {fmtp(a['ema20'])}.")
         support, resistance, inval = lo, (a["ema20"] if a else hi), lo * 0.97
 
+    # 30.10.2026: R nigdy pod ceną. Najpierw poziom z tezy, potem szczyt 20d,
+    # potem najwyższy szczyt z ~70 dni; jeśli wszystkie ≤ cena → brak R.
+    resistance = resistance_above(px, resistance, hi, a["hi_all"] if a else None)
+
     return {
         "ticker": r["ticker"], "name": None, "exchange": "MEXC perp",
         "category": cat, "direction": direction,
@@ -573,6 +603,35 @@ def build_pick(cat, r, a, mcap, score):
         "rsi14": round(a["rsi"], 1) if a and a["rsi"] is not None else None,
         "score": round(score, 1),
     }
+
+
+def recent_tickers(today, days=COOLDOWN_DNI):
+    """Tickery pokazane jako pick w ostatnich `days - 1` dniach (bez dziś).
+    Źródło: crypto_picks_history.json (picks_tracker.py) + wczorajszy crypto_picks.json,
+    gdyby tracker jeszcze go nie dopisał. Brak plików = brak blokady (nie wywracamy picków)."""
+    d0 = datetime.strptime(today, "%Y-%m-%d").date()
+    out = set()
+    def _add(date_s, ticker):
+        try:
+            age = (d0 - datetime.strptime(date_s, "%Y-%m-%d").date()).days
+        except (TypeError, ValueError):
+            return
+        if 1 <= age < days and ticker:
+            out.add(ticker)
+    try:
+        if HIST_PATH.exists():
+            for e in (json.loads(HIST_PATH.read_text()).get("entries") or {}).values():
+                _add(e.get("date"), e.get("ticker"))
+    except Exception as e:
+        print(f"[picks] cooldown: historia nieczytelna ({e}) — pomijam blokadę z historii")
+    try:
+        if OUT_PATH.exists():
+            prev = json.loads(OUT_PATH.read_text())
+            for p in prev.get("picks") or []:
+                _add(prev.get("date"), p.get("ticker"))
+    except Exception:
+        pass
+    return out
 
 
 def market_context(universe, fng):
@@ -613,7 +672,10 @@ def generate(force=False, telegram=False):
     print(f"[picks] mcap map: {len(mcap)} symboli")
     fng = fetch_fng()
 
-    liquid = [r for r in universe if r["turnover"] >= MIN_TURNOVER_USD]
+    liquid = [r for r in universe if r["turnover"] >= PICK_MIN_TURNOVER_USD]   # 30.10: $20M dla picków
+    cooldown = recent_tickers(today)
+    if cooldown:
+        print(f"[picks] cooldown {COOLDOWN_DNI}d: {', '.join(sorted(cooldown))}")
     # Prefiltr kandydatów — klines tylko dla tych, którzy mają szansę w którejś kategorii
     cands = {}
     for r in sorted(liquid, key=lambda x: -x["r7"])[:25]: cands[r["symbol"]] = r
@@ -652,6 +714,8 @@ def generate(force=False, telegram=False):
     for s, cat, r, a, mc in scored:
         if r["ticker"] in used:
             continue
+        if r["ticker"] in cooldown:
+            continue   # 30.10: był pickiem w ostatnich 7 dniach
         if len(picks) < TOP_N and per_cat.get(cat, 0) < MAX_PER_CATEGORY:
             picks.append(build_pick(cat, r, a, mc, s)); per_cat[cat] = per_cat.get(cat, 0) + 1; used.add(r["ticker"])
         elif len(radar) < RADAR_N:
@@ -670,7 +734,8 @@ def generate(force=False, telegram=False):
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source": "auto_picks.py (MEXC perps · algorytmiczny screener, bez Claude)",
         "market_context": market_context(universe, fng),
-        "universe": {"perps": len(universe), "liquid": len(liquid), "candidates": len(cands), "scored": len(scored)},
+        "universe": {"perps": len(universe), "liquid": len(liquid), "candidates": len(cands), "scored": len(scored),
+                     "min_turnover_usd": PICK_MIN_TURNOVER_USD, "cooldown_days": COOLDOWN_DNI, "cooldown_skipped": sorted(cooldown)},
         "picks": picks,
         "radar": radar,
         "disclaimer": "Analiza informacyjna z danych rynkowych, nie porada inwestycyjna. Stop loss i sizing przed wejściem.",
@@ -734,7 +799,7 @@ def _send_telegram(out):
     for i, p in enumerate(out["picks"]):
         dir_label = "🟢 LONG" if p["direction"] == "long" else ("🔴 SHORT" if p["direction"] == "short" else "👀 WATCH")
         lines.append(f"{icon.get(p['category'], '📌')} <b>{p['ticker']}</b>  {dir_label}  ({p['change_24h_pct']:+.1f}% 24h)")
-        lines.append(f"   S: <code>{p['support']}</code> · R: <code>{p['resistance']}</code>")
+        lines.append(f"   S: <code>{p['support']}</code>" + (f" · R: <code>{p['resistance']}</code>" if p.get("resistance") is not None else ""))
         if p.get("risk_flag"):
             lines.append(f"   ⚠️ {p['risk_flag']}")
         sf = p.get("safety")
