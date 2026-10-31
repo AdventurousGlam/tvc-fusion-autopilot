@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TVC Pump Radar v2.2 — skan rynku perpów co 5 min pod krótkoterminowe pumpy.
+TVC Pump Radar v2.3 — skan rynku perpów co 5 min pod krótkoterminowe pumpy.
 
 v2.2 (2026-10-31, audyt — NIE wdrożone bez zgody):
   - funding MEXC normalizowany do 8h wg collectCycle (4h/1h kontrakty były zaniżane 2×/8×)
@@ -11,6 +11,10 @@ v2.2 (2026-10-31, audyt — NIE wdrożone bez zgody):
   - dump_warning logowany osobno (dump_watch + track record), żeby dało się go zmierzyć
   - Upbit: fallback przez r.jina.ai (bezpośrednio 403 z runnerów GitHub)
   - progi w JSON (thresholds) — panel nie musi ich hardkodować
+
+v2.3 (2026-10-31, Upbit):
+  - Upbit: oficjalne api.upbit.com/v1/market/all + diff snapshotu (zamiast jina, którą Cloudflare też blokuje),
+    poprawione rozpoznawanie tytułów ("디지털 자산 추가" tak, delisting/ostrzeżenia nie), fallback CoinGecko
 
 v2.1 changes (2026-09-29): po analizie 159 alertów — WATCH hit rate 6.1% = szum:
   - SCORE_WATCH podniesiony z 50 → 60 (filtr najsłabszych alertów)
@@ -36,7 +40,7 @@ Składniki:
   DUMP WARNING— wolumen 15m ≥ 4σ + cena > +1.5% → oznaczane jako dump risk
                 (historycznie: avg +0.7% 1h, potem -6.61% 24h)
 
-Źródła: Hyperliquid, MEXC, Upbit, Binance (via jina).
+Źródła: Hyperliquid, MEXC, Upbit (Open API + komunikaty), Binance (via jina).
 Uruchamiane z workflow przed auto_fusion; wynik ładowany do fusion json.
 Nigdy nie wywraca cyklu (exit 0).
 """
@@ -276,6 +280,136 @@ def fetch_whale_flow(cache):
     return flow
 
 
+# ─── Upbit (v2.3) ───────────────────────────────────────────────────────────
+# Przyczyna awarii v2.0–v2.2: api-manager.upbit.com (komunikaty) stoi za Cloudflare WAF, który
+# blokuje adresy centrów danych (runnery GitHub/Azure, r.jina.ai) stroną "Attention Required"
+# (HTTP 403). To blokada skierowana do ruchu serwerowego, więc NIE obchodzimy jej proxy.
+# Główne źródło: oficjalne publiczne Open API api.upbit.com/v1/market/all (bez klucza, limit per IP,
+# nie za Cloudflare). Nowy rynek = baza, której nie było w poprzednim snapshocie (cache).
+# Komunikaty pytamy bezpośrednio tylko jako wczesny sygnał; po 403 przerwa 1h.
+# Fallback, gdy api.upbit.com nie odpowiada: CoinGecko /exchanges/upbit/tickers (rynki KRW).
+UPBIT_MARKETS = "https://api.upbit.com/v1/market/all"
+UPBIT_NOTICES = "https://api-manager.upbit.com/api/v1/announcements?os=web&page=1&per_page=20&category=trade"
+CG_UPBIT = "https://api.coingecko.com/api/v3/exchanges/upbit/tickers?page={page}"
+UPBIT_BURST_MAX = 8               # więcej nowych rynków naraz = utrata snapshotu/zmiana formatu → tylko baza
+UPBIT_SNAPSHOT_TTL = 14 * 86400   # baza znika ze snapshotu dopiero po 14 dniach nieobecności (bez "flappingu")
+UPBIT_NOTICE_PAUSE = 3600         # po 403 z komunikatów nie pytamy przez 1h
+UPBIT_NOTICE_MAX_AGE = 6 * 3600
+SOURCE_STATUS = {}
+_UPBIT_ADD = re.compile(r"신규\s*거래지원|디지털\s*자산\s*추가|마켓\s*추가|new\s+listing|market\s+support\s+for", re.I)
+_UPBIT_SKIP = re.compile(r"종료|유의|연장|중단|촉구|해제|delist|caution|suspen|termination|end\s+of", re.I)
+_BROWSER_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+
+
+def upbit_title_tickers(title):
+    """Tickery z tytułu komunikatu o NOWYM rynku. Pomija delisting, ostrzeżenia, przedłużenia."""
+    title = title or ""
+    if not _UPBIT_ADD.search(title) or _UPBIT_SKIP.search(title):
+        return []
+    return [t for t in dict.fromkeys(re.findall(r"\(([A-Z0-9]{2,15})\)", title)) if t not in ("KRW", "BTC", "USDT")]
+
+
+def upbit_markets_bases(rows):
+    """market/all → {"KRW": {bazy}, "ALL": {bazy}}. Rynek ma format QUOTE-BASE (KRW-BTC)."""
+    krw, allb = set(), set()
+    for r in rows or []:
+        m = (r or {}).get("market") or ""
+        if "-" not in m:
+            continue
+        q, b = m.split("-", 1)
+        allb.add(b)
+        if q == "KRW":
+            krw.add(b)
+    return {"KRW": krw, "ALL": allb}
+
+
+def upbit_diff(cache, slot, current, now, label):
+    """Porównuje zbiory baz ze snapshotem w cache[slot]; zwraca listę nowych zdarzeń."""
+    snap = cache.setdefault(slot, {})
+    events = []
+    for scope, bases in current.items():
+        prev = snap.get(scope)
+        if prev is None or not bases:
+            if bases:
+                snap[scope] = {b: now for b in bases}      # pierwszy przebieg: tylko baza
+            continue
+        new = sorted(b for b in bases if b not in prev)
+        if len(new) > UPBIT_BURST_MAX:
+            log(f"upbit[{label}/{scope}]: {len(new)} nowych naraz → nowa baza, bez alertów")
+            new = []
+        for b in new:
+            events.append((f"UPBIT_MKT:{scope}:{b}", b, "Upbit listing"))
+        for b in bases:
+            prev[b] = now
+        for b in [b for b, ts in prev.items() if now - ts > UPBIT_SNAPSHOT_TTL]:
+            del prev[b]
+    return events
+
+
+def _iso_ts(v):
+    try:
+        return datetime.fromisoformat(str(v).replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0
+
+
+def fetch_upbit_events(cache, now):
+    events, st = [], {}
+    # 1) oficjalne Open API: lista rynków
+    ok = False
+    try:
+        rows = _get_json(UPBIT_MARKETS, timeout=15, retries=2)
+        if not isinstance(rows, list) or not rows:
+            raise ValueError("market/all: pusta lub nie-lista")
+        cur = upbit_markets_bases(rows)
+        events += upbit_diff(cache, "upbit_markets", cur, now, "api")
+        st["markets"] = f"ok {len(cur['KRW'])} KRW / {len(cur['ALL'])} baz"; ok = True
+    except Exception as e:
+        st["markets"] = f"fail: {str(e)[:60]}"
+    # 2) fallback: CoinGecko (tylko gdy Open API padło; osobny snapshot, żeby nie mieszać źródeł)
+    if not ok:
+        try:
+            krw = set()
+            for page in range(1, 6):
+                tk = (_get_json(CG_UPBIT.format(page=page), timeout=20, retries=1).get("tickers") or [])
+                krw |= {t.get("base", "").upper() for t in tk if t.get("target") == "KRW" and t.get("base")}
+                if len(tk) < 100:
+                    break
+            if not krw:
+                raise ValueError("coingecko: brak rynków KRW")
+            events += upbit_diff(cache, "upbit_markets_cg", {"KRW": krw}, now, "coingecko")
+            st["markets_fallback"] = f"ok {len(krw)} KRW (CoinGecko)"; ok = True
+        except Exception as e:
+            st["markets_fallback"] = f"fail: {str(e)[:60]}"
+    # 3) komunikaty: wczesny sygnał (przed startem handlu), bez proxy; po 403 przerwa
+    pause = cache.get("upbit_notice_pause_until") or 0
+    if now < pause:
+        st["notices"] = "pauza po 403 (Cloudflare blokuje IP centrów danych)"
+    else:
+        try:
+            j = _get_json(UPBIT_NOTICES, timeout=15, retries=1,
+                          headers={"User-Agent": _BROWSER_UA, "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8"})
+            d = j.get("data") or {}
+            n_new = 0
+            for n in d.get("notices") or d.get("list") or []:
+                ts = _iso_ts(n.get("listed_at") or n.get("first_listed_at"))
+                if ts and now - ts > UPBIT_NOTICE_MAX_AGE:
+                    continue
+                for tk in upbit_title_tickers(n.get("title")):
+                    events.append((f"UPBIT:{n.get('id')}:{tk}", tk, "Upbit listing")); n_new += 1
+            st["notices"] = f"ok ({n_new} świeżych)"
+            cache.pop("upbit_notice_pause_until", None)
+        except Exception as e:
+            code = getattr(e, "code", None)
+            if code in (403, 429):
+                cache["upbit_notice_pause_until"] = now + UPBIT_NOTICE_PAUSE
+            st["notices"] = f"niedostępne ({code or str(e)[:40]})"
+    if not ok:
+        ERRORS.append(f"listings.upbit: market/all i CoinGecko niedostępne")
+    SOURCE_STATUS["upbit"] = st
+    return events
+
+
 # ─── Listingi / katalizatory ────────────────────────────────────────────────
 
 def fetch_listings(cache, hl_coins, mexc_uni):
@@ -294,24 +428,8 @@ def fetch_listings(cache, hl_coins, mexc_uni):
     for base, m in mexc_uni.items():
         if m.get("created") and now - m["created"] < 24 * 3600:
             events.append((f"MEXC:{base}", base, "MEXC perp"))
-    # Upbit — announcements API (stary /notices zwraca 404). Tytuły KR: "… 신규 거래지원 안내 (XXX)"
-    try:
-        UPBIT = "https://api-manager.upbit.com/api/v1/announcements?os=web&page=1&per_page=20&category=trade"
-        try:
-            j = _get_json(UPBIT, timeout=15, retries=1,
-                          headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8"})
-        except Exception:
-            # v2.2: runnery GitHub (US) dostają 403 w ~100% cykli od 29.09 — jak Binance, przez jina
-            wrap = _get_json("https://r.jina.ai/" + UPBIT, timeout=25, retries=1)
-            j = json.loads((wrap.get("data") or {}).get("content") or "{}")
-        d = j.get("data") or {}
-        for n in d.get("notices") or d.get("list") or []:
-            title = n.get("title") or ""
-            if "거래지원" in title or "Market Support" in title or "listing" in title.lower():
-                for tk in re.findall(r"\(([A-Z0-9]{2,10})\)", title):
-                    events.append((f"UPBIT:{n.get('id')}:{tk}", tk, "Upbit listing"))
-    except Exception as e:
-        ERRORS.append(f"listings.upbit: {str(e)[:60]}")
+    # Upbit — v2.3: oficjalne Open API (market/all, diff) + komunikaty bez proxy, patrz fetch_upbit_events
+    events.extend(fetch_upbit_events(cache, now))
     # Binance — CMS API przez jina (binance.com bezpośrednio jest geo-blokowany dla runnerów US;
     # api.bybit.com blokuje CloudFront po kraju nawet przez jina — Bybit pominięty)
     try:
@@ -667,6 +785,7 @@ def run(telegram=False):
         "stats": st, "recent_alerts": sorted([a for a in alerts if a.get("kind", "pump") == "pump"], key=lambda a: -a["ts"])[:30],
         "dump_watch": [s for s in scored if "dump_warning" in s["parts"]][:10],
         "thresholds": {"watch": SCORE_WATCH, "high": SCORE_HIGH, "min_turnover_usd": MIN_TURNOVER_USD},
+        "sources": SOURCE_STATUS,
         "errors": ERRORS, "elapsed_s": round(time.time() - t0, 1),
         "hit_def": st["hit_def"],
     }
