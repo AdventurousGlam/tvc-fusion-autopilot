@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 """
-TVC Pump Radar v2.1 — skan rynku perpów co 5 min pod krótkoterminowe pumpy.
+TVC Pump Radar v2.2 — skan rynku perpów co 5 min pod krótkoterminowe pumpy.
+
+v2.2 (2026-10-31, audyt — NIE wdrożone bez zgody):
+  - funding MEXC normalizowany do 8h wg collectCycle (4h/1h kontrakty były zaniżane 2×/8×)
+  - wykluczone kontrakty TradFi z MEXC (akcje, ETF, ropa, metale) — 71/165 historycznych alertów
+  - HL kPEPE/kBONK/kSHIB/kFLOKI łączone z MEXC PEPE/BONK/... (bez duplikatów)
+  - zwroty +1h/+4h/+24h liczone także, gdy token wypadł z płynnego universe (survivorship)
+  - max_fwd_pct liczony tylko w oknie 24h (wcześniej rósł przez 30 dni)
+  - dump_warning logowany osobno (dump_watch + track record), żeby dało się go zmierzyć
+  - Upbit: fallback przez r.jina.ai (bezpośrednio 403 z runnerów GitHub)
+  - progi w JSON (thresholds) — panel nie musi ich hardkodować
 
 v2.1 changes (2026-09-29): po analizie 159 alertów — WATCH hit rate 6.1% = szum:
   - SCORE_WATCH podniesiony z 50 → 60 (filtr najsłabszych alertów)
@@ -147,6 +157,8 @@ def fetch_mexc_universe():
         d = det.get(sym, {})
         if d.get("state", 0) != 0 or d.get("isHidden") or not _is_crypto(base):
             continue
+        if any("tradfi" in str(c).lower() for c in (d.get("conceptPlate") or [])):
+            continue                     # v2.2: akcje/ETF/surowce MEXC — to nie jest rynek krypto
         px = float(t.get("lastPrice") or 0)
         out[base] = {
             "src": "MEXC", "symbol": sym, "price": px,
@@ -156,6 +168,35 @@ def fetch_mexc_universe():
             "created": (d.get("createTime") or 0) / 1000, "is_new": bool(d.get("isNew")),
         }
     return out
+
+
+def mexc_funding_cycle(symbol, cache):
+    """v2.2: collectCycle (h) kontraktu MEXC — fundingRate z tickera jest NA CYKL, nie na 8h.
+    Cache 24h, pytamy tylko o kontrakty z ujemnym fundingiem (kilkanaście zapytań/cykl)."""
+    cc = cache.setdefault("mexc_cycle", {})
+    hit = cc.get(symbol)
+    if hit and time.time() - hit[1] < 86400:
+        return hit[0]
+    try:
+        cyc = int((_get_json(f"https://contract.mexc.com/api/v1/contract/funding_rate/{symbol}", timeout=10, retries=1).get("data") or {}).get("collectCycle") or 8)
+    except Exception:
+        return 8
+    cc[symbol] = [cyc, time.time()]
+    return cyc
+
+
+def normalize_mexc_funding(universe, cache):
+    for u in universe.values():
+        if u.get("src") == "MEXC" and not u.get("hl") and (u.get("funding_8h") or 0) < 0:
+            cyc = mexc_funding_cycle(u["symbol"], cache)
+            if cyc and cyc != 8:
+                u["funding_raw"] = u["funding_8h"]; u["funding_cycle_h"] = cyc
+                u["funding_8h"] = u["funding_8h"] * 8 / cyc
+
+
+def hl_alias(name):
+    """v2.2: HL notuje memecoiny w tysiącach (kPEPE = 1000 PEPE). Do łączenia z MEXC."""
+    return name[1:] if len(name) > 1 and name[0] == "k" and name[1:].isupper() else name
 
 
 def fetch_mexc_klines(symbol, interval="Min5", bars=300):
@@ -255,8 +296,14 @@ def fetch_listings(cache, hl_coins, mexc_uni):
             events.append((f"MEXC:{base}", base, "MEXC perp"))
     # Upbit — announcements API (stary /notices zwraca 404). Tytuły KR: "… 신규 거래지원 안내 (XXX)"
     try:
-        j = _get_json("https://api-manager.upbit.com/api/v1/announcements?os=web&page=1&per_page=20&category=trade", timeout=15,
-                      headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8"})
+        UPBIT = "https://api-manager.upbit.com/api/v1/announcements?os=web&page=1&per_page=20&category=trade"
+        try:
+            j = _get_json(UPBIT, timeout=15, retries=1,
+                          headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36", "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8"})
+        except Exception:
+            # v2.2: runnery GitHub (US) dostają 403 w ~100% cykli od 29.09 — jak Binance, przez jina
+            wrap = _get_json("https://r.jina.ai/" + UPBIT, timeout=25, retries=1)
+            j = json.loads((wrap.get("data") or {}).get("content") or "{}")
         d = j.get("data") or {}
         for n in d.get("notices") or d.get("list") or []:
             title = n.get("title") or ""
@@ -355,7 +402,7 @@ def score_coin(coin, u, series, flow, listings, klines):
 
     # ── WIELORYBY: netto kupno top-30 w 1h ──
     # v2.1: podniesione progi — wymagane min 3 portfele na najniższym tierze
-    fl = flow.get(coin)
+    fl = flow.get(u.get("hl_coin") or coin)
     if fl and fl["net"] >= 2e6:
         parts["whales"] = 30
     elif fl and fl["net"] >= 5e5 and fl.get("wallets", 0) >= 2:
@@ -429,16 +476,18 @@ def score_coin(coin, u, series, flow, listings, klines):
 
 # ─── Track record ───────────────────────────────────────────────────────────
 
-def update_alerts(alerts, universe, scored):
+def update_alerts(alerts, universe, scored, all_prices=None):
     now = int(time.time())
-    prices = {c: u["price"] for c, u in universe.items()}
+    prices = dict(all_prices or {}); prices.update({c: u["price"] for c, u in universe.items()})
     # uzupełnij zwroty
     for a in alerts:
         p0 = a["price"]; px = prices.get(a["ticker"])
         if not px or not p0:
             continue
         age = now - a["ts"]
-        a["max_fwd_pct"] = round(max(a.get("max_fwd_pct", 0), (px / p0 - 1) * 100), 2)
+        if age <= 24 * 3600:               # v2.2: max tylko w oknie 24h (wcześniej rosło 30 dni)
+            a["max_fwd_pct"] = round(max(a.get("max_fwd_pct", 0), (px / p0 - 1) * 100), 2)
+            a["min_fwd_pct"] = round(min(a.get("min_fwd_pct", 0), (px / p0 - 1) * 100), 2)
         for key, h in (("fwd_1h", 1), ("fwd_4h", 4), ("fwd_24h", 24)):
             if a.get(key) is None and age >= h * 3600:
                 a[key] = round((px / p0 - 1) * 100, 2)
@@ -449,12 +498,15 @@ def update_alerts(alerts, universe, scored):
         if a["ticker"] not in last or a["ts"] > last[a["ticker"]]["ts"]:
             last[a["ticker"]] = a
     for s in scored:
-        if s["level"] == "none":
+        if s["level"] == "none" and "dump_warning" not in s["parts"]:
             continue
+        kind = "dump" if s["level"] == "none" else "pump"
         prev = last.get(s["ticker"])
+        if prev and prev.get("kind", "pump") != kind:
+            prev = None
         if prev and now - prev["ts"] < ALERT_COOLDOWN_H * 3600 and not (s["level"] == "HIGH" and prev["level"] == "WATCH"):
             continue
-        a = {"ts": now, "ticker": s["ticker"], "level": s["level"], "score": s["score"], "price": s["price"],
+        a = {"ts": now, "kind": kind, "ticker": s["ticker"], "level": s["level"] if kind == "pump" else "DUMP_WATCH", "score": s["score"], "price": s["price"],
              "parts": s["parts"], "tags": s["tags"], "fwd_1h": None, "fwd_4h": None, "fwd_24h": None, "max_fwd_pct": 0}
         alerts.append(a); new.append(a)
     # prune 30 dni
@@ -473,8 +525,10 @@ def stats(alerts):
                 "avg_4h": round(mean(r["fwd_4h"] for r in h4), 2) if h4 else None,
                 "avg_24h": round(mean(r["fwd_24h"] for r in h24), 2) if h24 else None,
                 "avg_max": round(mean(r.get("max_fwd_pct", 0) for r in rows), 2) if rows else None}
+    dumps = [a for a in alerts if a.get("kind") == "dump"]
+    alerts = [a for a in alerts if a.get("kind", "pump") == "pump"]
     parts = sorted({p for a in alerts for p in a.get("parts", {}) if p != "late"})
-    return {"all": agg(alerts), "high": agg([a for a in alerts if a["level"] == "HIGH"]),
+    return {"all": agg(alerts), "dump_watch": agg(dumps), "high": agg([a for a in alerts if a["level"] == "HIGH"]),
             "watch": agg([a for a in alerts if a["level"] == "WATCH"]),
             "by_part": {p: agg([a for a in alerts if p in a.get("parts", {})]) for p in parts},
             "hit_def": f"+{HIT_1H_PCT}% w 1h / +{HIT_4H_PCT}% w 4h"}
@@ -515,7 +569,7 @@ def _tg_send(text, chat_id):
 
 def send_telegram(new_alerts, st):
     token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip(); chat = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
-    highs = [a for a in new_alerts if a["level"] == "HIGH"]
+    highs = [a for a in new_alerts if a["level"] == "HIGH" and a.get("kind", "pump") == "pump"]
     if not token or not chat or not highs:
         return
     # PRO + personal: pełny alert z cenami i score
@@ -547,18 +601,28 @@ def run(telegram=False):
         ERRORS.append(f"mexc: {e}"); mexc = {}
     try:
         hl = fetch_hl_universe()
-        for k, v in hl.items():
+        for k0, v in hl.items():
+            k = hl_alias(k0)
+            if k != k0:                  # kPEPE = 1000 PEPE → cena za 1 token
+                v = dict(v, hl_coin=k0, price=v["price"] / 1000)
             if v["vol24"] >= MIN_TURNOVER_USD and _is_crypto(k):
                 if k in universe:
                     # HL ma lepszy OI/funding (godzinowy) — zostaw MEXC price/symbol do klines, OI/funding z HL
                     universe[k]["oi_usd"] = max(universe[k]["oi_usd"], v["oi_usd"]); universe[k]["funding_8h"] = v["funding_8h"]; universe[k]["hl"] = True
                 else:
                     universe[k] = dict(v, hl=True)
+                universe[k]["hl_coin"] = k0
         log(f"HL: {len(hl)} coinów")
     except Exception as e:
         ERRORS.append(f"hl: {e}"); hl = {}
     if not universe:
         raise RuntimeError("brak universe (MEXC i HL niedostępne)")
+    normalize_mexc_funding(universe, cache)
+    # v2.2: ceny WSZYSTKICH kontraktów (też poniżej progu płynności) do zwrotów po alertach
+    all_prices = {k: v["price"] for k, v in mexc.items()}
+    all_prices.update({k: v["price"] for k, v in hl.items()})   # też surowe nazwy HL (stare alerty "kPEPE")
+    all_prices.update({hl_alias(k): v["price"] / 1000 for k, v in hl.items() if hl_alias(k) != k and hl_alias(k) not in mexc})
+    all_prices.update({k: v["price"] for k, v in universe.items()})
 
     update_series(cache, universe)
     series = cache["series"]
@@ -585,7 +649,7 @@ def run(telegram=False):
             if u["src"] == "MEXC":
                 kl = fetch_mexc_klines(u["symbol"], "Min5", 300)
             elif u.get("hl"):
-                kl = fetch_hl_klines(s["ticker"], "5m", 25)
+                kl = fetch_hl_klines(u.get("hl_coin") or s["ticker"], "5m", 25)
         except Exception:
             kl = None
         scored.append(score_coin(s["ticker"], u, series.get(s["ticker"], []), flow, listings, kl))
@@ -593,14 +657,16 @@ def run(telegram=False):
     scored += [s for c, s in pre.items() if c not in done]
     scored.sort(key=lambda s: -s["score"])
 
-    new_alerts = update_alerts(alerts, universe, scored)
+    new_alerts = update_alerts(alerts, universe, scored, all_prices)
     st = stats(alerts)
     top = [s for s in scored if s["level"] != "none"][:10]
     watch = [s for s in scored if s["level"] == "none" and s["score"] >= 20][:10]
     out = {
         "generated_at": datetime.now(timezone.utc).isoformat(), "universe_n": len(universe),
         "top": top, "near": watch, "new_alerts": [a["ticker"] for a in new_alerts],
-        "stats": st, "recent_alerts": sorted(alerts, key=lambda a: -a["ts"])[:30],
+        "stats": st, "recent_alerts": sorted([a for a in alerts if a.get("kind", "pump") == "pump"], key=lambda a: -a["ts"])[:30],
+        "dump_watch": [s for s in scored if "dump_warning" in s["parts"]][:10],
+        "thresholds": {"watch": SCORE_WATCH, "high": SCORE_HIGH, "min_turnover_usd": MIN_TURNOVER_USD},
         "errors": ERRORS, "elapsed_s": round(time.time() - t0, 1),
         "hit_def": st["hit_def"],
     }
