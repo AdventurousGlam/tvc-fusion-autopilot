@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-TVC Fusion Weekly Recap v1.1 — Sunday compilation of the week's paper trades.
+TVC Fusion Weekly Recap v1.2 — Sunday compilation of the week's paper trades.
+
+v1.2 (v4.4.2, 2.11.2026): tydzień BEZ zamkniętych transakcji też zapisuje
+weekly_recap.json — krótka informacja „brak zamkniętych transakcji w tym
+tygodniu” + lista otwartych pozycji (tylko ticker i data otwarcia: bez kierunku,
+cen, poziomów i rekomendacji). W tym wariancie nic nie jest wysyłane (Telegram).
 
 v1.1 (v4.4, tryb edukacyjny): treści dwujęzyczne PL + EN, bez cen wejścia/wyjścia,
 bez CTA do kanałów sygnałowych, bez cennika PRO,
@@ -436,14 +441,79 @@ def _tg_split(text, limit=TG_MAX_LEN):
     return parts
 
 
+# --- tydzień bez zamknięć (v1.2) ---------------------------------------------
+
+def get_open_positions():
+    """Wszystkie otwarte pozycje (bez względu na datę otwarcia)."""
+    if not DB_PATH.exists():
+        return []
+    conn = db()
+    rows = conn.execute(
+        "SELECT ticker, opened_at FROM positions WHERE status='open' ORDER BY opened_at ASC"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def build_empty_week_recap(now=None, opens=None, cum=None):
+    """Krótki recap tygodnia bez zamkniętych transakcji. Treść publiczna celowo
+    NIE zawiera kierunku pozycji, cen, poziomów ani rekomendacji — tylko ticker
+    i datę otwarcia (edukacja, paper trading / symulacja)."""
+    now = now or _now()
+    opens = get_open_positions() if opens is None else opens
+    cum = get_cumulative_stats() if cum is None else cum
+    week_start = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+    week_end = now.strftime("%Y-%m-%d")
+    op = [{"ticker": o.get("ticker"), "opened": str(o.get("opened_at") or "")[:10]} for o in opens]
+    names = ", ".join(o["ticker"] for o in op if o["ticker"]) or "—"
+    pl = (f"🇵🇱 TVC Fusion: tydzień paper tradingu (symulacja)\n\n"
+          f"Brak zamkniętych transakcji w tym tygodniu.\n"
+          f"Otwarte pozycje w symulacji: {len(op)}" + (f" ({names})" if op else "") + ".\n\n"
+          f"Zapisujemy każdy tydzień, także ten bez zamknięć. Materiał edukacyjny, nie porada inwestycyjna.")
+    en = (f"🇬🇧 TVC Fusion: paper trading week (simulation)\n\n"
+          f"No closed trades this week.\n"
+          f"Open positions in the simulation: {len(op)}" + (f" ({names})" if op else "") + ".\n\n"
+          f"We log every week, including weeks without closes. Educational content, not investment advice.")
+    return {
+        "week": f"{week_start} — {week_end}",
+        "generated_at": now.isoformat(),
+        "no_closed_trades": True,
+        "summary": {
+            "trades_closed": 0,
+            "wins": 0,
+            "losses": 0,
+            "week_pnl": 0.0,
+            "week_wr": None,
+            "note_pl": "brak zamkniętych transakcji w tym tygodniu",
+            "note_en": "no closed trades this week",
+            "open_positions": op,
+            "cumulative": cum,
+        },
+        "x_thread": ([{"tweet_num": 1, "lang": "pl+en", "text": pl + "\n\n" + en, "graphic": None}]
+                     if len(pl) + len(en) + 2 <= X_MAX else
+                     [{"tweet_num": 1, "lang": "pl", "text": pl, "graphic": None},
+                      {"tweet_num": 2, "lang": "en", "text": en, "graphic": None}]),
+        "linkedin_newsletter": None,
+        "youtube_script": None,
+    }
+
+
+def write_empty_week_recap(now=None):
+    recap = build_empty_week_recap(now=now)
+    RECAP_PATH.write_text(json.dumps(recap, indent=2, default=str, ensure_ascii=False), encoding="utf-8")
+    log(f"✓ Saved weekly_recap.json (no closed trades; open: {len(recap['summary']['open_positions'])}). Nothing sent.")
+    return recap
+
+
 # --- main ------------------------------------------------------------------
 
 def run():
-    log(f"Weekly Recap v1.1 (PL+EN) — {_now().isoformat()}")
+    log(f"Weekly Recap v1.2 (PL+EN) — {_now().isoformat()}")
 
     trades = get_week_trades()
     if not trades:
-        log("No closed trades this week — skipping recap.")
+        log("No closed trades this week — writing short 'no closed trades' recap (no send).")
+        write_empty_week_recap()
         return
 
     cum = get_cumulative_stats()

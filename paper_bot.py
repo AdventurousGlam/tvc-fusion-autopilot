@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
 """
+TVC Fusion Paper Trading Bot v4.4.2
+
+v4.4.2 (2026-11-02) — R (risk-multiple) przy każdym zamknięciu
+  - _stamp_r_multiple() wołane od razu po zamknięciu max_hold, short_killswitch
+    i manual_close (wcześniej R pojawiało się dopiero w następnym przebiegu,
+    a manual_close wysyłał Gist przed zapisem R).
+  - Nowa kolumna r_multiple_reconstructed: R odtworzone wstecz dla 40 starych
+    pozycji bez sl_initial (plik r_multiple_reconstructed.csv). r_multiple,
+    pnl i pozostałe pola bez zmian. Migracja idempotentna.
+  - Reguły handlu bez zmian (RULES_VERSION zostaje "v4.4").
+
+(historia wersji poniżej)
 TVC Fusion Paper Trading Bot v3.4
 
 v3.4 (2026-10-07) — SCALE-IN PARTIAL ENTRY
@@ -367,13 +379,58 @@ def db_init():
     # v4.4: R zrealizowane (netto) i wersja reguł przy każdej transakcji.
     _migrate_add_column(conn, "positions", "r_multiple", "REAL")
     _migrate_add_column(conn, "positions", "rules_version", "TEXT")
+    # v4.4.2: R odtworzone wstecz — OSOBNA kolumna, r_multiple nie jest ruszane.
+    _migrate_add_column(conn, "positions", "r_multiple_reconstructed", "REAL")
     conn.commit()
     _migrate_sl_rescan_bug(conn)
     _migrate_restate_net(conn)
     _migrate_flag_out_of_range(conn)
     _migrate_flag_flip_choch(conn)   # v4.3.6 — przeniesione z produkcji, bez zmian
     _stamp_r_multiple(conn)
+    _migrate_r_multiple_reconstructed(conn)   # v4.4.2
     conn.close()
+
+
+R_RECONSTRUCTED_CSV = Path(__file__).resolve().parent / "r_multiple_reconstructed.csv"
+
+
+def _migrate_r_multiple_reconstructed(conn, csv_path=None):
+    """v4.4.2 (2.11.2026) — wczytaj R odtworzone wstecz do kolumny r_multiple_reconstructed.
+
+    Dotyczy pozycji zamkniętych przed v4.3, które nie mają sl_initial, więc
+    _stamp_r_multiple zostawia im r_multiple = NULL. Stop początkowy odtworzono
+    z historii git paper_trades.db (sl_price w pierwszym commicie po otwarciu).
+    Idempotentne: zapisuje tylko tam, gdzie r_multiple_reconstructed IS NULL,
+    tylko dla zamkniętych pozycji z tym samym entry_price. Nie zmienia żadnej
+    innej kolumny. Brak pliku = nic się nie dzieje.
+    """
+    import csv as _csv
+    path = Path(csv_path) if csv_path else R_RECONSTRUCTED_CSV
+    if not path.exists():
+        return 0
+    try:
+        with open(path, encoding="utf-8", newline="") as fh:
+            rows = list(_csv.DictReader(line for line in fh if not line.startswith("#")))
+    except Exception as e:
+        print(f"[migrate] v4.4.2 — nie udało się wczytać {path.name}: {e}")
+        return 0
+    n = 0
+    for r in rows:
+        try:
+            pid, entry, rr = int(r["id"]), float(r["entry_price"]), float(r["r_multiple_reconstructed"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        cur = conn.execute(
+            "UPDATE positions SET r_multiple_reconstructed = ? "
+            "WHERE id = ? AND status = 'closed' AND r_multiple_reconstructed IS NULL "
+            "AND ABS(entry_price - ?) <= 1e-9 * MAX(1.0, ABS(?))",
+            (rr, pid, entry, entry),
+        )
+        n += cur.rowcount
+    if n:
+        conn.commit()
+        print(f"[migrate] v4.4.2 — zapisano r_multiple_reconstructed dla {n} pozycji.")
+    return n
 
 
 def _migrate_flag_flip_choch(conn):
@@ -2127,6 +2184,7 @@ def cmd_check(args):
                 (exit_price, close_ts, pnl_pct, pnl_usd, "max_hold", close_ts, _gross, r["id"]),
             )
             conn.commit()
+            _stamp_r_multiple(conn)   # v4.4.2: R od razu przy zamknięciu (wcześniej dopiero w następnym przebiegu)
             print(f"[zombie] {r['ticker']} ({direction}) auto-closed after {age_days:.0f} days  "
                   f"entry {r['entry_price']:.4f} → exit {exit_price:.4f}  PnL {pnl_pct:+.2f}% (${pnl_usd:+.2f})")
             _notify_close(r["ticker"], direction, r["entry_price"], exit_price, pnl_pct, pnl_usd, "max_hold")
@@ -2167,6 +2225,7 @@ def cmd_check(args):
             (exit_price, close_ts, pnl_pct, pnl_usd, "short_killswitch", close_ts, _gross, r["id"]),
         )
         conn.commit()
+        _stamp_r_multiple(conn)   # v4.4.2: R od razu przy zamknięciu
         print(f"[short-kill] {r['ticker']} SHORT force-closed (regime={r_regime}, blocked)  "
               f"entry {r['entry_price']:.4f} → exit {exit_price:.4f}  PnL {pnl_pct:+.2f}%")
         _notify_close(r["ticker"], "short", r["entry_price"], exit_price, pnl_pct, pnl_usd, "short_killswitch")
@@ -3175,6 +3234,7 @@ def cmd_close(args):
             (exit_price, now_iso, pnl_pct, pnl_usd, 'manual_close', now_iso, _gross, r['id'])
         )
         conn.commit()
+        _stamp_r_multiple(conn)   # v4.4.2: R zapisane przed auto-uploadem do Gist
         arrow = "↗" if direction == "long" else "↘"
         print(f"[close] {arrow} MANUAL {direction.upper():5s} {ticker} @ {exit_price:.4f}  "
               f"PnL {pnl_pct:+.2f}% (${pnl_usd:+.2f})")
