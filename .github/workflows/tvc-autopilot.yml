@@ -301,7 +301,7 @@ jobs:
           git config user.name "tvc-autopilot"
           git config user.email "autopilot@tvcfusion.local"
           git add fusion_*.json paper_trades.db
-          for f in results.json crypto_picks.json crypto_picks_history.json layers_cache.json pump_radar.json pump_radar_alerts.json correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json tg_sent.json autopilot_health.json; do [ -e "$f" ] && git add "$f"; done; true
+          for f in results.json crypto_picks.json crypto_picks_history.json layers_cache.json pump_radar.json pump_radar_alerts.json pump_radar_test45.json correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json tg_sent.json autopilot_health.json; do [ -e "$f" ] && git add "$f"; done; true
           if git diff --cached --quiet; then
             echo "Brak zmian do commitu."
             exit 0
@@ -359,7 +359,7 @@ jobs:
               git checkout --theirs -- paper_trades.db 2>/dev/null || true
               git checkout --theirs -- crypto_picks.json 2>/dev/null || true
               git checkout --theirs -- crypto_picks_history.json 2>/dev/null || true
-              git checkout --theirs -- layers_cache.json pump_radar.json pump_radar_alerts.json 2>/dev/null || true
+              git checkout --theirs -- layers_cache.json pump_radar.json pump_radar_alerts.json pump_radar_test45.json 2>/dev/null || true
               git checkout --theirs -- correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json tg_sent.json autopilot_health.json 2>/dev/null || true
               # v4.3.1 (13.10.2026) — DRUGI strażnik, w ścieżce rebase.
               # Strażnik przy pierwszym commicie nie chroni tego miejsca: `git add -A`

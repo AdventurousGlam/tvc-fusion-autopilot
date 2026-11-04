@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TVC Pump Radar v2.3 — skan rynku perpów co 5 min pod krótkoterminowe pumpy.
+TVC Pump Radar v2.4 — skan rynku perpów co 5 min pod krótkoterminowe pumpy.
 
 v2.2 (2026-10-31, audyt — NIE wdrożone bez zgody):
   - funding MEXC normalizowany do 8h wg collectCycle (4h/1h kontrakty były zaniżane 2×/8×)
@@ -15,6 +15,11 @@ v2.2 (2026-10-31, audyt — NIE wdrożone bez zgody):
 v2.3 (2026-10-31, Upbit):
   - Upbit: oficjalne api.upbit.com/v1/market/all + diff snapshotu (zamiast jina, którą Cloudflare też blokuje),
     poprawione rozpoznawanie tytułów ("디지털 자산 추가" tak, delisting/ostrzeżenia nie), fallback CoinGecko
+
+v2.4 (2026-10-31, Binance):
+  - (4.11.2026) log alertów 365 dni; test WATCH 45 do 2.12 w pump_radar_test45.json (bez Telegramu)
+  - usunięte proxy r.jina.ai (obchodziło blokadę lokalizacji 451); listy rynków spot/futures z diffem snapshotu,
+    źródła: Binance bezpośrednio → CoinPaprika (spot) / CoinGecko (futures); komunikaty tylko bezpośrednio
 
 v2.1 changes (2026-09-29): po analizie 159 alertów — WATCH hit rate 6.1% = szum:
   - SCORE_WATCH podniesiony z 50 → 60 (filtr najsłabszych alertów)
@@ -40,7 +45,7 @@ Składniki:
   DUMP WARNING— wolumen 15m ≥ 4σ + cena > +1.5% → oznaczane jako dump risk
                 (historycznie: avg +0.7% 1h, potem -6.61% 24h)
 
-Źródła: Hyperliquid, MEXC, Upbit (Open API + komunikaty), Binance (via jina).
+Źródła: Hyperliquid, MEXC, Upbit (Open API + komunikaty), Binance (listy rynków: Binance/CoinPaprika/CoinGecko + komunikaty bez proxy).
 Uruchamiane z workflow przed auto_fusion; wynik ładowany do fusion json.
 Nigdy nie wywraca cyklu (exit 0).
 """
@@ -68,6 +73,7 @@ FUSION_DIR = Path.home() / "Claude" / "TVCFusion"
 OUT_PATH = FUSION_DIR / "pump_radar.json"
 ALERTS_PATH = FUSION_DIR / "pump_radar_alerts.json"
 CACHE_PATH = FUSION_DIR / "radar_cache.json"
+TEST45_PATH = FUSION_DIR / "pump_radar_test45.json"   # v2.4: test progu WATCH 45 (4.11-2.12.2026), tylko log
 LAYERS_CACHE = FUSION_DIR / "layers_cache.json"     # wieloryby (top-30) z auto_fusion — współdzielone
 
 HL_INFO = "https://api.hyperliquid.xyz/info"
@@ -78,6 +84,9 @@ SCORE_WATCH = 60                # v2.1: 50→60, filtr szumu
 SCORE_HIGH = 70                 # v2.1: 65→70, HIGH = silny setup
 MIN_FUNDING_BPS = 5             # v2.1: ignoruj funding < 5bps (mikro-sygnał)
 MAX_KLINE_CANDIDATES = 40       # ile tokenów dostaje 5m klines (kompresja + zapłon) w cyklu
+TEST_WATCH = 45                 # v2.4: test 4 tyg. (4.11-2.12.2026), osobny log, bez Telegramu
+TEST_END_TS = 1796252400        # 3.12.2026 00:00 Warszawa
+ALERT_RETENTION_D = 365         # v2.4: log alertów 365 dni (było 30)
 ALERT_COOLDOWN_H = 6            # ten sam token nie alertuje częściej niż co 6h (chyba że HIGH po WATCH)
 HIT_1H_PCT = 2.0                # "trafienie" = +2% w 1h lub +3% w 4h
 HIT_4H_PCT = 3.0
@@ -410,6 +419,141 @@ def fetch_upbit_events(cache, now):
     return events
 
 
+# ─── Binance (v2.4) ─────────────────────────────────────────────────────────
+# Do v2.3 komunikaty Binance szły przez r.jina.ai, bo binance.com odpowiada runnerom GitHub (USA)
+# kodem 451 "restricted location" (warunki Binance, pkt "b. Eligibility"). To blokada skierowana
+# do naszej lokalizacji, więc proxy było jej obchodzeniem i zostało usunięte.
+# Teraz: najpierw bezpośrednio Binance (działa tylko z lokalizacji, które Binance obsługuje),
+# po 451/403 przerwa 6h; zamiast tego publiczne agregatory, które same udostępniają te dane:
+#   spot    → CoinPaprika /v1/exchanges/binance/markets (1 zapytanie, bez klucza)
+#   futures → CoinGecko /derivatives/exchanges/binance_futures?include_tickers=all (1 zapytanie)
+# Nowa baza względem snapshotu w cache = katalizator. Listy pytamy co 15 min (limity darmowych API).
+BN_SPOT_DIRECT = "https://data-api.binance.vision/api/v3/ticker/price"
+BN_FUT_DIRECT = "https://fapi.binance.com/fapi/v1/ticker/price"
+BN_CMS = "https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&pageNo=1&pageSize=20&catalogId=48"
+PAPRIKA_BN = "https://api.coinpaprika.com/v1/exchanges/binance/markets"
+CG_BN_FUT = "https://api.coingecko.com/api/v3/derivatives/exchanges/binance_futures?include_tickers=all"
+BN_POLL_S = 900
+BN_BLOCK_PAUSE = 6 * 3600
+SNAP_STALE_S = 24 * 3600          # snapshot nieodświeżany >24h = nowa baza (bez zaległych "nowości")
+_BLOCK_CODES = (401, 403, 418, 429, 451)
+
+
+def _paused(cache, name, now):
+    return now < ((cache.get("src_pause") or {}).get(name) or 0)
+
+
+def _pause_on_block(cache, name, e, now):
+    code = getattr(e, "code", None)
+    if code in _BLOCK_CODES:
+        cache.setdefault("src_pause", {})[name] = now + (BN_BLOCK_PAUSE if code in (451, 403) else 3600)
+    return code
+
+
+def snapshot_diff(cache, slot, bases, now, key_prefix, src, label):
+    """Diff zbioru baz z cache["snap"][slot]. Pierwszy przebieg, burst > UPBIT_BURST_MAX albo
+    snapshot starszy niż 24h → tylko nowa baza. Klucz zdarzenia bez nazwy źródła (dedupe między źródłami)."""
+    snaps = cache.setdefault("snap", {})
+    snap = snaps.get(slot)
+    events = []
+    if not bases:
+        return events
+    if snap is None or now - (snap.get("_ts") or 0) > SNAP_STALE_S:
+        snaps[slot] = {"_ts": now, "b": {x: now for x in bases}}
+        return events
+    prev = snap["b"]
+    new = sorted(x for x in bases if x not in prev)
+    if len(new) > UPBIT_BURST_MAX:
+        log(f"{label}: {len(new)} nowych naraz → nowa baza, bez alertów")
+        new = []
+    events = [(f"{key_prefix}:{x}", x, src) for x in new]
+    for x in bases:
+        prev[x] = now
+    for x in [x for x, ts in prev.items() if now - ts > UPBIT_SNAPSHOT_TTL]:
+        del prev[x]
+    snap["_ts"] = now
+    return events
+
+
+def _bases_usdt(symbols):
+    return {x[:-4] for x in symbols if x.endswith("USDT") and len(x) > 4}
+
+
+def _try_sources(cache, now, st, name, chain):
+    """chain = [(nazwa_źródła, fn → set baz)]; zwraca (nazwa, bazy) z pierwszego działającego."""
+    for sname, fn in chain:
+        if _paused(cache, sname, now):
+            st[sname] = "pauza po blokadzie"
+            continue
+        try:
+            bases = fn()
+            if not bases:
+                raise ValueError("pusta lista")
+            st[sname] = f"ok {len(bases)}"
+            return sname, bases
+        except Exception as e:
+            code = _pause_on_block(cache, sname, e, now)
+            st[sname] = f"fail ({code or str(e)[:40]})"
+    return None, set()
+
+
+def binance_title_events(articles, now, max_age=6 * 3600):
+    ev = []
+    for a in articles or []:
+        title = a.get("title") or ""
+        rel = (a.get("releaseDate") or 0) / 1000
+        if rel and now - rel > max_age:
+            continue
+        if re.search(r"delist|remove|deprecat|will\s+cease", title, re.I):
+            continue
+        kind = "Binance Alpha" if "Alpha" in title else "Binance Launchpool" if "Launchpool" in title else "Binance Futures" if "Futures" in title or "Perpetual" in title else "Binance listing"
+        tks = set(re.findall(r"\(([A-Z0-9]{2,10})\)", title)) | set(re.findall(r"\b([A-Z0-9]{2,10})USDT\b", title))
+        for tk in sorted(tks - {"USDT", "USDC", "BTC", "BNB"}):
+            ev.append((f"BINANCE:{a.get('id')}:{tk}", tk, kind))
+    return ev
+
+
+def fetch_binance_events(cache, now):
+    st, events = {}, []
+    if now >= (cache.get("binance_next_poll") or 0):
+        cache["binance_next_poll"] = now + BN_POLL_S - 30
+        spot_chain = [
+            ("binance_spot", lambda: _bases_usdt(r.get("symbol", "") for r in _get_json(BN_SPOT_DIRECT, timeout=20, retries=1))),
+            ("coinpaprika", lambda: {m["pair"].split("/")[0].upper() for m in _get_json(PAPRIKA_BN, timeout=30, retries=1)
+                                     if m.get("category") == "Spot" and str(m.get("pair", "")).endswith("/USDT")}),
+        ]
+        fut_chain = [
+            ("binance_futures", lambda: _bases_usdt(r.get("symbol", "") for r in _get_json(BN_FUT_DIRECT, timeout=20, retries=1))),
+            ("coingecko_futures", lambda: {str(t.get("base", "")).upper() for t in (_get_json(CG_BN_FUT, timeout=30, retries=1).get("tickers") or [])
+                                           if t.get("contract_type") == "perpetual" and t.get("target") == "USDT" and t.get("base")}),
+        ]
+        sname, bases = _try_sources(cache, now, st, "spot", spot_chain)
+        if sname:
+            events += snapshot_diff(cache, f"bn_spot_{sname}", bases, now, "BINANCE_SPOT", "Binance listing", sname)
+        fname, fbases = _try_sources(cache, now, st, "futures", fut_chain)
+        if fname:
+            events += snapshot_diff(cache, f"bn_fut_{fname}", fbases, now, "BINANCE_FUT", "Binance Futures", fname)
+        if not sname and not fname:
+            ERRORS.append("listings.binance: żadne źródło listy rynków nie odpowiada")
+    else:
+        st["markets"] = "co 15 min (następny później)"
+    # komunikaty: tylko bezpośrednio; z lokalizacji objętej ograniczeniem Binance → 451 i przerwa 6h
+    if _paused(cache, "binance_cms", now):
+        st["binance_cms"] = "pauza po blokadzie (lokalizacja)"
+    else:
+        try:
+            j = _get_json(BN_CMS, timeout=20, retries=1)
+            arts = [a for cat in ((j.get("data") or {}).get("catalogs") or []) for a in (cat.get("articles") or [])]
+            ev = binance_title_events(arts, now)
+            events += ev
+            st["binance_cms"] = f"ok ({len(ev)} świeżych)"
+        except Exception as e:
+            code = _pause_on_block(cache, "binance_cms", e, now)
+            st["binance_cms"] = f"niedostępne ({code or str(e)[:40]})"
+    SOURCE_STATUS["binance"] = st
+    return events
+
+
 # ─── Listingi / katalizatory ────────────────────────────────────────────────
 
 def fetch_listings(cache, hl_coins, mexc_uni):
@@ -430,26 +574,8 @@ def fetch_listings(cache, hl_coins, mexc_uni):
             events.append((f"MEXC:{base}", base, "MEXC perp"))
     # Upbit — v2.3: oficjalne Open API (market/all, diff) + komunikaty bez proxy, patrz fetch_upbit_events
     events.extend(fetch_upbit_events(cache, now))
-    # Binance — CMS API przez jina (binance.com bezpośrednio jest geo-blokowany dla runnerów US;
-    # api.bybit.com blokuje CloudFront po kraju nawet przez jina — Bybit pominięty)
-    try:
-        req = ur.Request("https://r.jina.ai/https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&pageNo=1&pageSize=20&catalogId=48",
-                         headers={"User-Agent": UA, "Accept": "application/json"})
-        with ur.urlopen(req, timeout=25, context=SSL_CTX) as r:
-            wrap = json.loads(r.read())
-        inner = json.loads((wrap.get("data") or {}).get("content") or "{}")
-        for cat in ((inner.get("data") or {}).get("catalogs") or []):
-            for a in cat.get("articles") or []:
-                title = a.get("title") or ""
-                rel = (a.get("releaseDate") or 0) / 1000
-                if rel and now - rel > 6 * 3600:
-                    continue
-                kind = "Binance Alpha" if "Alpha" in title else "Binance Launchpool" if "Launchpool" in title else "Binance Futures" if "Futures" in title or "Perpetual" in title else "Binance listing"
-                tks = set(re.findall(r"\(([A-Z0-9]{2,10})\)", title)) | set(re.findall(r"\b([A-Z0-9]{2,10})USDT\b", title))
-                for tk in tks:
-                    events.append((f"BINANCE:{a.get('id')}:{tk}", tk, kind))
-    except Exception as e:
-        ERRORS.append(f"listings.binance: {str(e)[:60]}")
+    # Binance — v2.4: listy rynków (diff snapshotu) + komunikaty bez proxy, patrz fetch_binance_events
+    events.extend(fetch_binance_events(cache, now))
     out = {}
     for key, coin, src in events:
         if key not in seen:
@@ -573,6 +699,7 @@ def score_coin(coin, u, series, flow, listings, klines):
     # Listing + whales może alertować bez fundingu (inna logika)
     has_listing_whale = "listing" in parts and "whales" in parts
 
+    gate_ok = (has_funding and has_other) or has_listing_whale
     if has_funding and has_other:
         score = max(0, min(100, raw_score))
     elif has_listing_whale:
@@ -584,6 +711,7 @@ def score_coin(coin, u, series, flow, listings, klines):
     return {
         "ticker": coin, "src": u["src"], "score": score,
         "level": "HIGH" if score >= SCORE_HIGH else "WATCH" if score >= SCORE_WATCH else "none",
+        "gate_ok": bool(gate_ok), "score_raw": max(0, min(100, raw_score)),
         "parts": parts, "tags": tags, "price": u["price"], "r24": round(r24, 2),
         "px_1h": round(px1, 2) if px1 is not None else None, "oi_1h": round(oi1, 1) if oi1 is not None else None,
         "oi_4h": round(oi4, 1) if oi4 is not None else None, "funding_8h": round(f, 4),
@@ -627,9 +755,51 @@ def update_alerts(alerts, universe, scored, all_prices=None):
         a = {"ts": now, "kind": kind, "ticker": s["ticker"], "level": s["level"] if kind == "pump" else "DUMP_WATCH", "score": s["score"], "price": s["price"],
              "parts": s["parts"], "tags": s["tags"], "fwd_1h": None, "fwd_4h": None, "fwd_24h": None, "max_fwd_pct": 0}
         alerts.append(a); new.append(a)
-    # prune 30 dni
-    alerts[:] = [a for a in alerts if now - a["ts"] < 30 * 86400]
+    # prune (v2.4: 365 dni)
+    alerts[:] = [a for a in alerts if now - a["ts"] < ALERT_RETENTION_D * 86400]
     return new
+
+
+def update_test45(test, universe, scored, all_prices):
+    """v2.4: test progu WATCH 45. Alert testowy = bramka spełniona i wynik >= 45 (ten sam scoring).
+    Dla każdego alertu losowa kontrola: losowy token z tego samego universe w tej samej chwili.
+    Tylko log, bez Telegramu i bez wpływu na top/WATCH/HIGH."""
+    import random
+    now = int(time.time())
+    prices = dict(all_prices or {}); prices.update({c: u["price"] for c, u in universe.items()})
+    rows = test.setdefault("alerts", [])
+    for a in rows:
+        for side in ("", "ctrl_"):
+            t = a.get(side + "ticker") if side else a["ticker"]; p0 = a.get(side + "price") if side else a["price"]
+            px = prices.get(t)
+            if not px or not p0:
+                continue
+            age = now - a["ts"]
+            for key, h in (("fwd_1h", 1), ("fwd_4h", 4), ("fwd_24h", 24)):
+                if a.get(side + key) is None and age >= h * 3600:
+                    a[side + key] = round((px / p0 - 1) * 100, 2)
+    if now < TEST_END_TS:
+        last = {}
+        for a in rows:
+            if a["ticker"] not in last or a["ts"] > last[a["ticker"]]:
+                last[a["ticker"]] = a["ts"]
+        pool = list(universe.keys())
+        for s in scored:
+            sc = s.get("score_raw", s["score"])
+            if not s.get("gate_ok") or sc < TEST_WATCH:
+                continue
+            if s["ticker"] in last and now - last[s["ticker"]] < ALERT_COOLDOWN_H * 3600:
+                continue
+            others = [c for c in pool if c != s["ticker"]]
+            ctrl = random.choice(others) if others else None
+            rows.append({"ts": now, "ticker": s["ticker"], "score": sc, "band": "45-59" if sc < SCORE_WATCH else "60+",
+                         "price": s["price"], "parts": s["parts"], "fwd_1h": None, "fwd_4h": None, "fwd_24h": None,
+                         "ctrl_ticker": ctrl, "ctrl_price": universe[ctrl]["price"] if ctrl else None,
+                         "ctrl_fwd_1h": None, "ctrl_fwd_4h": None, "ctrl_fwd_24h": None})
+            last[s["ticker"]] = now
+    test["meta"] = {"threshold": TEST_WATCH, "baseline": SCORE_WATCH, "start": "2026-11-04", "end": "2026-12-02",
+                    "prereg": "pump_dump_radar_test45_PREREJESTRACJA.md", "updated": datetime.now(timezone.utc).isoformat(), "n": len(rows)}
+    return test
 
 
 def stats(alerts):
@@ -776,6 +946,11 @@ def run(telegram=False):
     scored.sort(key=lambda s: -s["score"])
 
     new_alerts = update_alerts(alerts, universe, scored, all_prices)
+    try:
+        test45 = update_test45(_load(TEST45_PATH, {}), universe, scored, all_prices)
+        _save(TEST45_PATH, test45)
+    except Exception as e:
+        ERRORS.append(f"test45: {e}")
     st = stats(alerts)
     top = [s for s in scored if s["level"] != "none"][:10]
     watch = [s for s in scored if s["level"] == "none" and s["score"] >= 20][:10]
