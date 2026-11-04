@@ -162,7 +162,7 @@ EXIT_PL_EN = {
     "hit_sl": ("stop loss", "stop loss"),
     "hit_tp1": ("pierwszy cel (TP1)", "first target (TP1)"),
     "hit_tp2": ("drugi cel (TP2)", "second target (TP2)"),
-    "hit_breakeven": ("stop na cenie wejścia po TP1", "break-even stop after TP1"),
+    "hit_breakeven": ("stop na breakeven", "breakeven stop"),
     "hit_trailing_sl": ("stop kroczący", "trailing stop"),
     "max_hold": ("limit czasu", "time limit"),
     "zombie_expired": ("limit czasu", "time limit"),

@@ -301,6 +301,184 @@ PY
   [ $? -ne 0 ] && FAIL=1
 fi
 
+# ── Stopy: oryginał po właściwej stronie, przesunięty tylko po otwarciu ─────
+# 4.11.2026: audyt porównał entry z sl_price i uznał 13 longów za otwarte ze
+# stopem nad wejściem. sl_price to stop BIEŻĄCY (breakeven/trailing). Oryginał
+# jest w sl_initial albo w r_multiple_reconstructed.csv (sl0).
+if [ -f paper_trades.db ]; then
+  step "Stopy — strona względem wejścia"
+  python3 - <<'PY'
+import csv, sqlite3, sys
+from datetime import datetime, timezone
+import paper_bot
+
+bad = 0
+def fail(msg):
+    global bad
+    bad = 1
+    print(f"   ❌ {msg}")
+
+# Reguły odmowy przy otwarciu (bez sieci).
+cases = [
+    ("long", 100, 100, 110, True),
+    ("short", 100, 100, 90, True),
+    ("long", 100, 100, 100, True),
+    ("short", 100, 100, 100, True),
+    ("long", 100, 100, 90, False),
+    ("short", 100, 100, 110, False),
+    ("long", 95.0, 100.0, 90, True),    # 5% od rynku — jak #100
+    ("long", 100.4, 100.0, 90, False),  # 0,4% mieści się w ~0,5%
+    ("long", 100.6, 100.0, 90, True),   # 0,6% już nie
+]
+for direction, entry, live, sl, rejected in cases:
+    reason = paper_bot._reject_entry(direction, entry, live, sl)
+    if rejected and not reason:
+        fail(f"_reject_entry({direction}, {entry}, live={live}, sl={sl}) przepuściło")
+    if not rejected and reason:
+        fail(f"_reject_entry({direction}, {entry}, live={live}, sl={sl}) odrzuciło: {reason}")
+real_fetch = paper_bot._fetch_current_price
+def _boom(_ticker):
+    raise RuntimeError("HTTP 418")
+paper_bot._fetch_current_price = _boom
+if paper_bot._live_entry_or_skip("ADA", "long") is not None:
+    fail("brak ceny rynkowej nie pomija transakcji (wróciłby fallback na środek strefy)")
+paper_bot._fetch_current_price = real_fetch
+
+c = sqlite3.connect("paper_trades.db")
+c.row_factory = sqlite3.Row
+
+def opened_ms(iso):
+    dt = datetime.fromisoformat(str(iso).replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp() * 1000
+
+def wrong(direction, entry, sl):
+    return paper_bot._stop_wrong_side(direction, entry, sl)
+
+# (a) żaden stop początkowy po złej stronie — kolumna i odtworzenie z gita.
+sl0 = {}
+try:
+    with open("r_multiple_reconstructed.csv", encoding="utf-8", newline="") as fh:
+        for r in csv.DictReader(line for line in fh if not line.startswith("#")):
+            sl0[int(r["id"])] = float(r["sl0"])
+except FileNotFoundError:
+    pass
+for r in c.execute("SELECT id, direction, entry_price, sl_initial FROM positions"):
+    if r["sl_initial"] is not None and wrong(r["direction"], r["entry_price"], r["sl_initial"]):
+        fail(f"#{r['id']} sl_initial {r['sl_initial']} po złej stronie entry {r['entry_price']}")
+    if r["id"] in sl0 and wrong(r["direction"], r["entry_price"], sl0[r["id"]]):
+        fail(f"#{r['id']} sl0 {sl0[r['id']]} po złej stronie entry {r['entry_price']}")
+
+# (b) sl_price po złej stronie tylko wtedy, gdy stop zmieniono PO otwarciu.
+known_rescan = 0
+for r in c.execute("""SELECT id, direction, entry_price, sl_price, opened_at, sl_since,
+                             COALESCE(excluded,0) excluded, hit_or_miss
+                      FROM positions
+                      WHERE sl_price IS NOT NULL AND entry_price IS NOT NULL"""):
+    if not wrong(r["direction"], r["entry_price"], r["sl_price"]):
+        continue
+    moved = False
+    if r["sl_since"] and r["opened_at"]:
+        try:
+            moved = float(r["sl_since"]) > opened_ms(r["opened_at"])
+        except (TypeError, ValueError):
+            moved = False
+    if moved:
+        continue
+    if r["excluded"] and r["hit_or_miss"] == "sl_rescan_bug":
+        known_rescan += 1
+        continue
+    fail(f"#{r['id']} sl_price po złej stronie entry, a sl_since nie jest po opened_at")
+if known_rescan:
+    print(f"   · {known_rescan} wykluczonych sl_rescan_bug ma stop po złej stronie bez sl_since "
+          f"(kolumna doszła później; klasa jest w rejestrze)")
+
+# Rejestr tej poprawki: #100 poza zbiorem, cztery breakeveny bez zmiany PnL,
+# reszta „13 longów" zostaje.
+row = c.execute("SELECT COALESCE(excluded,0), exclusion_reason FROM positions WHERE id=100").fetchone()
+if row is None or row[0] != 1 or row[1] != "entry off-market -4.7%":
+    fail(f"#100 nie jest wykluczona z powodem 'entry off-market -4.7%' ({None if row is None else tuple(row)})")
+for pid in (66, 82, 83, 84):
+    r = c.execute("SELECT hit_or_miss, pnl_pct, pnl_gross_pct, pnl_usd, COALESCE(excluded,0) ex FROM positions WHERE id=?", (pid,)).fetchone()
+    if r is None or r["hit_or_miss"] != "hit_breakeven" or r["ex"]:
+        fail(f"#{pid} nie jest hit_breakeven w zbiorze ({None if r is None else dict(r)})")
+    elif r["pnl_gross_pct"] is None or abs(r["pnl_gross_pct"] - 0.1) > 0.005 or abs((r["pnl_pct"] or 0) + 0.04) > 0.005:
+        fail(f"#{pid} PnL ruszone przy zmianie etykiety: {r['pnl_pct']} / {r['pnl_gross_pct']}")
+for pid in (66, 67, 69, 70, 71, 72, 81, 82, 83, 84, 86, 87):
+    ex = c.execute("SELECT COALESCE(excluded,0) FROM positions WHERE id=?", (pid,)).fetchone()
+    if ex is None or ex[0]:
+        fail(f"#{pid} wykluczona — stop przesunięty po wejściu zostaje w zbiorze")
+
+if not bad:
+    print("   ✅ stop początkowy po właściwej stronie; przesunięty sl_price tylko po otwarciu")
+sys.exit(bad)
+PY
+  [ $? -ne 0 ] && FAIL=1
+
+  step "Wejścia — opcjonalnie poza świecą otwarcia (5m)"
+  python3 - <<'PY'
+import json, sqlite3, sys, urllib.request
+from datetime import datetime, timezone
+# Flaga, nie twardy warunek sieci: brak odpowiedzi Binance nie wywala verify.sh.
+# Rozjazd >0,5% na pozycji NIEWYKLUCZONEJ (jak #100) — już tak.
+c = sqlite3.connect("paper_trades.db")
+c.row_factory = sqlite3.Row
+rows = c.execute("""SELECT id, ticker, entry_price, opened_at FROM positions
+                    WHERE status='closed' AND COALESCE(excluded,0)=0
+                      AND opened_at >= '2026-08-28T00:00:00'
+                      AND entry_price IS NOT NULL""").fetchall()
+
+def candle(ticker, opened_iso):
+    dt = datetime.fromisoformat(str(opened_iso).replace("Z", "+00:00"))
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    ms = int(dt.timestamp() * 1000)
+    start = ms - (ms % (5 * 60 * 1000))
+    url = (f"https://data-api.binance.vision/api/v3/klines?symbol={ticker.upper()}USDT"
+           f"&interval=5m&startTime={start}&limit=1")
+    req = urllib.request.Request(url, headers={"User-Agent": "tvc-verify/1"})
+    with urllib.request.urlopen(req, timeout=8) as resp:
+        data = json.loads(resp.read())
+    if not data:
+        return None
+    k = data[0]
+    return float(k[3]), float(k[2])  # low, high
+
+bad = 0
+flagged = 0
+try:
+    for i, r in enumerate(rows):
+        try:
+            span = candle(r["ticker"], r["opened_at"])
+        except Exception as e:
+            print(f"   · pominięte (sieć albo Binance): {type(e).__name__}: {e}")
+            sys.exit(bad)
+        if not span:
+            continue
+        lo, hi = span
+        px = float(r["entry_price"])
+        if lo <= px <= hi:
+            continue
+        gap = (lo - px) / px if px < lo else (px - hi) / px
+        flagged += 1
+        line = f"#{r['id']} {r['ticker']} entry {px} poza świecą {lo}–{hi} (luka {gap*100:.2f}%)"
+        if gap > 0.005:
+            print(f"   ❌ {line}")
+            bad = 1
+        else:
+            print(f"   · {line}")
+except Exception as e:
+    print(f"   · pominięte: {type(e).__name__}: {e}")
+    sys.exit(0)
+if bad:
+    sys.exit(1)
+print(f"   ✅ sprawdzono {len(rows)} wejść względem świecy 5m"
+      + (f", flag poza zakresem poniżej 0,5%: {flagged}" if flagged else ""))
+PY
+  [ $? -ne 0 ] && FAIL=1
+fi
+
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
   printf '\033[1;32m✅ WSZYSTKO PRZESZŁO\033[0m — dopiero teraz wolno powiedzieć "sprawdzone".\n'

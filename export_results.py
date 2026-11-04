@@ -43,6 +43,8 @@ import sqlite3
 import statistics
 import sys
 
+import paper_bot
+
 STATS_SINCE = "2026-08-28T00:00:00"   # == rejestr pkt 2a; patrz docstring
 STATS_PUBLIC_FROM = "2026-11-12"      # == rejestr pkt 6; trzymać zgodnie z content_engine.py
 
@@ -50,6 +52,12 @@ STATS_PUBLIC_FROM = "2026-11-12"      # == rejestr pkt 6; trzymać zgodnie z con
 # `excluded`. Gdy któraś nie jest — przerywamy, zamiast opublikować inne liczby
 # niż rejestr. Klucz = wartość hit_or_miss, wartość = punkt rejestru.
 MUST_BE_FLAGGED = {"flip_choch": "pkt 2 — reguła wycofana 9.09 (ace0b98)"}
+# Wykluczenia po id, nie po klasie hit_or_miss. Brak wiersza (inna baza) nie
+# jest błędem; wiersz bez flagi zatrzymuje publikację.
+MUST_BE_FLAGGED_IDS = {
+    64: "pkt 2b — wyjście spoza zakresu",
+    100: "pkt 2c — entry off-market -4.7%",
+}
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--force", action="store_true",
@@ -72,6 +80,12 @@ for label, why in MUST_BE_FLAGGED.items():
         (label,)).fetchone()[0]
     if n:
         problems.append(f"  {label}: {n} pozycji bez flagi `excluded` ({why})")
+for pid, why in MUST_BE_FLAGGED_IDS.items():
+    row = conn.execute(
+        "SELECT COALESCE(excluded,0) FROM positions WHERE id = ?", (pid,)
+    ).fetchone()
+    if row is not None and row[0] != 1:
+        problems.append(f"  #{pid}: bez flagi `excluded` ({why})")
 if problems:
     print("STOP: baza nie zgadza się z rejestrem. Strona pokazałaby inne liczby.\n"
           + "\n".join(problems)
@@ -86,7 +100,15 @@ rows = [dict(r) for r in conn.execute(
 keep = ["id", "ticker", "direction", "fusion_score", "regime", "entry_price",
         "exit_price", "size_usd", "opened_at", "closed_at", "pnl_pct", "pnl_usd",
         "hit_or_miss"]
-trades = [{k: r.get(k) for k in keep} for r in rows]
+# `sl` to stop z chwili wejścia (sl_initial albo sl0 odtworzony z gita).
+# sl_price w bazie bywa już po breakeven/trailingu i myli audyt — nie publikujemy go.
+# hit_breakeven (w tym historyczne −0,04%) zostaje stratą, gdy pnl <= 0:
+# wygrana w block() to pnl_pct > 0, nie etykieta.
+trades = []
+for r in rows:
+    item = {k: r.get(k) for k in keep}
+    item["sl"] = paper_bot._original_stop(r)
+    trades.append(item)
 
 
 def block(items):
@@ -190,8 +212,12 @@ out = {
                    + " Przy tej liczbie pozycji żadna pojedyncza zmiana reguł nie jest "
                      "rozstrzygalna statystycznie."),
         "excluded": (f"{excl_n} pozycji wykluczonych z przyczynami opisanymi w rejestrze "
-                     "(zbugowane reguły, era przed 28.08, wyjścia spoza zakresu). "
-                     "Pozostają w bazie i w audycie."),
+                     "(zbugowane reguły, era przed 28.08, wyjścia spoza zakresu, "
+                     "wejście poza rynkiem). Pozostają w bazie i w audycie."),
+        "stops": ("Pole sl przy transakcji to stop z chwili wejścia, nie stop "
+                  "przesunięty później na breakeven albo trailing. "
+                  "hit_breakeven to wyjście na breakeven; przy ujemnym PnL netto "
+                  "liczy się jako strata."),
     },
     "equity": curve,
     "trades": trades[::-1],

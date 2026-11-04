@@ -11,6 +11,16 @@ v4.4.2 (2026-11-02) — R (risk-multiple) przy każdym zamknięciu
     pnl i pozostałe pola bez zmian. Migracja idempotentna.
   - Reguły handlu bez zmian (RULES_VERSION zostaje "v4.4").
 
+v4.4.3 (2026-11-04) — rejestr przed publikacją 12.11, bez zmiany reguł wejścia/wyjścia
+  - #100 ADA wykluczona (wejście 0.24195 przy rynku ~0.255; log GH Actions:
+    live price HTTP 418, fallback na środek strefy). #66/#82/#83/#84: etykieta
+    hit_breakeven, PnL bez zmian. Trzynaście longów ze stopem przesuniętym po
+    wejściu NIE jest wykluczane.
+  - Otwarcie: odmowa przy stopie po złej stronie wejścia i przy wejściu >0,5%
+    od ceny rynkowej. Pusty odczyt ceny pomija transakcję — bez środka strefy.
+  - r_multiple liczone ze znakiem ryzyka. Stop początkowy po złej stronie jest
+    błędem, nie wartością bezwzględną.
+
 (historia wersji poniżej)
 TVC Fusion Paper Trading Bot v3.4
 
@@ -381,11 +391,14 @@ def db_init():
     _migrate_add_column(conn, "positions", "rules_version", "TEXT")
     # v4.4.2: R odtworzone wstecz — OSOBNA kolumna, r_multiple nie jest ruszane.
     _migrate_add_column(conn, "positions", "r_multiple_reconstructed", "REAL")
+    _migrate_add_column(conn, "positions", "exclusion_reason", "TEXT")
     conn.commit()
     _migrate_sl_rescan_bug(conn)
     _migrate_restate_net(conn)
     _migrate_flag_out_of_range(conn)
     _migrate_flag_flip_choch(conn)   # v4.3.6 — przeniesione z produkcji, bez zmian
+    _migrate_flag_off_market(conn)   # v4.4.3 — #100, wejście poza rynkiem
+    _migrate_relabel_breakeven(conn) # v4.4.3 — #66/#82/#83/#84, sama etykieta
     _stamp_r_multiple(conn)
     _migrate_r_multiple_reconstructed(conn)   # v4.4.2
     conn.close()
@@ -469,22 +482,93 @@ def _migrate_flag_flip_choch(conn):
 
 
 def _stamp_r_multiple(conn):
-    """v4.4 — R zrealizowane netto = pnl_pct / ryzyko% (|wejście − sl_initial| / wejście).
+    """v4.4 — R zrealizowane netto = pnl_pct / ryzyko% (odległość stopu początkowego).
+
+    Ryzyko ma znak: long liczy (wejście − sl_initial), short (sl_initial − wejście).
+    ABS() ukrywałoby stop po złej stronie i dawało dodatnie R ze złego mianownika.
+    Taki wiersz nie dostaje r_multiple — jest wypisywany jako błąd i, jeśli ABS
+    zdążył je policzyć wcześniej, R jest czyszczone.
 
     Idempotentne: liczy tylko zamknięte pozycje bez r_multiple. Jedno miejsce dla
-    wszystkich ścieżek zamknięcia (SL/TP/trailing/max_hold/killswitch/manual),
-    więc żadna nie może o tym zapomnieć. Pozycje bez sl_initial (sprzed v4.3)
-    zostają z NULL — nie zgadujemy ich początkowego stopa.
+    wszystkich ścieżek zamknięcia (SL/TP/trailing/max_hold/killswitch/manual).
+    Pozycje bez sl_initial (sprzed v4.3) zostają z NULL — nie zgadujemy ich stopa.
     """
+    wrong_side = (
+        "(COALESCE(direction, 'long') = 'long' AND sl_initial >= entry_price) "
+        "OR (direction = 'short' AND sl_initial <= entry_price)"
+    )
+    bad = [r[0] for r in conn.execute(
+        "SELECT id FROM positions WHERE status = 'closed' AND pnl_pct IS NOT NULL "
+        "AND sl_initial IS NOT NULL AND sl_initial > 0 AND entry_price > 0 AND "
+        + wrong_side
+    ).fetchall()]
+    if bad:
+        conn.execute(
+            f"UPDATE positions SET r_multiple = NULL WHERE id IN ({','.join('?' * len(bad))}) "
+            "AND r_multiple IS NOT NULL",
+            bad,
+        )
+        conn.commit()
+        print(f"[r_multiple] ERROR: stop początkowy po złej stronie wejścia, "
+              f"R niepoliczone (znak nie jest ukrywany przez ABS): "
+              f"{', '.join('#' + str(i) for i in bad)}")
     cur = conn.execute(
-        "UPDATE positions SET r_multiple = ROUND(pnl_pct / "
-        "(ABS(entry_price - sl_initial) / entry_price * 100.0), 3) "
+        "UPDATE positions SET r_multiple = ROUND(pnl_pct / ("
+        "CASE WHEN COALESCE(direction, 'long') = 'short' "
+        "THEN (sl_initial - entry_price) ELSE (entry_price - sl_initial) END "
+        "/ entry_price * 100.0), 3) "
         "WHERE status = 'closed' AND r_multiple IS NULL AND pnl_pct IS NOT NULL "
-        "AND sl_initial IS NOT NULL AND sl_initial > 0 AND entry_price > 0 "
-        "AND ABS(entry_price - sl_initial) > 0"
+        "AND sl_initial IS NOT NULL AND sl_initial > 0 AND entry_price > 0 AND NOT ("
+        + wrong_side + ")"
     )
     if cur.rowcount:
         conn.commit()
+
+
+def _migrate_flag_off_market(conn):
+    """v4.4.3 — #100 ADA long, wejście poza rynkiem (−4,7%).
+
+    Otwarta 2026-10-10 02:23 UTC po 0.24195, gdy rynek był ~0.254–0.256.
+    Log przebiegu (Actions 38016596933): Binance HTTP 418, potem
+    „fallback na środek strefy” i zapis 0.2419. Fill po tej cenie nie był
+    możliwy. Ten sam mechanizm co flip_choch: flaga w bazie przy init, nie
+    kasowanie wiersza. Powód zostaje w exclusion_reason.
+
+    Nie dotyczy pozycji, których stop przesunięto na breakeven już po wejściu.
+    Ich sl_price jest stopem bieżącym; oryginalny stop był po właściwej stronie.
+    """
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(positions)")]
+    if "excluded" not in cols or "exclusion_reason" not in cols:
+        return
+    reason = "entry off-market -4.7%"
+    cur = conn.execute(
+        "UPDATE positions SET excluded = 1, exclusion_reason = ? "
+        "WHERE id = 100 AND (COALESCE(excluded, 0) = 0 OR exclusion_reason IS NULL)",
+        (reason,),
+    )
+    if cur.rowcount:
+        conn.commit()
+        print(f"[migrate] v4.4.3 — #100 wykluczona ({reason})")
+
+
+def _migrate_relabel_breakeven(conn):
+    """v4.4.3 — #66, #82, #83, #84 to wyjścia na breakeven, nie stop loss.
+
+    Przed v3.1 stop wędrował na wejście+0,1% po +1,5% zysku. Te cztery zamknęły
+    się na tym poziomie: brutto +0,10%, netto −0,04% po koszcie 0,14%. Etykieta
+    hit_sl została, bo hit_breakeven jeszcze nie istniało. PnL nie ruszamy.
+    """
+    ids = (66, 82, 83, 84)
+    cur = conn.execute(
+        "UPDATE positions SET hit_or_miss = 'hit_breakeven' "
+        f"WHERE id IN ({','.join('?' * len(ids))}) AND hit_or_miss = 'hit_sl' "
+        "AND pnl_gross_pct IS NOT NULL AND ABS(pnl_gross_pct - 0.1) < 0.005",
+        ids,
+    )
+    if cur.rowcount:
+        conn.commit()
+        print(f"[migrate] v4.4.3 — {cur.rowcount} wyjść breakeven "
+              f"({', '.join('#' + str(i) for i in ids)}): hit_sl → hit_breakeven, PnL bez zmian")
 
 
 def _migrate_flag_out_of_range(conn):
@@ -742,10 +826,170 @@ def extract_fusion_json(path: Path, fmt: str) -> dict:
 
 # --- open --------------------------------------------------------------
 
+# Otwarcie dalej niż tyle od ostatniej ceny rynkowej nie jest fillem.
+ENTRY_OFF_MARKET_MAX = 0.005  # 0,5%
+
+
+def _stop_wrong_side(direction, entry, sl) -> bool:
+    """Long ze stopem >= wejścia albo short ze stopem <= wejścia."""
+    try:
+        entry_f = float(entry)
+        sl_f = float(sl)
+    except (TypeError, ValueError):
+        return False
+    if entry_f <= 0 or sl_f <= 0:
+        return False
+    if (direction or "long").lower() == "short":
+        return sl_f <= entry_f
+    return sl_f >= entry_f
+
+
+def _reject_entry(direction, entry, live, sl, max_off=ENTRY_OFF_MARKET_MAX):
+    """None, gdy wejście wolno zapisać. Inaczej tekst powodu pominięcia.
+
+    Nie poprawia stopu i nie podstawia innej ceny. Zła strona stopu albo
+    rozjazd z rynkiem powyżej ~0,5% = odmowa.
+    """
+    try:
+        entry_f = float(entry)
+        live_f = float(live)
+    except (TypeError, ValueError):
+        return "brak ceny rynkowej"
+    if entry_f <= 0 or live_f <= 0:
+        return "brak ceny rynkowej"
+    off = abs(entry_f - live_f) / live_f
+    if off > max_off:
+        return (f"entry {entry_f} jest {off * 100:.2f}% od ceny rynkowej {live_f} "
+                f"(>{max_off * 100:.1f}%)")
+    if sl is None or sl == "":
+        return None
+    try:
+        sl_f = float(sl)
+    except (TypeError, ValueError):
+        return None
+    if _stop_wrong_side(direction, entry_f, sl_f):
+        op = ">=" if (direction or "long").lower() != "short" else "<="
+        return f"stop {sl_f} {op} entry {entry_f} (stop po złej stronie wejścia)"
+    return None
+
+
+def _live_entry_or_skip(ticker, direction):
+    """Cena rynkowa albo None. Brak odczytu pomija transakcję — bez środka strefy."""
+    try:
+        px = _fetch_current_price(ticker)
+    except Exception as e:
+        print(f"[skip] {ticker} {(direction or '').upper()} — live price fetch failed ({e}); "
+              f"pomijam transakcję, bez fallbacku na środek strefy")
+        return None
+    try:
+        px = float(px)
+    except (TypeError, ValueError):
+        px = 0.0
+    if px <= 0:
+        print(f"[skip] {ticker} {(direction or '').upper()} — live price niedostępna; "
+              f"pomijam transakcję, bez fallbacku na środek strefy")
+        return None
+    return px
+
+
+def _load_sl0_map(csv_path=None):
+    """id → stop z pierwszego commita po otwarciu (r_multiple_reconstructed.csv)."""
+    import csv as _csv
+    path = Path(csv_path) if csv_path else R_RECONSTRUCTED_CSV
+    out = {}
+    if not path.exists():
+        return out
+    try:
+        with open(path, encoding="utf-8", newline="") as fh:
+            rows = list(_csv.DictReader(line for line in fh if not line.startswith("#")))
+    except Exception as e:
+        print(f"[sl0] nie udało się wczytać {path.name}: {e}")
+        return out
+    for r in rows:
+        try:
+            out[int(r["id"])] = float(r["sl0"])
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
+_SL0_MAP = None
+
+
+def _row_get(row, key):
+    try:
+        return row[key]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def _stop_moved_after_open(row) -> bool:
+    """sl_since jest czasem ostatniej zmiany stopu. Później niż opened_at = przesunięty."""
+    sl_since = _row_get(row, "sl_since")
+    opened = _row_get(row, "opened_at")
+    if not sl_since or not opened:
+        return False
+    try:
+        dt = datetime.fromisoformat(str(opened).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return float(sl_since) > dt.timestamp() * 1000
+    except (TypeError, ValueError):
+        return False
+
+
+def _original_stop(row):
+    """Stop z chwili wejścia.
+
+    Kolejność: sl_initial, potem sl0 z historii git, potem sl_price tylko gdy
+    nie był przesuwany po otwarciu i leży po właściwej stronie. Przesunięty
+    stop (breakeven, trailing) nie wchodzi do publikacji.
+    """
+    global _SL0_MAP
+    sl_i = _row_get(row, "sl_initial")
+    if sl_i is not None:
+        try:
+            sl_f = float(sl_i)
+        except (TypeError, ValueError):
+            sl_f = 0.0
+        if sl_f > 0:
+            return sl_f
+    if _SL0_MAP is None:
+        _SL0_MAP = _load_sl0_map()
+    try:
+        mapped = _SL0_MAP.get(int(_row_get(row, "id")))
+    except (TypeError, ValueError):
+        mapped = None
+    if mapped:
+        return mapped
+    if _stop_moved_after_open(row):
+        return None
+    sl = _row_get(row, "sl_price")
+    try:
+        sl_f = float(sl)
+    except (TypeError, ValueError):
+        return None
+    if sl_f > 0 and not _stop_wrong_side(_row_get(row, "direction"), _row_get(row, "entry_price"), sl_f):
+        return sl_f
+    return None
+
+
+def _public_closed_position(row):
+    """Kopia zamkniętej pozycji do publikacji. Stop = oryginalny, nie przesunięty."""
+    d = dict(row)
+    orig = _original_stop(d)
+    if orig is not None:
+        d["sl_price"] = orig
+    elif _stop_moved_after_open(d) or _stop_wrong_side(
+            d.get("direction"), d.get("entry_price"), d.get("sl_price")):
+        # Nie publikuj przesuniętego stopu, gdy oryginału nie da się odtworzyć.
+        d["sl_price"] = None
+    return d
+
+
 def _mid_entry(entry_low, entry_high, ticker, ex) -> float:
-    """Use midpoint of entry_zone; fall back to current market price.
-    Fallback uses Binance public REST (sprawdzone jako niezawodne z GH Actions)
-    zamiast ccxt/Bybit, który bywał blokowany dla IP data-center."""
+    """Środek strefy wejścia. cmd_open tego NIE używa: przy braku ceny rynkowej
+    transakcja jest pomijana (v4.4.3, #100). Zostawione dla odczytu strefy."""
     if entry_low and entry_high:
         return (float(entry_low) + float(entry_high)) / 2
     try:
@@ -1761,12 +2005,15 @@ def cmd_open(args):
             continue
 
         # v0.5 — WEJŚCIE PO CENIE RYNKOWEJ (bez pending orders / entry_quality)
-        try:
-            entry_price = _fetch_current_price(ticker)
-        except Exception as e:
-            print(f"[warn] {ticker} live price failed ({e}) — fallback na środek strefy")
-            entry_price = _mid_entry(dec.get("entry_low"), dec.get("entry_high"), ticker, ex)
+        # v4.4.3 — brak odczytu = pominięcie. Środek strefy z fusionu to nie fill
+        # (#100 ADA, HTTP 418 → 0.24195 przy rynku ~0.255).
+        entry_price = _live_entry_or_skip(ticker, direction)
         if not entry_price:
+            skipped += 1
+            continue
+        _why = _reject_entry(direction, entry_price, entry_price, dec.get("sl"))
+        if _why:
+            print(f"[skip] {ticker} {direction.upper()} — {_why}")
             skipped += 1
             continue
 
@@ -1877,6 +2124,16 @@ def cmd_open(args):
                             continue
             except (TypeError, ValueError) as e:
                 print(f"[atr-guard] {ticker} — error: {e}, keeping original SL")
+
+        # v4.4.3 — stop, który naprawdę zapisujemy, ma być po właściwej stronie
+        # wejścia, a samo wejście w granicach ~0,5% ceny rynkowej. ATR potrafi
+        # przestawić stop leżący NAD długą pozycją na „poprawny” — tego nie
+        # chcemy maskować, więc pierwsza odmowa jest jeszcze przed ATR.
+        _why = _reject_entry(direction, entry_price, entry_price, dec.get("sl"))
+        if _why:
+            print(f"[skip] {ticker} {direction.upper()} — {_why}")
+            skipped += 1
+            continue
 
         # v2.1 — Tiered sizing: score determines position size (obie strony)
         if direction == "short":
@@ -2920,6 +3177,8 @@ def _compute_equity_stats(conn):
         tp1_hits = sum(1 for r in closed if r["hit_or_miss"] == "hit_tp1")
         tp2_hits = sum(1 for r in closed if r["hit_or_miss"] == "hit_tp2")
         sl_hits = sum(1 for r in closed if r["hit_or_miss"] == "hit_sl")
+        # Breakeven (także historyczne −0,04% po koszcie) nie jest stop lossem.
+        be_hits = sum(1 for r in closed if r["hit_or_miss"] == "hit_breakeven")
         trailing_hits = sum(1 for r in closed if r["hit_or_miss"] == "hit_trailing_sl")
         manual_closes = sum(1 for r in closed if r["hit_or_miss"] == "manual_close")
 
@@ -2941,6 +3200,7 @@ def _compute_equity_stats(conn):
                 "tp1_hits": tp1_hits,
                 "tp2_hits": tp2_hits,
                 "sl_hits": sl_hits,
+                "breakeven_hits": be_hits,
                 "trailing_sl_hits": trailing_hits,
                 "manual_closes": manual_closes,
             }
@@ -2988,7 +3248,8 @@ def _compute_performance_breakdown(conn):
         return ">=70" if s >= 70 else "60-69" if s >= 60 else "50-59" if s >= 50 else "<50"
 
     exit_labels = {"hit_tp2": "TP2", "hit_tp1": "TP1", "hit_trailing_sl": "Trailing SL",
-                   "hit_sl": "SL", "flip_choch": "Flip CHoCH", "manual_close": "Manual",
+                   "hit_sl": "SL", "hit_breakeven": "Breakeven",
+                   "flip_choch": "Flip CHoCH", "manual_close": "Manual",
                    "sl_rescan_bug": "SL re-scan bug (wykluczone)", "short_killswitch": "Short Killswitch",
                    "max_hold": "Max Hold"}
     now = datetime.now(timezone.utc)
@@ -3072,7 +3333,10 @@ def cmd_upload(args):
     pending_positions = [dict(r) for r in conn.execute(
         "SELECT * FROM positions WHERE status='pending' ORDER BY opened_at DESC"
     ).fetchall()]
-    recent_closed = [dict(r) for r in conn.execute(
+    # Zamknięte: w publicznym JSON stop = oryginalny (sl_initial / sl0), nie ten
+    # po breakeven albo trailingu. Otwarte zostają przy sl_price bieżącym — terminal
+    # rysuje z niego odległość do działającego stopu; oryginał jest w sl_initial.
+    recent_closed = [_public_closed_position(r) for r in conn.execute(
         "SELECT * FROM positions WHERE status='closed' AND COALESCE(excluded,0)=0 ORDER BY closed_at DESC LIMIT 20"
     ).fetchall()]
     # v0.4 — nagłówek (PnL / WR / liczba) liczony od bramek v0.3 i bez wykluczonych,

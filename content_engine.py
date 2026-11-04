@@ -1019,6 +1019,7 @@ def gen_thursday():
             reason = t.get("hit_or_miss", "closed")
             exit_labels = {
                 "hit_tp1": "TP1", "hit_tp2": "TP2", "hit_sl": "stopped out",
+                "hit_breakeven": "breakeven",
                 "hit_trailing_sl": "trailing stop", "zombie_close": "max hold",
             }
             exit_lbl = exit_labels.get(reason, reason or "closed")
@@ -1395,9 +1396,11 @@ def gen_trade_close(trade):
     stats = get_cumulative_stats()
 
     is_win = pnl_usd > 0
+    loss_verb = "closed at breakeven" if reason == "hit_breakeven" else "stopped out"
 
     exit_labels = {
         "hit_tp1": "TP1 hit", "hit_tp2": "TP2 hit", "hit_sl": "stopped out",
+        "hit_breakeven": "breakeven",
         "hit_trailing_sl": "trailing stop", "zombie_close": "max hold reached",
     }
     exit_label = exit_labels.get(reason, reason or "closed")
@@ -1413,7 +1416,7 @@ def gen_trade_close(trade):
         )
     else:
         x = (
-            f"❌ ${ticker} {direction} stopped out {pnl_pct:+.1f}%\n\n"
+            f"❌ ${ticker} {direction} {loss_verb} {pnl_pct:+.1f}%\n\n"
             f"Risk managed. WR still {stats['wr']}% over {stats['total']} trades.\n\n"
             f"Transparency > hype.\n\n"
             f"Paper-trading journal: {CTA}\n"
@@ -1434,7 +1437,7 @@ def gen_trade_close(trade):
     else:
         li = (
             f"Not every trade wins — and that's the point of a system.\n\n"
-            f"${ticker} {direction} was stopped out at {pnl_pct:+.1f}%. "
+            f"${ticker} {direction} was {loss_verb} at {pnl_pct:+.1f}%. "
             f"Fusion Score was {score}/100 at entry. Exit: {exit_label}.\n\n"
             f"Overall record still holds: {stats['wr']}% win rate over "
             f"{stats['total']} trades, ${stats['pnl']:+.0f} total PnL.\n\n"
