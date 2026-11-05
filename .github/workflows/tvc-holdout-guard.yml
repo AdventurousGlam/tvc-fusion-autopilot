@@ -1,0 +1,46 @@
+# Każdy PR i każdy push na main: progi holdoutu zgodne z kodem, a katalogi
+# archive/daily/ nie były poprawiane ani kasowane. Pełna historia, bo płytki
+# klon nie widzi starej podmiany.
+name: TVC — holdout i archiwum
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout (pełna historia)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Strażnik zamrożenia, sum i test
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "push" ]; then
+            if [ -z "${PUSH_BEFORE}" ] || [ "$PUSH_BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              python3 holdout_guard.py
+            else
+              python3 holdout_guard.py --base "$PUSH_BEFORE"
+            fi
+          else
+            git fetch origin main
+            python3 holdout_guard.py --base origin/main
+          fi
+          python3 archive_guard.py
+          python3 test_archive_holdout.py
