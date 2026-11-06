@@ -1,0 +1,81 @@
+# Dzienny snapshot rejestru, fusionu i progów. Osobno od tvc-autopilot.yml,
+# żeby cykl co 5 minut i publikacja (Gist, Telegram, results.json) zostały
+# bez zmian. GitHub cron bywa spóźniony o kwadrans — dla jednego zamknięcia
+# dnia to bez znaczenia. Pominięty dzień dogrywa się z historii gita, nie
+# z dzisiejszej bazy.
+name: TVC — archiwum dzienne
+
+on:
+  schedule:
+    - cron: "20 0 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Pokaż plan snapshotu i nic nie zapisuj"
+        type: boolean
+        default: false
+
+concurrency:
+  group: tvc-archive-daily
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      # Ten sam token, którym autopilot wypycha na main. TVC_PARAMS celowo
+      # tu NIE wchodzi — snapshot ma domyślne progi z kodu, nie sekret.
+      GITHUB_TOKEN: ${{ secrets.GIST_PAT }}
+    steps:
+      - name: Checkout (pełna historia — ostatni commit dnia)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Podgląd snapshotu
+        if: github.event_name == 'workflow_dispatch' && inputs.dry_run
+        run: python3 archive_daily.py --dry-run
+
+      - name: Zapisz zakończone dni i wypchnij
+        if: github.event_name != 'workflow_dispatch' || inputs.dry_run == false
+        run: |
+          set -euo pipefail
+          git config user.name "tvc-autopilot"
+          git config user.email "autopilot@tvcfusion.local"
+          git fetch origin main
+          git checkout -B main origin/main
+          python3 archive_daily.py
+          python3 archive_guard.py
+          if [ -d archive/daily ]; then
+            git add archive/daily
+          fi
+          if git diff --cached --quiet; then
+            echo "Archiwum bez zmian."
+            exit 0
+          fi
+          git commit -m "archive: daily snapshot $(date -u +%Y-%m-%d)"
+          for i in 1 2 3 4 5; do
+            if git push origin HEAD:main; then
+              echo "Push OK (próba $i)."
+              exit 0
+            fi
+            echo "Push odrzucony (próba $i) — rebase i ponawiam..."
+            if ! git pull --rebase origin main; then
+              echo "Konflikt w archiwum — nie rozwiązuję go automatycznie."
+              git rebase --abort || true
+              exit 1
+            fi
+            sleep $((RANDOM % 8 + 3))
+          done
+          echo "Push archiwum nie przeszedł 5 razy."
+          exit 1

@@ -17,6 +17,8 @@
 #          ./verify.sh py       — tylko Python
 #          ./verify.sh html     — tylko JS w HTML
 #          ./verify.sh yml      — tylko workflow
+# Na końcu (zawsze): archiwum dzienne nie było ruszane i progi holdoutu
+# zgadzają się z kodem. Patrz HOLDOUT.md.
 set -uo pipefail
 cd "$(dirname "$0")"
 WHAT="${1:-all}"
@@ -478,6 +480,18 @@ print(f"   ✅ sprawdzono {len(rows)} wejść względem świecy 5m"
 PY
   [ $? -ne 0 ] && FAIL=1
 fi
+
+# ── Archiwum dzienne i zamrożony holdout (od 2026-11-05) ─────────────────────
+# Podmiana albo skasowanie snapshotu z archive/daily oraz zmiana zamrożonego
+# progu bez wpisu w holdout/unfreeze.json ma wywalić się tu, nie na produkcji.
+step "Archiwum dzienne — sumy i historia"
+python3 archive_guard.py || FAIL=1
+
+step "Holdout — zamrożone progi v4.4 / radar v2.4"
+python3 holdout_guard.py || FAIL=1
+
+step "Archiwum i holdout — testy (w tym suche zamknięcie dnia)"
+python3 test_archive_holdout.py || FAIL=1
 
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then
