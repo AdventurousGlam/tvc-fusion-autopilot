@@ -2,6 +2,16 @@ name: TVC Fusion Auto-Pilot
 
 # Odpala auto_fusion.py + paper_bot.py refresh co 15 minut, w chmurze GitHub —
 # nie wymaga włączonego komputera. Zero kredytów Claude (czysty Python).
+#
+# KROK 2 (wersja z prywatnym stanem): repo jest PUBLICZNE, więc stan bota i wyniki
+# (paper_trades.db, pozycje, historia picków itd.) NIE są już commitowane do repo.
+# Przebieg: pull stanu z prywatnego gista (tvc_state.py) -> kroki bota -> push stanu
+# do gista -> do repo trafiają WYŁĄCZNIE pliki z listy publicznej (patrz krok
+# "Publikuj do repo"). Gdy gist jest niedostępny, przebieg kończy się błędem PRZED
+# jakimkolwiek zapisem: nie nadpisuje stanu i nie commituje niczego do repo.
+# Wyjście kroków bota jest zbierane do prywatnego logu (ci_quiet.sh), bo log Actions
+# publicznego repo jest publiczny, a skrypty drukują equity i PnL.
+# Powrót do poprzedniej wersji: ROLLBACK.md (workflow tvc-state-syncback.yml).
 
 on:
   # Wewnętrzny cron GitHuba usunięty — niewiarygodny przy interwałach <15 min
@@ -26,6 +36,14 @@ jobs:
       HOME: /home/runner/home-clone
       GITHUB_TOKEN: ${{ secrets.GIST_PAT }}
       TVC_GIST_ID: ${{ secrets.TVC_GIST_ID }}
+      # Krok 2: PRYWATNY gist ze stanem bota (osobny od TVC_GIST_ID, który zasila terminal).
+      # Do klonowania/pushu używany jest GITHUB_TOKEN (= GIST_PAT, zakres "gist").
+      TVC_STATE_GIST_ID: ${{ secrets.TVC_STATE_GIST_ID }}
+      TVC_LOG_DIR: /home/runner/tvc_logs
+      # Które pliki wolno wypchnąć do PUBLICZNEGO repo (obok fusion_<data UTC>.json).
+      # results.json zasila stronę results.html (czyta go z raw.githubusercontent.com).
+      # "0" = results.json też zostaje tylko w gist-cie (strona przestanie się odświeżać).
+      TVC_PUBLISH_RESULTS_JSON: "1"
       # v4.1 — strojone progi i wagi. Repozytorium jest publiczne, te liczby nie.
       # Bez tego sekretu skrypty działają na zachowawczych wartościach zastępczych,
       # a paper_bot odmawia otwierania pozycji (patrz tvc_params.py).
@@ -60,9 +78,18 @@ jobs:
       - name: Install optional deps
         run: pip install --retries 3 --timeout 30 certifi ccxt yfinance pandas
 
+      # Krok 2: stan z prywatnego gista. Brak sekretu / brak sieci / rozjazd sum =
+      # błąd tego kroku, wszystkie następne kroki (poza alertem) są pomijane.
+      - name: Pobierz stan z prywatnego gista
+        id: state
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
+        run: |
+          mkdir -p "$TVC_LOG_DIR"
+          python3 tvc_state.py pull --state-dir /home/runner/tvc_state
+
       - name: Cicha weryfikacja Telegram (getMe+getChat, bez wysyłania wiadomości)
         working-directory: /home/runner/home-clone/Claude/TVCFusion
-        run: python3 paper_bot.py telegram-test || true
+        run: bash ci_quiet.sh telegram_test python3 paper_bot.py telegram-test || true
 
       # Poranny shortlist — algorytmiczny screener MEXC (zastąpił Cowork task, który wymagał
       # obudzonego Maca). Generuje raz dziennie po 05:00 UTC; poza tym oknem jest no-op.
@@ -71,7 +98,7 @@ jobs:
         id: picks
         continue-on-error: true
         working-directory: /home/runner/home-clone/Claude/TVCFusion
-        run: python3 auto_picks.py --telegram
+        run: bash ci_quiet.sh auto_picks python3 auto_picks.py --telegram
 
       # Rozliczenie picków: co z nich wyszło. Dopisuje dzisiejsze do archiwum
       # i domyka te sprzed 1-7 dni danymi z MEXC. Przy pierwszym przebiegu sam
@@ -81,7 +108,7 @@ jobs:
         id: picks_tracker
         continue-on-error: true
         working-directory: /home/runner/home-clone/Claude/TVCFusion
-        run: python3 picks_tracker.py
+        run: bash ci_quiet.sh picks_tracker python3 picks_tracker.py
 
       # Publiczne wyniki paper tradingu -> results.json dla results.html.
       # Skrypt SAM blokuje zapis do STATS_PUBLIC_FROM (12.11.2026, rejestr pkt 6):
@@ -92,7 +119,7 @@ jobs:
         id: export_results
         continue-on-error: true
         working-directory: /home/runner/home-clone/Claude/TVCFusion
-        run: python3 export_results.py
+        run: bash ci_quiet.sh export_results python3 export_results.py
 
       # Pump Radar — skan całego rynku perpów (HL + MEXC) pod krótkoterminowe pumpy:
       # OI surge / funding / kompresja / wieloryby HL / zapłon wolumenu / listingi.
@@ -110,15 +137,15 @@ jobs:
         id: radar
         continue-on-error: true
         working-directory: /home/runner/home-clone/Claude/TVCFusion
-        run: python3 pump_radar.py --telegram
+        run: bash ci_quiet.sh pump_radar python3 pump_radar.py --telegram
 
       - name: Correlation Matrix (daily, Binance + Yahoo Finance)
         working-directory: /home/runner/home-clone/Claude/TVCFusion
-        run: python3 correlation_matrix.py || true
+        run: bash ci_quiet.sh correlation python3 correlation_matrix.py || true
 
       - name: Polymarket Predictions (snapshot + outcome check)
         working-directory: /home/runner/home-clone/Claude/TVCFusion
-        run: python3 polymarket_predictions.py || true
+        run: bash ci_quiet.sh polymarket python3 polymarket_predictions.py || true
 
       # Trzy kroki poniżej mają continue-on-error: pojedynczy timeout API nie może
       # zabijać całego cyklu razem z commitem. Status każdego trafia do kroku
@@ -127,19 +154,19 @@ jobs:
         id: fusion
         continue-on-error: true
         working-directory: /home/runner/home-clone/Claude/TVCFusion
-        run: python3 auto_fusion.py
+        run: bash ci_quiet.sh auto_fusion python3 auto_fusion.py
 
       - name: Otwórz nowe pozycje z fresh sygnałów (long i short)
         id: open
         continue-on-error: true
         working-directory: /home/runner/home-clone/Claude/TVCFusion
-        run: python3 paper_bot.py open
+        run: bash ci_quiet.sh paper_open python3 paper_bot.py open
 
       - name: Refresh paper positions + upload do Gist
         id: refresh
         continue-on-error: true
         working-directory: /home/runner/home-clone/Claude/TVCFusion
-        run: python3 paper_bot.py refresh
+        run: bash ci_quiet.sh paper_refresh python3 paper_bot.py refresh
 
       # v1.0 — Content Engine: generuje posty na X + LinkedIn + YouTube z danych bota.
       # Odpala się po paper_bot refresh, żeby mieć świeże dane o zamkniętych trade'ach.
@@ -163,9 +190,9 @@ jobs:
             # wywaliło pusha i dało alarm infrastruktury o 04:11 i 04:20 UTC.
             # Pełne skanowanie historii robimy ręcznie: --online --days 0.
             echo "=== test online, okno 7 dni (raz dziennie) ==="
-            timeout 150 python3 test_no_peeking.py --online --days 7 2>&1 | tail -30
+            bash ci_quiet.sh nopeek_online timeout 150 python3 test_no_peeking.py --online --days 7
           else
-            python3 test_no_peeking.py 2>&1 | tail -20
+            bash ci_quiet.sh nopeek python3 test_no_peeking.py
           fi
 
       - name: Alarm gdy strażnik wykrył przeciek
@@ -183,7 +210,7 @@ jobs:
         id: cengine
         continue-on-error: true
         working-directory: /home/runner/home-clone/Claude/TVCFusion
-        run: python3 content_engine.py
+        run: bash ci_quiet.sh content_engine python3 content_engine.py
 
       # v4.2: kod 2 = content_queue.json do naprawy (np. znaczniki konfliktu gita).
       # 13.10 taka kolejka była cicho traktowana jak pusta i te same propozycje
@@ -209,7 +236,7 @@ jobs:
           MIN=$(date -u +%M)
           if [ "$DOW" = "7" ] && [ "$HOUR" = "18" ] && [ "$MIN" -lt "15" ]; then
             echo "=== Weekly Recap (Sunday 18:00-18:14 UTC) ==="
-            python3 weekly_recap.py
+            bash ci_quiet.sh weekly_recap python3 weekly_recap.py
           else
             echo "Not Sunday recap window ($DOW $HOUR:$MIN UTC) — skip."
           fi
@@ -225,7 +252,7 @@ jobs:
           MIN=$(date -u +%M)
           if [ "$HOUR" = "20" ] && [ "$MIN" -lt "15" ]; then
             echo "=== EOD window (20:00-20:14 UTC / 22:00-22:14 CEST) ==="
-            python3 paper_bot.py eod
+            bash ci_quiet.sh paper_eod python3 paper_bot.py eod
           else
             echo "Poza oknem EOD ($HOUR:$MIN UTC) — pomijam."
           fi
@@ -293,123 +320,76 @@ jobs:
               print(f"poboczne awarie (bez alertu): {soft}")
           PY
 
-      - name: Commit zaktualizowany stan z powrotem do repo
+      # Krok 2: zapis stanu do PRYWATNEGO gista zamiast commita do repo. Bez --force.
+      # Kolejność ma znaczenie: stan idzie do gista PRZED publikacją do repo; jeśli zapis
+      # stanu padnie, do repo nic nie wychodzi (krok publikacji ma domyślne if: success()).
+      # Nakładanie się przebiegów wyklucza `concurrency: tvc-fusion`; dodatkowo push
+      # sprawdza, czy gist nie ruszył się od pobrania (inny pisarz) i wtedy nie nadpisuje.
+      - name: Zapisz stan do prywatnego gista
         working-directory: /home/runner/home-clone/Claude/TVCFusion
-        env:
-          GIT_EDITOR: "true"   # no-op edytor — git rebase --continue nigdy nie ma czekać na input w CI
+        run: python3 tvc_state.py push --state-dir /home/runner/tvc_state --logs-dir "$TVC_LOG_DIR"
+
+      # Do PUBLICZNEGO repo trafia tylko: fusion_<data UTC>.json, autopilot_health.json
+      # (status, bez wyników) i — gdy TVC_PUBLISH_RESULTS_JSON=1 — results.json.
+      # Commit powstaje w osobnym worktree z origin/main (bez rebase i bez konfliktów:
+      # przy odrzuconym pushu bierzemy świeże origin/main i kładziemy plik jeszcze raz).
+      - name: Publikuj do repo tylko pliki publiczne
+        working-directory: /home/runner/home-clone/Claude/TVCFusion
         run: |
+          PUB="fusion_$(date -u +%Y-%m-%d).json autopilot_health.json"
+          if [ "${TVC_PUBLISH_RESULTS_JSON:-0}" = "1" ]; then PUB="$PUB results.json"; fi
           git config user.name "tvc-autopilot"
           git config user.email "autopilot@tvcfusion.local"
-          git add fusion_*.json paper_trades.db
-          for f in results.json crypto_picks.json crypto_picks_history.json layers_cache.json pump_radar.json pump_radar_alerts.json pump_radar_test45.json correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json tg_sent.json autopilot_health.json; do [ -e "$f" ] && git add "$f"; done; true
-          if git diff --cached --quiet; then
-            echo "Brak zmian do commitu."
-            exit 0
-          fi
-          # v4.2 (13.10.2026) — NIGDY nie commituj pliku ze znacznikami konfliktu.
-          # 13.10 auto-resolve rebase zostawił "<<<<<<< HEAD" w content_queue.json
-          # i zacommitował to przez `git add -A`. Przy następnym przebiegu json.loads
-          # się wywalał, kolejka wyglądała na pustą, a te same propozycje postów
-          # poszły na Telegram trzeci raz. Dowód: 08:07 czysty → 08:10 znaczniki
-          # → 08:13 znaczniki podwójne → 08:18 regeneracja.
-          # UWAGA na `|| true` — bez niego ten blok wywalał cały krok.
-          # GitHub Actions uruchamia bash z `-eo pipefail`. `grep -l` kończy się
-          # kodem 1, gdy NIC nie znajdzie, czyli w normalnym przypadku. Ten kod
-          # propaguje z pętli while przez $(...) do przypisania i `set -e` ubija
-          # krok. Efekt 13.10 12:58–15:40 UTC: autopilot liczył wszystko poprawnie,
-          # a potem nie commitował — strażnik blokował commit dokładnie wtedy,
-          # gdy pliki były czyste. Lokalny bash nie ma `set -e`, więc test tego
-          # nie pokazał.
-          CONFLICTED=$(git diff --cached --name-only | while read -r f; do
-            [ -f "$f" ] && grep -lE '^(<<<<<<< |>>>>>>> |=======$)' "$f" 2>/dev/null
-          done) || true
-          if [ -n "$CONFLICTED" ]; then
-            echo "!!! Znaczniki konfliktu w: $CONFLICTED — wycofuję je z commita."
-            for f in $CONFLICTED; do git reset -q HEAD -- "$f"; git checkout -q -- "$f" || true; done
-            if git diff --cached --quiet; then
-              echo "Po wycofaniu nie ma czego commitować."
+          WT="$RUNNER_TEMP/pub"
+          rm -rf "$WT"
+          git worktree prune
+          git fetch -q origin main
+          git worktree add -q --detach "$WT" origin/main
+          for i in 1 2 3 4 5; do
+            git -C "$WT" fetch -q origin main || true
+            git -C "$WT" reset -q --hard origin/main
+            for f in $PUB; do
+              [ -f "$f" ] && cp "$f" "$WT/$f"
+            done
+            for f in $PUB; do
+              [ -f "$WT/$f" ] && git -C "$WT" add -- "$f"
+            done
+            if git -C "$WT" diff --cached --quiet; then
+              echo "Brak zmian w plikach publicznych."
               exit 0
             fi
-          fi
-          git commit -m "auto-update $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          # Retry z rebase — chroni przed race condition gdy dwa runy nachodzą na siebie w czasie.
-          # fusion_*.json jest w całości nadpisywany co cykl, a paper_trades.db to binarny SQLite —
-          # git NIGDY nie zmerguje ich automatycznie na poziomie treści, więc nakładający się drugi
-          # writer zawsze da realny konflikt rebase, nie tylko "non-fast-forward". Dlatego przy
-          # konflikcie rozwiązujemy go automatycznie na korzyść danych z TEGO przebiegu (--theirs
-          # w kontekście rebase = commit który właśnie replayujemy, czyli nasz świeży auto-update) —
-          # to najświeższe policzone dane, i tak zostaną nadpisane kolejnym cyklem za ~5 min.
-          for i in 1 2 3 4 5; do
-            if git push; then
+            # Strażnik: do commita wolno tylko pliki z listy publicznej.
+            for f in $(git -C "$WT" diff --cached --name-only); do
+              case " $PUB " in
+                *" $f "*) ;;
+                *) echo "!!! $f nie jest na liście publicznej — przerywam bez commita."; exit 1 ;;
+              esac
+            done
+            # Strażnik znaczników konfliktu (jak w poprzedniej wersji).
+            BADF=$(git -C "$WT" diff --cached --name-only | while read -r f; do
+              grep -lE '^(<<<<<<< |>>>>>>> |=======$)' "$WT/$f" 2>/dev/null
+            done) || true
+            if [ -n "$BADF" ]; then
+              echo "!!! Znaczniki konfliktu w pliku publicznym — nie commituję."
+              exit 1
+            fi
+            git -C "$WT" commit -q -m "auto-update $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            if git -C "$WT" push -q origin HEAD:main; then
               echo "Push OK (próba $i)."
               exit 0
             fi
-            echo "Push odrzucony (próba $i) — pull --rebase i ponawiam..."
-            if git pull --rebase origin main; then
-              echo "Rebase czysty, próbuję push ponownie."
-            else
-              echo "Konflikt w rebase — auto-resolve na korzyść danych z tego przebiegu..."
-              git checkout --theirs -- fusion_*.json 2>/dev/null || true
-              # v3 (14.10.2026): konflikt na bazie = ktoś INNY (np. ręczny `close` z laptopa)
-              # zapisał bazę w tym samym czasie. Nadpisanie po cichu gubi jego zamknięcia —
-              # zostawiamy dotychczasowe zachowanie, ale robimy z tego widoczne ostrzeżenie.
-              if git diff --name-only --diff-filter=U | grep -qx paper_trades.db; then
-                echo "::warning title=paper_trades.db nadpisana::Konflikt bazy w rebase — zapisy innego writera (np. ręczny close) mogły zostać utracone. Ręczne komendy uruchamiaj przez workflow_dispatch tego workflow."
-              fi
-              git checkout --theirs -- paper_trades.db 2>/dev/null || true
-              git checkout --theirs -- crypto_picks.json 2>/dev/null || true
-              git checkout --theirs -- crypto_picks_history.json 2>/dev/null || true
-              git checkout --theirs -- layers_cache.json pump_radar.json pump_radar_alerts.json pump_radar_test45.json 2>/dev/null || true
-              git checkout --theirs -- correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json tg_sent.json autopilot_health.json 2>/dev/null || true
-              # v4.3.1 (13.10.2026) — DRUGI strażnik, w ścieżce rebase.
-              # Strażnik przy pierwszym commicie nie chroni tego miejsca: `git add -A`
-              # + `git rebase --continue` commituje to, co leży na dysku, a
-              # `git checkout --theirs` z `|| true` po cichu nic nie robi, gdy plik nie
-              # jest w stanie konfliktu rozumianym przez gita. Tak 13.10 o 17:10 i 17:13
-              # do repo trafił content_queue.json ze znacznikami w meta.last_run —
-              # alarm content_engine zadzwonił trzy razy, a kolejka stała.
-              STILL=$(git diff --name-only --diff-filter=U; \
-                      git ls-files -m | while read -r f; do \
-                        [ -f "$f" ] && grep -lE '^(<<<<<<< |>>>>>>> |=======$)' "$f" 2>/dev/null; \
-                      done) || true
-              if [ -n "$STILL" ]; then
-                echo "!!! Po auto-resolve DALEJ są znaczniki/konflikty w: $STILL"
-                echo "    Nie commituję tego. Przerywam rebase — następny cykl zacznie od czystego stanu."
-                git rebase --abort || true
-              else
-                git add -A
-                if git rebase --continue; then
-                  echo "Konflikt rozwiązany automatycznie, bez znaczników."
-                else
-                  echo "rebase --continue nie przeszedł — przerywam, ponawiam od zera."
-                  git rebase --abort || true
-                fi
-              fi
-            fi
+            echo "Push odrzucony (próba $i) — świeże origin/main i jeszcze raz..."
             sleep $((RANDOM % 8 + 3))
           done
-          # 15.10.2026 — PRZEGRANY WYŚCIG O PUSH TO NIE AWARIA.
-          # Run #13468 (12:55 UTC) padł tu, bo Gosia wypychała swój commit dokładnie
-          # w trakcie cyklu. Wszystkie skrypty policzyły się poprawnie, nic nie
-          # zginęło — za 5 minut następny cykl liczy od nowa i wypycha wszystko.
-          # Mimo to leciał alarm "awaria infrastruktury", czyli dokładnie ten rodzaj
-          # komunikatu, który uczy ignorować alarmy.
-          #
-          # Rozróżnienie jest proste i nie wymaga pamiętania stanu między cyklami:
-          # sprawdzamy, czy zdalna gałąź SIĘ RUSZYŁA. Jeśli tak — ktoś inny pisał
-          # w tym samym czasie, to kolizja i kończymy sukcesem z ostrzeżeniem.
-          # Jeśli remote stoi w miejscu, a push i tak nie przechodzi, to jest realny
-          # problem (wygasły token, ochrona gałęzi, brak uprawnień) i wtedy alarm
-          # ma prawo zadzwonić.
+          # Przegrany wyścig o push (np. ręczny commit właścicielki) to nie awaria danych:
+          # stan jest już bezpieczny w gist-cie, a plik publiczny zapisze następny cykl.
           git fetch -q origin main || true
-          BEHIND=$(git rev-list --count HEAD..origin/main 2>/dev/null || echo 0)
+          BEHIND=$(git rev-list --count "$(git -C "$WT" rev-parse HEAD)"..origin/main 2>/dev/null || echo 0)
           if [ "${BEHIND:-0}" -gt 0 ]; then
-            echo "::warning title=Push odłożony do następnego cyklu::Kolizja zapisu — w trakcie tego cyklu ktoś wypchnął ${BEHIND} commit(ów). Dane z tego przebiegu zostaną przeliczone i zapisane za ~5 minut. To nie jest awaria."
-            echo "Przegrany wyścig o push (remote do przodu o ${BEHIND}). Kończę sukcesem."
+            echo "::warning title=Publikacja odłożona::Kolizja zapisu do repo — plik publiczny zapisze następny cykl. Stan jest bezpieczny w gist-cie."
             exit 0
           fi
-          echo "Push nie przeszedł 5 razy, a zdalna gałąź się NIE ruszyła."
-          echo "To nie kolizja — to realny problem z zapisem do repo."
+          echo "Push do repo nie przeszedł 5 razy, a origin/main się NIE ruszył — realny problem z zapisem."
           exit 1
 
       # v0.4 — alert dopiero przy 3 krytycznych awariach Z RZĘDU (~15 min bez świeżych

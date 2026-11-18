@@ -32,9 +32,15 @@ jobs:
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      # Krok 2: paper_trades.db nie jest już w repo na bieżąco — audyt czyta ją z prywatnego gista.
+      GITHUB_TOKEN: ${{ secrets.GIST_PAT }}
+      TVC_STATE_GIST_ID: ${{ secrets.TVC_STATE_GIST_ID }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+
+      - name: Pobierz aktualną bazę z prywatnego gista (tylko odczyt)
+        run: python3 tvc_state.py pull --state-dir "$RUNNER_TEMP/tvc_state" --no-skip-worktree
 
       - name: Setup Python
         uses: actions/setup-python@v5

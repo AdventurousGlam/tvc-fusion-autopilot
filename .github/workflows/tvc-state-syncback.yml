@@ -1,0 +1,62 @@
+# Powrót do poprzedniej wersji (ROLLBACK): kopiuje stan z PRYWATNEGO gista z powrotem
+# do repo (jedyny commit, ręczny), żeby stary workflow (commitujący stan do repo)
+# podjął pracę od aktualnej bazy, a nie od starej.
+# Odpalany wyłącznie ręcznie. Ta sama grupa concurrency co autopilot — nie nakłada się z nim.
+# Kolejność w ROLLBACK.md: wyłącz autopilota -> ten workflow -> przywróć stary yml -> włącz.
+name: TVC — stan z gista z powrotem do repo (rollback)
+
+on:
+  workflow_dispatch:
+    inputs:
+      potwierdzam:
+        description: 'Wpisz TAK, aby skopiować stan z gista do repo'
+        type: string
+        default: ''
+
+concurrency:
+  group: tvc-fusion
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  syncback:
+    if: ${{ inputs.potwierdzam == 'TAK' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GITHUB_TOKEN: ${{ secrets.GIST_PAT }}
+      TVC_STATE_GIST_ID: ${{ secrets.TVC_STATE_GIST_ID }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 20
+
+      - name: Pobierz stan z gista (bez ukrywania plików w git)
+        run: python3 tvc_state.py pull --state-dir "$RUNNER_TEMP/tvc_state" --no-skip-worktree
+
+      - name: Commit stanu do repo
+        run: |
+          git config user.name "tvc-autopilot"
+          git config user.email "autopilot@tvcfusion.local"
+          for f in paper_trades.db results.json crypto_picks.json crypto_picks_history.json layers_cache.json pump_radar.json pump_radar_alerts.json pump_radar_test45.json correlation_data.json market_predictions.json content_queue.json weekly_recap.json om_cache.json tg_sent.json autopilot_health.json; do
+            [ -e "$f" ] && git add -- "$f"
+          done
+          if git diff --cached --quiet; then
+            echo "Repo ma już ten stan."
+            exit 0
+          fi
+          git commit -q -m "rollback: stan z gista z powrotem do repo $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          for i in 1 2 3 4 5; do
+            if git push -q origin HEAD:main; then
+              echo "Push OK (próba $i)."
+              exit 0
+            fi
+            git fetch -q origin main
+            git rebase -q -X theirs origin/main || { git rebase --abort || true; }
+            sleep 3
+          done
+          echo "Push nie przeszedł."
+          exit 1
