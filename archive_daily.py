@@ -34,6 +34,10 @@ import holdout_params
 ROOT = Path(__file__).resolve().parent
 DAILY = ROOT / "archive" / "daily"
 MODULES = ("tvc_params.py", "paper_bot.py", "auto_fusion.py", "pump_radar.py")
+# 18.11.2026 (krok 2) stan bota przeniesiono do sekretnego gista. paper_trades.db
+# w repo zatrzymał się na commicie z 13:08 UTC tego dnia, więc historia gita main
+# nie opisuje już dni od 18.11. Ostatni dzień, który wolno zamknąć z repo:
+REPO_STATE_LAST_DAY = date(2026, 11, 17)
 
 
 def _git(root: Path, *args, text=True, check=True):
@@ -227,6 +231,11 @@ def write_day(dest: Path, files: dict[str, bytes], header: list[str]) -> None:
 
 
 def assemble(root: Path, day: date, captured_at: str | None = None) -> tuple[dict[str, bytes], list[str], str]:
+    if day > REPO_STATE_LAST_DAY:
+        raise RuntimeError(
+            f"od {(REPO_STATE_LAST_DAY + timedelta(days=1)).isoformat()} stan bota jest w gist, "
+            "nie w repo — snapshot z historii gita byłby fałszywy; nic nie zapisuję"
+        )
     state = commit_as_of(root, day)
     db = git_blob(root, state, "paper_trades.db")
     if db is None:

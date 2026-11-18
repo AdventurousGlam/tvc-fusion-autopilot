@@ -7,6 +7,7 @@ w unfreeze.json nie przechodzi. Nie dotyka paper_trades.db w tym repo.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -340,6 +341,36 @@ def test_holdout_matches_code_and_unfreeze_rules():
     ok("holdout v4.4 WATCH 60/HIGH 70 zgodny z kodem; unfreeze wymaga powodu i old/new")
 
 
+def _tree_digest(base: Path) -> dict[str, str]:
+    """Ścieżka -> sha256 każdego pliku (także ukrytego, np. .tmp-*) pod base."""
+    if not base.exists():
+        return {}
+    return {
+        str(f.relative_to(base)): hashlib.sha256(f.read_bytes()).hexdigest()
+        for f in sorted(base.rglob("*")) if f.is_file()
+    } | {str(d.relative_to(base)) + "/": "dir" for d in base.rglob("*") if d.is_dir()}
+
+
+def test_no_archive_from_repo_after_state_move():
+    """Od 18.11.2026 baza bota jest w gist; repo ma zamrożoną kopię z 13:08 UTC.
+    Dzień 18.11+ z historii repo byłby fałszywym snapshotem — ma być odmowa."""
+    before = _tree_digest(ROOT / "archive" / "daily")
+    for dry in (True, False):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = archive_daily.run(ROOT, dry_run=dry, only=date(2026, 11, 18), today=date(2026, 11, 20))
+        if code == 0 or "stan bota jest w gist" not in out.getvalue():
+            fail(f"archive_daily przyjął 2026-11-18 z repo (dry_run={dry})")
+            return
+    if _tree_digest(ROOT / "archive" / "daily") != before:
+        fail("odmowa 2026-11-18 mimo to coś zapisała")
+        return
+    if (ROOT / "archive" / "daily" / "2026-11-18").exists():
+        fail("powstał archive/daily/2026-11-18")
+        return
+    ok("dni od 2026-11-18 nie są archiwizowane z bazy w repo (stan jest w gist)")
+
+
 def test_real_repo_guards_and_dry_run():
     if holdout_guard.main([]) != 0:
         fail("holdout_guard na tym repo nie przeszedł")
@@ -347,6 +378,10 @@ def test_real_repo_guards_and_dry_run():
     if archive_guard.main([]) != 0:
         fail("archive_guard na tym repo nie przeszedł")
         return
+    # 2026-11-05 jest w repo od 07.11 (pierwszy nocny bieg). Sprawdzamy więc, że
+    # dry-run nic w archive/daily nie zmienia, a nie że katalogu nie ma — stary
+    # warunek był prawdziwy tylko do pierwszego zamknięcia dnia.
+    before = _tree_digest(ROOT / "archive" / "daily")
     proc = subprocess.run(
         [sys.executable, str(ROOT / "archive_daily.py"), "--dry-run", "--date", "2026-11-05"],
         cwd=ROOT,
@@ -357,9 +392,8 @@ def test_real_repo_guards_and_dry_run():
     if proc.returncode != 0:
         fail("dry-run 2026-11-05:\n" + proc.stdout + proc.stderr)
         return
-    sealed = ROOT / "archive" / "daily" / "2026-11-05"
-    if sealed.exists():
-        fail("dry-run zapisał archive/daily/2026-11-05")
+    if _tree_digest(ROOT / "archive" / "daily") != before:
+        fail("dry-run zmienił archive/daily")
         return
     text = proc.stdout
     if "2026-11-05" not in text:
@@ -380,6 +414,7 @@ def main():
     test_holdout_matches_code_and_unfreeze_rules()
     test_pipeline_writes_real_snapshot()
     test_real_repo_guards_and_dry_run()
+    test_no_archive_from_repo_after_state_move()
     print()
     if FAILS:
         print(f"✗ nie przeszło: {len(FAILS)}")

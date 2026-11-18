@@ -266,16 +266,37 @@ fi
 # je nadpisywał przy każdym starcie; 19.10 rejestr miał już n=50 w nagłówku, ale
 # metryki pod spodem dalej pochodziły z 47 pozycji. Oba błędy były niewidoczne,
 # bo nikt nie porównywał tych dwóch źródeł. Od teraz porównuje to ten test.
-if [ -f REJESTR_WYKLUCZEN.md ] && [ -f paper_trades.db ]; then
+# 18.11.2026: stan bota jest w gist (krok 2). Bazę można podać przez
+# TVC_STATE_DB=ścieżka (kopia z gista); bez tego bierzemy zamrożoną kopię z repo.
+# Rejestr opisuje bazę z chwili ostatniego commitu REJESTR_WYKLUCZEN.md, więc
+# porównujemy pozycje zamknięte do tej chwili. Późniejsze zamknięcia to nie błąd,
+# tylko informacja, że rejestr czeka na aktualizację; zmiana starej pozycji
+# (np. dopisane wykluczenie albo przepisany wynik) dalej jest błędem.
+TVC_REJ_DB="${TVC_STATE_DB:-paper_trades.db}"
+if [ -f REJESTR_WYKLUCZEN.md ] && [ -f "$TVC_REJ_DB" ]; then
   step "Rejestr wykluczeń — zgodność z bazą"
+  TVC_REJ_DB="$TVC_REJ_DB" \
+  TVC_REJ_CUTOFF="$(git log -1 --format=%cI -- REJESTR_WYKLUCZEN.md 2>/dev/null)" \
   python3 - <<'PY'
-import re, sqlite3, sys
+import os, re, sqlite3, sys
+from datetime import datetime, timezone
 md = open("REJESTR_WYKLUCZEN.md", encoding="utf-8").read()
-c = sqlite3.connect("paper_trades.db")
-q = lambda s: c.execute(s).fetchone()[0]
-baza_n = q("SELECT COUNT(*) FROM positions WHERE status='closed' "
-           "AND COALESCE(excluded,0)=0 AND opened_at >= '2026-08-28T00:00:00'")
+c = sqlite3.connect(f"file:{os.environ['TVC_REJ_DB']}?mode=ro", uri=True)
+q = lambda s, *a: c.execute(s, a).fetchone()[0]
+cut = os.environ.get("TVC_REJ_CUTOFF", "").strip()
+if cut:
+    cut = datetime.fromisoformat(cut).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+else:
+    cut = "9999-12-31T00:00:00"
+    print("   ⚠️  brak historii gita — porównuję z całą bazą")
+BASE = ("status='closed' AND COALESCE(excluded,0)=0 "
+        "AND opened_at >= '2026-08-28T00:00:00' AND substr(closed_at,1,19) <= ?")
+baza_n = q(f"SELECT COUNT(*) FROM positions WHERE {BASE}", cut)
+baza_w = q(f"SELECT COUNT(*) FROM positions WHERE {BASE} AND pnl_usd > 0", cut)
 baza_x = q("SELECT COUNT(*) FROM positions WHERE COALESCE(excluded,0)=1")
+kier_db = dict(c.execute(f"SELECT direction, COUNT(*) FROM positions WHERE {BASE} GROUP BY direction", (cut,)).fetchall())
+nowsze = c.execute("SELECT id FROM positions WHERE status='closed' AND COALESCE(excluded,0)=0 "
+                   "AND opened_at >= '2026-08-28T00:00:00' AND substr(closed_at,1,19) > ? ORDER BY id", (cut,)).fetchall()
 bad = 0
 m = re.search(r"\*\*(\d+) pozycji · (\d+) wygranych / (\d+) stratnych", md)
 if not m:
@@ -283,7 +304,9 @@ if not m:
 else:
     rej_n, w, l = int(m.group(1)), int(m.group(2)), int(m.group(3))
     if rej_n != baza_n:
-        print(f"   ❌ pozycji: rejestr {rej_n}, baza {baza_n}"); bad = 1
+        print(f"   ❌ pozycji zamkniętych do {cut}Z: rejestr {rej_n}, baza {baza_n}"); bad = 1
+    if w != baza_w:
+        print(f"   ❌ wygranych do {cut}Z: rejestr {w}, baza {baza_w}"); bad = 1
     if w + l != rej_n:
         print(f"   ❌ {w} wygranych + {l} stratnych != {rej_n}"); bad = 1
 m2 = re.search(r"\*\*Razem wykluczone: (\d+) pozycj", md)
@@ -293,11 +316,15 @@ elif int(m2.group(1)) != baza_x:
     print(f"   ❌ wykluczonych: rejestr {m2.group(1)}, baza {baza_x}"); bad = 1
 kier = re.findall(r"^\| (long|short) \| (\d+) \|", md, re.M)
 if len(kier) == 2:
-    suma = sum(int(n) for _, n in kier)
-    if suma != baza_n:
-        print(f"   ❌ podział na kierunki sumuje się do {suma}, a pozycji jest {baza_n}"); bad = 1
+    for d, n in kier:
+        if int(n) != kier_db.get(d, 0):
+            print(f"   ❌ {d}: rejestr {n}, baza {kier_db.get(d, 0)}"); bad = 1
 if not bad:
-    print(f"   ✅ rejestr zgodny z bazą ({baza_n} pozycji, {baza_x} wykluczonych, kierunki się sumują)")
+    print(f"   ✅ rejestr zgodny z bazą na {cut}Z ({baza_n} pozycji, {baza_w} wygranych, "
+          f"{baza_x} wykluczonych, kierunki się zgadzają)")
+    if nowsze:
+        print(f"   ℹ️  zamknięte po ostatniej edycji rejestru: {len(nowsze)} "
+              f"(#{', #'.join(str(r[0]) for r in nowsze)}) — rejestr do aktualizacji przy publikacji")
 sys.exit(bad)
 PY
   [ $? -ne 0 ] && FAIL=1
