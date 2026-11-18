@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import archive_daily
@@ -354,19 +354,26 @@ def _tree_digest(base: Path) -> dict[str, str]:
 def test_no_archive_from_repo_after_state_move():
     """Od 18.11.2026 baza bota jest w gist; repo ma zamrożoną kopię z 13:08 UTC.
     Dzień 18.11+ z historii repo byłby fałszywym snapshotem — ma być odmowa."""
-    before = _tree_digest(ROOT / "archive" / "daily")
+    # Po wdrożeniu wariantu A dni od 18.11 pojawiają się w archiwum (z gista), więc
+    # bierzemy pierwszy dzień od 18.11, którego jeszcze nie ma — inaczej run() kończy
+    # się „Już zamknięte” i test robi się nieaktualny jak stary test dry-run.
+    daily = ROOT / "archive" / "daily"
+    probe = archive_daily.GIST_STATE_FIRST_DAY
+    while (daily / probe.isoformat()).exists():
+        probe += timedelta(days=1)
+    before = _tree_digest(daily)
     for dry in (True, False):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
-            code = archive_daily.run(ROOT, dry_run=dry, only=date(2026, 11, 18), today=date(2026, 11, 20))
+            code = archive_daily.run(ROOT, dry_run=dry, only=probe, today=probe + timedelta(days=2))
         if code == 0 or "stan bota jest w gist" not in out.getvalue():
-            fail(f"archive_daily przyjął 2026-11-18 z repo (dry_run={dry})")
+            fail(f"archive_daily przyjął {probe.isoformat()} z repo (dry_run={dry})")
             return
-    if _tree_digest(ROOT / "archive" / "daily") != before:
-        fail("odmowa 2026-11-18 mimo to coś zapisała")
+    if _tree_digest(daily) != before:
+        fail(f"odmowa {probe.isoformat()} mimo to coś zapisała")
         return
-    if (ROOT / "archive" / "daily" / "2026-11-18").exists():
-        fail("powstał archive/daily/2026-11-18")
+    if (daily / probe.isoformat()).exists():
+        fail(f"powstał archive/daily/{probe.isoformat()}")
         return
     ok("dni od 2026-11-18 nie są archiwizowane z bazy w repo (stan jest w gist)")
 
@@ -405,6 +412,339 @@ def test_real_repo_guards_and_dry_run():
     ok("strażnicy tego repo przechodzą; dry-run 2026-11-05 nic nie zapisuje")
 
 
+# ------------------------------------------------------------ wariant A (gist)
+
+def _mk_db(path: Path, n_closed: int, n_open: int = 0, n_excl: int = 0) -> bytes:
+    import sqlite3
+    if path.exists():
+        path.unlink()
+    con = sqlite3.connect(path)
+    con.execute("CREATE TABLE positions (id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT, "
+                "status TEXT, excluded INTEGER DEFAULT 0)")
+    for i in range(n_closed + n_open):
+        con.execute("INSERT INTO positions (ticker, status, excluded) VALUES (?,?,?)",
+                    ("T", "closed" if i < n_closed else "open", 1 if i < n_excl else 0))
+    con.commit()
+    con.close()
+    return path.read_bytes()
+
+
+def _gist_commit(work: Path, when: str, n_closed: int, n_open: int = 0, bootstrap=False,
+                 corrupt=False):
+    env = os.environ.copy()
+    env["GIT_AUTHOR_DATE"] = when
+    env["GIT_COMMITTER_DATE"] = when
+    if bootstrap:
+        (work / "BOOTSTRAP_ALLOWED").write_text("x\n")
+    else:
+        (work / "BOOTSTRAP_ALLOWED").unlink(missing_ok=True)
+        db = _mk_db(work / "paper_trades.db", n_closed, n_open, n_excl=1)
+        (work / "results.json").write_text('{"n": %d}\n' % n_closed)
+        files = {n: hashlib.sha256((work / n).read_bytes()).hexdigest()
+                 for n in ("paper_trades.db", "results.json")}
+        if corrupt:
+            files["results.json"] = "0" * 64
+        (work / "STATE_VERSION.json").write_text(json.dumps(
+            {"schema": "tvc.state/1", "files": files, "positions": n_closed + n_open,
+             "written_at": when, "run_number": "1", "run_id": "1"}, sort_keys=True) + "\n")
+        (work / "last_cycle.log").write_text(f"log {when}\n")
+    subprocess.run(["git", "add", "-A"], cwd=work, check=True, env=env)
+    subprocess.run(["git", "commit", "-q", "-m", f"state {when}"], cwd=work, check=True, env=env)
+    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=work, text=True).strip()
+
+
+def _fake_gist(base: Path, commits: list[tuple]) -> tuple[Path, list[str]]:
+    work = base / "gist_work"
+    work.mkdir()
+    git_repo(work)
+    shas = [_gist_commit(work, *c) for c in commits]
+    return work, shas
+
+
+def _code_repo(base: Path) -> Path:
+    repo = base / "code"
+    repo.mkdir()
+    git_repo(repo)
+    for name in ("tvc_params.py", "paper_bot.py", "auto_fusion.py", "pump_radar.py", "holdout_params.py"):
+        shutil.copy(ROOT / name, repo / name)
+    (repo / "holdout").mkdir()
+    shutil.copy(ROOT / "holdout" / "FROZEN.json", repo / "holdout" / "FROZEN.json")
+    shutil.copy(ROOT / "holdout" / "unfreeze.json", repo / "holdout" / "unfreeze.json")
+    (repo / "fusion_2026-11-18.json").write_bytes(b'{"date":"2026-11-18"}\n')
+    commit(repo, "code", when="2026-11-17T12:00:00Z")
+    for n in range(5, 18):          # stare dni (pełne bazy) już są, jak w prawdziwym repo
+        seal(repo, f"2026-11-{n:02d}")
+    commit(repo, "old days", when="2026-11-18T00:20:00Z")
+    return repo
+
+
+def _run_quiet(*args, **kwargs):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = archive_daily.run(*args, **kwargs)
+    return code, out.getvalue()
+
+
+def test_gist_pipeline_and_backfill():
+    """Lokalny 'gist' (git) z wersjami w różnych dniach: wybór rewizji sprzed północy,
+    nightly/backfill, idempotencja, weryfikacja odcisku i przepisana historia gista."""
+    old_now = os.environ.get("TVC_ARCHIVE_FAKE_NOW")
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = _code_repo(base)
+            gist, shas = _fake_gist(base, [
+                ("2026-11-18T13:04:00Z", 0, 0, True),      # bootstrap, bez STATE_VERSION
+                ("2026-11-18T13:17:00Z", 110),
+                ("2026-11-18T23:59:59Z", 110, 1),          # ostatnia przed północą 18.11
+                ("2026-11-19T00:00:00Z", 111),             # równo północ = już 19.11
+                ("2026-11-20T09:00:00Z", 112),
+            ])
+            # 21.11 bez commitu -> rewizja z 20.11, revision_from_earlier_day
+            os.environ["TVC_ARCHIVE_FAKE_NOW"] = "2026-11-22T00:20:00Z"
+            code, out = _run_quiet(repo, dry_run=True, only=None, today=date(2026, 11, 22),
+                                   source="gist", gist_dir=gist)
+            if code != 0 or (repo / "archive" / "daily" / "2026-11-18").exists():
+                fail("dry-run wariantu A: kod %s albo coś zapisał\n%s" % (code, out))
+                return
+            code, out = _run_quiet(repo, dry_run=False, only=None, today=date(2026, 11, 22),
+                                   source="gist", gist_dir=gist)
+            if code != 0:
+                fail("zapis wariantu A: kod %s\n%s" % (code, out))
+                return
+            daily = repo / "archive" / "daily"
+            docs = {d: json.loads((daily / d / "MANIFEST.json").read_text()) for d in
+                    ("2026-11-18", "2026-11-19", "2026-11-20", "2026-11-21")}
+            want = {"2026-11-18": shas[2], "2026-11-19": shas[3], "2026-11-20": shas[4], "2026-11-21": shas[4]}
+            for d, sha in want.items():
+                if docs[d]["gist_revision"] != sha:
+                    fail(f"{d}: rewizja {docs[d]['gist_revision'][:8]} != {sha[:8]}")
+                    return
+            modes = {d: docs[d]["mode"] for d in docs}
+            if modes != {"2026-11-18": "backfill", "2026-11-19": "backfill",
+                         "2026-11-20": "backfill", "2026-11-21": "nightly"}:
+                fail(f"tryby dni: {modes}")
+                return
+            if not docs["2026-11-21"]["revision_from_earlier_day"] or docs["2026-11-20"]["revision_from_earlier_day"]:
+                fail("revision_from_earlier_day źle policzone")
+                return
+            if docs["2026-11-18"]["positions"] != {"total": 111, "open": 1, "closed": 110, "excluded": 1, "max_id": 111}:
+                fail(f"liczby pozycji 18.11: {docs['2026-11-18']['positions']}")
+                return
+            if "last_cycle.log" in docs["2026-11-18"]["sha256"]:
+                fail("log cyklu trafił do odcisku")
+                return
+            for d in docs:
+                if os.listdir(daily / d) != ["MANIFEST.json"]:
+                    fail(f"{d}: w katalogu dnia jest coś poza MANIFEST.json")
+                    return
+            if archive_guard.check(repo):
+                fail("świeże dni wariantu A nie przeszły strażnika: " + "; ".join(archive_guard.check(repo)))
+                return
+            commit(repo, "archive A", when="2026-11-22T00:21:00Z")
+            if archive_guard.check(repo):
+                fail("zacommitowane dni wariantu A nie przeszły: " + "; ".join(archive_guard.check(repo)))
+                return
+            before = _tree_digest(daily)
+            code, out = _run_quiet(repo, dry_run=False, only=None, today=date(2026, 11, 22),
+                                   source="gist", gist_dir=gist, backfill=True)
+            if code != 0 or _tree_digest(daily) != before:
+                fail("drugi przebieg wariantu A coś zmienił")
+                return
+            for d in docs:
+                problems = archive_daily.verify_gist_day(repo, gist, d)
+                if problems:
+                    fail(f"weryfikacja {d} z gistem: {problems}")
+                    return
+            # właściciel przepisuje historię gista (force-push innej treści)
+            env = os.environ.copy()
+            subprocess.run(["git", "reset", "-q", "--hard", shas[1]], cwd=gist, check=True)
+            _gist_commit(gist, "2026-11-18T23:59:59Z", 109)
+            subprocess.run(["git", "reflog", "expire", "--expire=now", "--all"], cwd=gist, check=True)
+            subprocess.run(["git", "gc", "-q", "--prune=now"], cwd=gist, check=True, env=env)
+            rewritten = archive_daily.verify_gist_day(repo, gist, "2026-11-18")
+            if not rewritten:
+                fail("przepisana historia gista przeszła weryfikację odcisku")
+                return
+        ok("wariant A: rewizja sprzed północy, nightly/backfill, idempotencja, odcisk weryfikowalny, przepisany gist wykryty")
+    finally:
+        if old_now is None:
+            os.environ.pop("TVC_ARCHIVE_FAKE_NOW", None)
+        else:
+            os.environ["TVC_ARCHIVE_FAKE_NOW"] = old_now
+
+
+def test_gist_edge_cases():
+    old_now = os.environ.get("TVC_ARCHIVE_FAKE_NOW")
+    try:
+        os.environ["TVC_ARCHIVE_FAKE_NOW"] = "2026-11-20T00:20:00Z"
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = _code_repo(base)
+            gist, _ = _fake_gist(base, [("2026-11-19T10:00:00Z", 5)])
+            code, out = _run_quiet(repo, dry_run=False, only=None, today=date(2026, 11, 20),
+                                   source="gist", gist_dir=gist)
+            daily = repo / "archive" / "daily"
+            if code != 0 or (daily / "2026-11-18").exists() or not (daily / "2026-11-19").is_dir():
+                fail("dzień bez rewizji gista: kod %s\n%s" % (code, out))
+                return
+            if "brak rewizji gista" not in out:
+                fail("dzień bez rewizji gista pominięty bez notatki")
+                return
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = _code_repo(base)
+            gist, _ = _fake_gist(base, [("2026-11-18T10:00:00Z", 5, 0, False, True)])
+            code, out = _run_quiet(repo, dry_run=False, only=None, today=date(2026, 11, 19),
+                                   source="gist", gist_dir=gist)
+            if code == 0 or (repo / "archive" / "daily" / "2026-11-18").exists():
+                fail("rewizja z niezgodnym STATE_VERSION.json została zaarchiwizowana")
+                return
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            repo = _code_repo(base)
+            gist, _ = _fake_gist(base, [("2026-11-18T10:00:00Z", 5)])
+            shallow = base / "shallow"
+            subprocess.run(["git", "clone", "-q", "--no-local", "--depth", "1", str(gist), str(shallow)],
+                           check=True, capture_output=True)
+            code, out = _run_quiet(repo, dry_run=True, only=None, today=date(2026, 11, 19),
+                                   source="gist", gist_dir=shallow)
+            if code == 0 or "płytki" not in out:
+                fail("płytki klon gista przyjęty")
+                return
+            # klonowanie przez URL (jak w CI), partial clone na lokalnym bare
+            os.environ["TVC_ARCHIVE_FAKE_NOW"] = "2026-11-19T00:20:00Z"
+            bare = base / "bare.git"
+            subprocess.run(["git", "clone", "-q", "--bare", str(gist), str(bare)], check=True)
+            subprocess.run(["git", "config", "uploadpack.allowFilter", "true"], cwd=bare, check=True)
+            os.environ["TVC_STATE_GIST_URL"] = bare.as_uri()
+            try:
+                code, out = _run_quiet(repo, dry_run=False, only=None, today=date(2026, 11, 19),
+                                       source="gist", gist_dir=None)
+            finally:
+                os.environ.pop("TVC_STATE_GIST_URL", None)
+            if code != 0 or not (repo / "archive" / "daily" / "2026-11-18" / "MANIFEST.json").is_file():
+                fail("klon gista po URL nie zadziałał: %s" % out)
+                return
+            if str(bare) in out:
+                fail("adres gista trafił do logu")
+                return
+        ok("wariant A: dzień bez rewizji pominięty z notatką, zły STATE_VERSION odrzucony, płytki klon odrzucony, klon po URL bez adresu w logu")
+    finally:
+        if old_now is None:
+            os.environ.pop("TVC_ARCHIVE_FAKE_NOW", None)
+        else:
+            os.environ["TVC_ARCHIVE_FAKE_NOW"] = old_now
+
+
+def _gist_doc(day: str = "2026-11-18", **over) -> dict:
+    doc = {
+        "schema": "tvc.archive.day/2", "date": day, "mode": "nightly",
+        "freeze_date": "2026-11-05", "source": "gist", "selection_rule": "ostatni commit gista",
+        "gist_revision": "b" * 40, "gist_revision_committed_at": f"{day}T23:55:00Z",
+        "revision_from_earlier_day": False, "state_written_at": f"{day}T23:55:00+00:00",
+        "state_run_number": "1",
+        "sha256": {"paper_trades.db": "c" * 64, "STATE_VERSION.json": "d" * 64},
+        "bytes": {"paper_trades.db": 10, "STATE_VERSION.json": 5},
+        "positions": {"total": 110, "open": 0, "closed": 110, "excluded": 53, "max_id": 110},
+        "code": {"commit": "e" * 40, "strategy_version": "v4.4", "radar_version": "v2.4",
+                 "frozen_config_sha256": "f" * 64, "frozen_config_from": "state_commit",
+                 "extractor_from": "state_commit",
+                 "code_defaults": {"strategy_version": "v4.4", "radar_version": "v2.4", "values": {}},
+                 "radar_test_track": {}, "tvc_params_recorded": False,
+                 "fusion_file": None, "fusion_sha256": None},
+        "created_at": "2026-11-19T00:21:00Z",
+        "workflow_run": {"id": "1", "number": "1", "repository": "x/y", "event": "schedule"},
+        "results_included": False, "notes": [],
+    }
+    doc.update(over)
+    return doc
+
+
+def _put_gist_day(repo: Path, doc: dict):
+    day = repo / "archive" / "daily" / doc["date"]
+    day.mkdir(parents=True, exist_ok=True)
+    (day / "MANIFEST.json").write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+    return day
+
+
+def test_gist_manifest_guard():
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp)
+        git_repo(repo)
+        seal(repo, "2026-11-17")
+        commit(repo, "old day", when="2026-11-18T00:20:00Z")
+        _put_gist_day(repo, _gist_doc())
+        commit(repo, "day A", when="2026-11-19T00:21:00Z")
+        clean = archive_guard.check(repo)
+        if clean:
+            fail("poprawny dzień A nie przeszedł: " + "; ".join(clean))
+            return
+        bad_cases = {
+            "pnl w manifeście": _gist_doc(positions={"total": 1, "open": 0, "closed": 1, "excluded": 0, "max_id": 1}, total_pnl_usd=12.5),
+            "equity w notatce": _gist_doc(notes=["equity 10234"]),
+            "results_included": _gist_doc(results_included=True),
+            "nightly za późno": _gist_doc(created_at="2026-11-21T08:00:00Z"),
+            "rewizja po końcu dnia": _gist_doc(gist_revision_committed_at="2026-11-19T00:00:00Z"),
+            "manifest przed końcem dnia": _gist_doc(created_at="2026-11-18T22:00:00Z"),
+            "backfill bez notatki": _gist_doc(mode="backfill"),
+            "brak sumy bazy": _gist_doc(sha256={"STATE_VERSION.json": "d" * 64}, bytes={"STATE_VERSION.json": 5}),
+            "zły tryb": _gist_doc(mode="later"),
+        }
+        for label, doc in bad_cases.items():
+            with tempfile.TemporaryDirectory() as t2:
+                day = _put_gist_day(Path(t2), doc)
+                if not archive_guard.verify_day_dir(day):
+                    fail(f"manifest przeszedł mimo: {label}")
+                    return
+        with tempfile.TemporaryDirectory() as t2:
+            day = _put_gist_day(Path(t2), _gist_doc())
+            (day / "paper_trades.db").write_bytes(b"full db")
+            if not archive_guard.verify_day_dir(day):
+                fail("dzień A z dorzuconą bazą przeszedł")
+                return
+        with tempfile.TemporaryDirectory() as t2:
+            day = _put_gist_day(Path(t2), _gist_doc(day="2026-11-17"))
+            if not archive_guard.verify_day_dir(day):
+                fail("sam odcisk dla dnia sprzed 18.11 przeszedł")
+                return
+        with tempfile.TemporaryDirectory() as t2:
+            files, header = day_files("2026-11-18")
+            d = Path(t2) / "archive" / "daily" / "2026-11-18"
+            d.mkdir(parents=True)
+            (d / "MANIFEST.sha256").write_text(archive_daily.render_manifest(files, header))
+            for n, b in files.items():
+                (d / n).write_bytes(b)
+            if not archive_guard.verify_day_dir(d):
+                fail("pełna baza z repo dla dnia od 18.11 przeszła")
+                return
+        # podmiana manifestu zamkniętego dnia (nawet poprawnego formatu)
+        day = repo / "archive" / "daily" / "2026-11-18"
+        _put_gist_day(repo, _gist_doc(gist_revision="9" * 40))
+        commit(repo, "swap manifest", when="2026-11-20T01:00:00Z")
+        swapped = archive_guard.check(repo)
+        if not any("status M" in item for item in swapped):
+            fail("podmiana MANIFEST.json zamkniętego dnia przeszła: " + "; ".join(swapped))
+            return
+        subprocess.run(["git", "reset", "-q", "--hard", "HEAD~1"], cwd=repo, check=True)
+        shutil.rmtree(day)
+        commit(repo, "drop day", when="2026-11-20T01:00:00Z")
+        dropped = archive_guard.check(repo)
+        if not any("status D" in item for item in dropped):
+            fail("skasowanie dnia A przeszło: " + "; ".join(dropped))
+            return
+        subprocess.run(["git", "reset", "-q", "--hard", "HEAD~1"], cwd=repo, check=True)
+        # cofnięcie stanu (mniej pozycji niż dzień wcześniej)
+        _put_gist_day(repo, _gist_doc(day="2026-11-19", created_at="2026-11-20T00:21:00Z",
+                                      gist_revision_committed_at="2026-11-19T23:00:00Z",
+                                      positions={"total": 100, "open": 0, "closed": 100, "excluded": 53, "max_id": 100}))
+        back = archive_guard.check(repo)
+        if not any("cofnął" in item for item in back):
+            fail("cofnięcie liczby pozycji przeszło: " + "; ".join(back))
+            return
+        ok("dzień A: sam MANIFEST.json bez wyników; pnl/equity, zła data, dorzucona baza, podmiana, skasowanie i cofnięcie stanu odrzucane")
+
+
 def main():
     test_missing_days()
     test_manifest_and_refuse_overwrite()
@@ -415,6 +755,9 @@ def main():
     test_pipeline_writes_real_snapshot()
     test_real_repo_guards_and_dry_run()
     test_no_archive_from_repo_after_state_move()
+    test_gist_manifest_guard()
+    test_gist_pipeline_and_backfill()
+    test_gist_edge_cases()
     print()
     if FAILS:
         print(f"✗ nie przeszło: {len(FAILS)}")
