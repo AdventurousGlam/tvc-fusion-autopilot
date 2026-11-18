@@ -489,6 +489,9 @@ def test_gist_pipeline_and_backfill():
     """Lokalny 'gist' (git) z wersjami w różnych dniach: wybór rewizji sprzed północy,
     nightly/backfill, idempotencja, weryfikacja odcisku i przepisana historia gista."""
     old_now = os.environ.get("TVC_ARCHIVE_FAKE_NOW")
+    # sztuczny zegar działa tylko poza Actions (bezpiecznik w archive_daily._now);
+    # na czas testu zdejmujemy GITHUB_ACTIONS i przywracamy w finally
+    old_gha = os.environ.pop("GITHUB_ACTIONS", None)
     try:
         with tempfile.TemporaryDirectory() as tmp:
             base = Path(tmp)
@@ -572,10 +575,15 @@ def test_gist_pipeline_and_backfill():
             os.environ.pop("TVC_ARCHIVE_FAKE_NOW", None)
         else:
             os.environ["TVC_ARCHIVE_FAKE_NOW"] = old_now
+        if old_gha is not None:
+            os.environ["GITHUB_ACTIONS"] = old_gha
 
 
 def test_gist_edge_cases():
     old_now = os.environ.get("TVC_ARCHIVE_FAKE_NOW")
+    # sztuczny zegar działa tylko poza Actions (bezpiecznik w archive_daily._now);
+    # na czas testu zdejmujemy GITHUB_ACTIONS i przywracamy w finally
+    old_gha = os.environ.pop("GITHUB_ACTIONS", None)
     try:
         os.environ["TVC_ARCHIVE_FAKE_NOW"] = "2026-11-20T00:20:00Z"
         with tempfile.TemporaryDirectory() as tmp:
@@ -635,6 +643,8 @@ def test_gist_edge_cases():
             os.environ.pop("TVC_ARCHIVE_FAKE_NOW", None)
         else:
             os.environ["TVC_ARCHIVE_FAKE_NOW"] = old_now
+        if old_gha is not None:
+            os.environ["GITHUB_ACTIONS"] = old_gha
 
 
 def _gist_doc(day: str = "2026-11-18", **over) -> dict:
