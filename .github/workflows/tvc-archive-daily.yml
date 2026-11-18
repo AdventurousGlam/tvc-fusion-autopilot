@@ -1,8 +1,15 @@
-# Dzienny snapshot rejestru, fusionu i progów. Osobno od tvc-autopilot.yml,
-# żeby cykl co 5 minut i publikacja (Gist, Telegram, results.json) zostały
-# bez zmian. GitHub cron bywa spóźniony o kwadrans — dla jednego zamknięcia
-# dnia to bez znaczenia. Pominięty dzień dogrywa się z historii gita, nie
-# z dzisiejszej bazy.
+# Dzienny zapis archiwum forward testu (wariant A, od 2026-11-18).
+#
+# Stan bota (paper_trades.db i reszta) jest w SEKRETNYM gist-cie. Do publicznego
+# repo trafia tylko archive/daily/<dzień>/MANIFEST.json: SHA-256 plików stanu
+# z rewizji gista = ostatni commit gista przed północą UTC, liczby pozycji i wersja
+# kodu. Bez bazy i bez wyników finansowych (strażnik odrzuca pnl/equity).
+# Dni 2026-11-05…2026-11-17 (pełne bazy) zostają nietknięte — append-only.
+#
+# Osobna grupa concurrency (NIE tvc-fusion): job tylko czyta gist, nie pisze do
+# niego, a w grupie autopilota oczekujący przebieg byłby kasowany przez kolejny
+# dispatch co 5 minut. Push do main nie koliduje z autopilotem (inne pliki),
+# a odrzucony push jest ponawiany po rebase.
 name: TVC — archiwum dzienne
 
 on:
@@ -11,7 +18,11 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Pokaż plan snapshotu i nic nie zapisuj"
+        description: "Pokaż plan i nic nie zapisuj"
+        type: boolean
+        default: true
+      backfill:
+        description: "Uzupełnij brakujące dni od 2026-11-18 (mode=backfill)"
         type: boolean
         default: false
 
@@ -27,11 +38,12 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
-      # Ten sam token, którym autopilot wypycha na main. TVC_PARAMS celowo
-      # tu NIE wchodzi — snapshot ma domyślne progi z kodu, nie sekret.
+      # GIST_PAT: push do main (jak autopilot) i odczyt gista stanu.
+      # TVC_PARAMS celowo tu NIE wchodzi.
       GITHUB_TOKEN: ${{ secrets.GIST_PAT }}
+      TVC_STATE_GIST_ID: ${{ secrets.TVC_STATE_GIST_ID }}
     steps:
-      - name: Checkout (pełna historia — ostatni commit dnia)
+      - name: Checkout (pełna historia — strażnik i kod z dnia)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -42,31 +54,43 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Podgląd snapshotu
+      - name: Podgląd (dry-run)
         if: github.event_name == 'workflow_dispatch' && inputs.dry_run
-        run: python3 archive_daily.py --dry-run
+        env:
+          BACKFILL: ${{ inputs.backfill && '--backfill' || '' }}
+        run: |
+          set -euo pipefail
+          python3 archive_daily.py --source gist --dry-run $BACKFILL
 
-      - name: Zapisz zakończone dni i wypchnij
+      - name: Zapisz zakończone dni (sam odcisk) i wypchnij
         if: github.event_name != 'workflow_dispatch' || inputs.dry_run == false
+        env:
+          BACKFILL: ${{ github.event_name == 'workflow_dispatch' && inputs.backfill && '--backfill' || '' }}
         run: |
           set -euo pipefail
           git config user.name "tvc-autopilot"
           git config user.email "autopilot@tvcfusion.local"
           git fetch origin main
           git checkout -B main origin/main
-          python3 archive_daily.py
+          python3 archive_daily.py --source gist $BACKFILL
           python3 archive_guard.py
-          if [ -d archive/daily ]; then
-            git add archive/daily
-          fi
+          # Commitujemy WYŁĄCZNIE nowe archive/daily/<dzień>/MANIFEST.json.
+          git add -- 'archive/daily/*/MANIFEST.json' 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "Archiwum bez zmian."
             exit 0
           fi
-          git commit -m "archive: daily snapshot $(date -u +%Y-%m-%d)"
+          BAD=$(git diff --cached --name-status | grep -Ev '^A[[:space:]]+archive/daily/[0-9]{4}-[0-9]{2}-[0-9]{2}/MANIFEST\.json$' || true)
+          if [ -n "$BAD" ]; then
+            echo "Do commitu weszło coś poza nowymi MANIFEST.json — przerywam:"
+            echo "$BAD"
+            exit 1
+          fi
+          DAYS=$(git diff --cached --name-only | sed -E 's#archive/daily/([0-9-]+)/.*#\1#' | paste -sd ' ' -)
+          git commit -m "archive: odcisk dnia (wariant A) ${DAYS}"
           for i in 1 2 3 4 5; do
             if git push origin HEAD:main; then
-              echo "Push OK (próba $i)."
+              echo "Push OK (próba $i): ${DAYS}"
               exit 0
             fi
             echo "Push odrzucony (próba $i) — rebase i ponawiam..."
@@ -75,6 +99,7 @@ jobs:
               git rebase --abort || true
               exit 1
             fi
+            python3 archive_guard.py
             sleep $((RANDOM % 8 + 3))
           done
           echo "Push archiwum nie przeszedł 5 razy."
